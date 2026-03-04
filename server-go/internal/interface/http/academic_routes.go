@@ -1,0 +1,194 @@
+package http
+
+import (
+	"strings"
+	"time"
+
+	"polyapp/server-go/internal/infrastructure/persistence"
+	httpMiddleware "polyapp/server-go/internal/interface/http/middleware"
+
+	"github.com/gin-gonic/gin"
+)
+
+var requestTypes = []string{
+	"Справка на онай",
+	"Справка на военкомат",
+	"Справка по месту требования",
+	"Приложение №2",
+	"Приложение №4",
+	"Приложение №6",
+	"Приложение №29",
+	"Приложение №31",
+	"Справка в школу",
+}
+
+var requestStatuses = []string{
+	"Отправлена",
+	"На рассмотрении",
+	"Отклонена",
+	"В работе",
+	"Готова",
+}
+
+type requestPayload struct {
+	RequestType string `json:"request_type"`
+	Details     string `json:"details"`
+}
+
+type requestUpdatePayload struct {
+	Status  *string `json:"status"`
+	Details *string `json:"details"`
+}
+
+type journalGroupPayload struct {
+	Name string `json:"name"`
+}
+
+type journalStudentPayload struct {
+	GroupName   string `json:"group_name"`
+	StudentName string `json:"student_name"`
+}
+
+type journalDatePayload struct {
+	GroupName string `json:"group_name"`
+	ClassDate string `json:"class_date"`
+}
+
+type attendancePayload struct {
+	GroupName   string `json:"group_name"`
+	ClassDate   string `json:"class_date"`
+	StudentName string `json:"student_name"`
+	Present     bool   `json:"present"`
+}
+
+type gradePayload struct {
+	GroupName   string `json:"group_name"`
+	ClassDate   string `json:"class_date"`
+	StudentName string `json:"student_name"`
+	Grade       int    `json:"grade"`
+}
+
+type teacherAssignmentPayload struct {
+	TeacherID uint   `json:"teacher_id"`
+	GroupName string `json:"group_name"`
+	Subject   string `json:"subject"`
+}
+
+type teacherAssignmentUpdatePayload struct {
+	GroupName *string `json:"group_name"`
+	Subject   *string `json:"subject"`
+}
+
+type examUploadUpdatePayload struct {
+	GroupName *string `json:"group_name"`
+	ExamName  *string `json:"exam_name"`
+}
+
+func (h *Handler) RegisterAcademicRoutes(router *gin.Engine, auth *httpMiddleware.AuthMiddleware) {
+	secured := router.Group("/")
+	secured.Use(auth.RequireAuth())
+	{
+		secured.GET("/schedule", h.listScheduleUploads)
+		secured.GET("/schedule/latest", h.latestScheduleUpload)
+		secured.GET("/schedule/groups", h.scheduleGroups)
+		secured.GET("/schedule/teachers", h.scheduleTeachers)
+		secured.GET("/schedule/me", h.scheduleForMe)
+		secured.GET("/schedule/group/:group", h.scheduleForGroup)
+		secured.GET("/schedule/teacher/:teacher", h.scheduleForTeacher)
+		secured.POST("/schedule/upload", httpMiddleware.RequireRoles("admin", "teacher"), h.uploadSchedule)
+
+		secured.GET("/journal/groups", h.listJournalGroups)
+		secured.POST("/journal/groups", httpMiddleware.RequireRoles("teacher", "admin"), h.upsertJournalGroup)
+		secured.DELETE("/journal/groups", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteJournalGroup)
+		secured.GET("/journal/students", h.listJournalStudents)
+		secured.POST("/journal/students", httpMiddleware.RequireRoles("teacher", "admin"), h.upsertJournalStudent)
+		secured.DELETE("/journal/students", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteJournalStudent)
+		secured.GET("/journal/dates", h.listJournalDates)
+		secured.POST("/journal/dates", httpMiddleware.RequireRoles("teacher", "admin"), h.upsertJournalDate)
+		secured.DELETE("/journal/dates", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteJournalDate)
+
+		secured.POST("/requests", h.createRequest)
+		secured.GET("/requests", h.listRequests)
+		secured.DELETE("/requests/:id", h.deleteRequest)
+		secured.PATCH("/requests/:id", h.updateRequest)
+
+		secured.POST("/attendance", httpMiddleware.RequireRoles("teacher", "admin"), h.upsertAttendance)
+		secured.GET("/attendance", httpMiddleware.RequireRoles("teacher", "admin", "parent"), h.listAttendance)
+		secured.DELETE("/attendance", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteAttendance)
+		secured.GET("/attendance/summary", httpMiddleware.RequireRoles("teacher", "admin", "parent"), h.attendanceSummary)
+
+		secured.POST("/grades", httpMiddleware.RequireRoles("teacher", "admin"), h.upsertGrade)
+		secured.GET("/grades", httpMiddleware.RequireRoles("teacher", "admin", "parent"), h.listGrades)
+		secured.DELETE("/grades", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteGrade)
+		secured.GET("/grades/summary", httpMiddleware.RequireRoles("teacher", "admin", "parent"), h.gradeSummary)
+
+		secured.GET("/teacher-assignments", httpMiddleware.RequireRoles("teacher", "admin"), h.listTeacherAssignments)
+		secured.POST("/teacher-assignments", httpMiddleware.RequireRoles("admin"), h.createTeacherAssignment)
+		secured.PATCH("/teacher-assignments/:id", httpMiddleware.RequireRoles("admin"), h.updateTeacherAssignment)
+		secured.DELETE("/teacher-assignments/:id", httpMiddleware.RequireRoles("admin"), h.deleteTeacherAssignment)
+
+		secured.GET("/analytics/groups", httpMiddleware.RequireRoles("teacher", "admin"), h.analyticsGroups)
+		secured.GET("/analytics/attendance", httpMiddleware.RequireRoles("teacher", "admin"), h.analyticsAttendance)
+		secured.GET("/analytics/grades", httpMiddleware.RequireRoles("teacher", "admin"), h.analyticsGrades)
+
+		secured.GET("/exams", httpMiddleware.RequireRoles("student", "parent", "teacher", "admin"), h.listExamGrades)
+		secured.GET("/exams/uploads", httpMiddleware.RequireRoles("teacher", "admin"), h.listExamUploads)
+		secured.PATCH("/exams/uploads/:id", httpMiddleware.RequireRoles("teacher", "admin"), h.updateExamUpload)
+		secured.DELETE("/exams/uploads/:id", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteExamUpload)
+		secured.POST("/exams/upload", httpMiddleware.RequireRoles("teacher", "admin"), h.uploadExamGrades)
+	}
+}
+
+func parseDate(value string) (time.Time, error) {
+	parsed, err := time.Parse("2006-01-02", strings.TrimSpace(value))
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parsed.UTC(), nil
+}
+
+func contains(items []string, value string) bool {
+	for _, item := range items {
+		if item == value {
+			return true
+		}
+	}
+	return false
+}
+
+func mapIDSet(in map[uint]struct{}) []uint {
+	out := make([]uint, 0, len(in))
+	for key := range in {
+		out = append(out, key)
+	}
+	return out
+}
+
+func mapScheduleUpload(item persistence.DBScheduleUpload) gin.H {
+	out := gin.H{
+		"id":            item.ID,
+		"filename":      item.Filename,
+		"db_filename":   nullOrString(item.DBFilename),
+		"schedule_date": nil,
+		"uploaded_at":   item.UploadedAt.Format(time.RFC3339),
+	}
+	if item.ScheduleDate != nil {
+		out["schedule_date"] = dateOnly(*item.ScheduleDate)
+	}
+	return out
+}
+
+func mapScheduleLessons(lessons []persistence.DBScheduleLesson) []gin.H {
+	out := make([]gin.H, 0, len(lessons))
+	for _, row := range lessons {
+		out = append(out, gin.H{
+			"shift":      row.Shift,
+			"period":     row.Period,
+			"time":       row.TimeText,
+			"audience":   row.Audience,
+			"lesson":     row.Lesson,
+			"group_name": row.GroupName,
+		})
+	}
+	return out
+}

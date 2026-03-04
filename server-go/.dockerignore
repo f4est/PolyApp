@@ -1,0 +1,8 @@
+.git
+.idea
+.vscode
+tmp
+data
+*.db
+*.sqlite
+bin

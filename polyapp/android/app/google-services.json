@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1049365186984",
+    "project_id": "polyapp-by-youxu",
+    "storage_bucket": "polyapp-by-youxu.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1049365186984:android:b9fc328cfe4cf79a5ef59d",
+        "android_client_info": {
+          "package_name": "com.example.polyapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDFM4E9CGnUqyUENSiOke-qcAF6YTufwN4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,68 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: polyapp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: polyapp
+      POSTGRES_USER: polyapp
+      POSTGRES_PASSWORD: polyapp
+    ports:
+      - "5433:5432"
+    volumes:
+      - polyapp_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U polyapp -d polyapp"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:8-alpine
+    container_name: polyapp-redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - polyapp_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ./server-go
+      dockerfile: Dockerfile
+    container_name: polyapp-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      HTTP_PORT: "8000"
+      DATABASE_URL: postgres://polyapp:polyapp@db:5432/polyapp?sslmode=disable
+      REDIS_ADDR: redis:6379
+      REDIS_DB: "0"
+      JWT_SECRET: change-me-in-production
+      CORS_ORIGIN: "*"
+      SESSION_TTL_HOURS: "168"
+      SEED_DEMO: "true"
+      MEDIA_DIR: /srv/data
+    ports:
+      - "8000:8000"
+    volumes:
+      - polyapp_api_data:/srv/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  polyapp_postgres_data:
+  polyapp_redis_data:
+  polyapp_api_data:
