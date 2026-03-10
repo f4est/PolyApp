@@ -4,11 +4,16 @@ import 'package:pluto_grid/pluto_grid.dart';
 import 'pluto_localization.dart';
 
 import '../api/api_client.dart';
+import '../widgets/brand_logo.dart';
 import 'models/journal_models.dart';
 import 'services/journal_service.dart';
 
 class AttendanceJournalPage extends StatefulWidget {
-  const AttendanceJournalPage({super.key, required this.canEdit, required this.client});
+  const AttendanceJournalPage({
+    super.key,
+    required this.canEdit,
+    required this.client,
+  });
 
   final bool canEdit;
   final ApiClient client;
@@ -36,7 +41,6 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
   Timer? _retryTimer;
 
   bool get _gridReadOnly => !widget.canEdit;
-
 
   void _startRetryTimer() {
     _retryTimer?.cancel();
@@ -81,9 +85,14 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
         }
         final serverStudents = await widget.client.listJournalStudents(name);
         for (final studentName in serverStudents) {
-          final existing = _service.getStudentByNameAndGroup(studentName, group.groupId);
+          final existing = _service.getStudentByNameAndGroup(
+            studentName,
+            group.groupId,
+          );
           if (existing == null) {
-            await _service.addStudent(Student(name: studentName, groupId: group.groupId));
+            await _service.addStudent(
+              Student(name: studentName, groupId: group.groupId),
+            );
           }
         }
         final serverDates = await widget.client.listJournalDates(name);
@@ -92,7 +101,9 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
           final dates = _service.getDatesByGroup(group);
           final exists = dates.any((item) => item.label == label);
           if (!exists) {
-            await _service.addDate(LessonDate(date: d, label: label, groupId: group.groupId));
+            await _service.addDate(
+              LessonDate(date: d, label: label, groupId: group.groupId),
+            );
           }
         }
       }
@@ -114,7 +125,6 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
     _startRetryTimer();
     _loadData();
   }
-
 
   Future<void> _mergeServerGroups() async {
     try {
@@ -172,7 +182,6 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
     }
   }
 
-
   Future<void> _syncMeta() async {
     if (_group == null) return;
     try {
@@ -192,11 +201,18 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
         );
       }
 
-      final serverStudents = await widget.client.listJournalStudents(_group!.name);
+      final serverStudents = await widget.client.listJournalStudents(
+        _group!.name,
+      );
       for (final name in serverStudents) {
-        final existing = _service.getStudentByNameAndGroup(name, _group!.groupId);
+        final existing = _service.getStudentByNameAndGroup(
+          name,
+          _group!.groupId,
+        );
         if (existing == null) {
-          await _service.addStudent(Student(name: name, groupId: _group!.groupId));
+          await _service.addStudent(
+            Student(name: name, groupId: _group!.groupId),
+          );
         }
       }
       final serverDates = await widget.client.listJournalDates(_group!.name);
@@ -205,7 +221,9 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
         final dates = _service.getDatesByGroup(_group!);
         final exists = dates.any((item) => item.label == label);
         if (!exists) {
-          await _service.addDate(LessonDate(date: d, label: label, groupId: _group!.groupId));
+          await _service.addDate(
+            LessonDate(date: d, label: label, groupId: _group!.groupId),
+          );
         }
       }
     } catch (_) {}
@@ -219,7 +237,10 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
       final records = await widget.client.listAttendance(_group!.name);
       var dates = _service.getDatesByGroup(_group!);
       for (final record in records) {
-        var student = _service.getStudentByNameAndGroup(record.studentName, _group!.groupId);
+        var student = _service.getStudentByNameAndGroup(
+          record.studentName,
+          _group!.groupId,
+        );
         if (student == null) {
           student = Student(name: record.studentName, groupId: _group!.groupId);
           await _service.addStudent(student);
@@ -234,7 +255,11 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
           }
         }
         if (date == null) {
-          final created = LessonDate(date: record.classDate, label: label, groupId: _group!.groupId);
+          final created = LessonDate(
+            date: record.classDate,
+            label: label,
+            groupId: _group!.groupId,
+          );
           await _service.addDate(created);
           dates = _service.getDatesByGroup(_group!);
           date = dates.firstWhere((d) => d.label == label);
@@ -292,7 +317,9 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
             final isPresent = _parsePresent(value);
             final color = value.isEmpty
                 ? null
-                : (isPresent ? Colors.green.withOpacity(0.2) : Colors.red.withOpacity(0.2));
+                : (isPresent
+                      ? Colors.green.withOpacity(0.2)
+                      : Colors.red.withOpacity(0.2));
             return Container(
               color: color,
               alignment: Alignment.center,
@@ -303,7 +330,6 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
       );
     }
   }
-
 
   String _formatSyncTime(DateTime time) {
     final y = time.year.toString().padLeft(4, '0');
@@ -318,13 +344,13 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
     final label = _syncing
         ? 'Syncing...'
         : _online
-            ? 'Online'
-            : 'Offline';
+        ? 'Online'
+        : 'Offline';
     final color = _syncing
         ? Colors.orange
         : _online
-            ? Colors.green
-            : Colors.red;
+        ? Colors.green
+        : Colors.red;
     final subtitle = _lastSync == null
         ? ''
         : ' | ${_formatSyncTime(_lastSync!)}';
@@ -337,9 +363,16 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(_online ? Icons.cloud_done : Icons.cloud_off, size: 16, color: color),
+          Icon(
+            _online ? Icons.cloud_done : Icons.cloud_off,
+            size: 16,
+            color: color,
+          ),
           const SizedBox(width: 6),
-          Text('$label$subtitle', style: TextStyle(color: color, fontWeight: FontWeight.w600)),
+          Text(
+            '$label$subtitle',
+            style: TextStyle(color: color, fontWeight: FontWeight.w600),
+          ),
         ],
       ),
     );
@@ -366,7 +399,11 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
 
   bool _parsePresent(String raw) {
     final value = raw.trim().toLowerCase();
-    return value == 'p' || value == '1' || value == '+' || value == 'y' || value == '??';
+    return value == 'p' ||
+        value == '1' ||
+        value == '+' ||
+        value == 'y' ||
+        value == '??';
   }
 
   String _formatDateLabel(DateTime date) {
@@ -389,7 +426,11 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
     final trimmed = raw.trim();
 
     if (trimmed.isEmpty) {
-      final existing = _service.getAttendance(studentName, _group!.groupId, date.key.toString());
+      final existing = _service.getAttendance(
+        studentName,
+        _group!.groupId,
+        date.key.toString(),
+      );
       if (existing != null) {
         await _service.deleteAttendance(existing);
       }
@@ -459,8 +500,14 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
           decoration: const InputDecoration(labelText: 'Group name'),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Add')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Add'),
+          ),
         ],
       ),
     );
@@ -492,8 +539,14 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
           maxLines: 4,
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Add')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Add'),
+          ),
         ],
       ),
     );
@@ -504,9 +557,14 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
           .where((n) => n.isNotEmpty)
           .toList();
       for (final name in names) {
-        await _service.addStudent(Student(name: name, groupId: _group!.groupId));
+        await _service.addStudent(
+          Student(name: name, groupId: _group!.groupId),
+        );
         try {
-          await widget.client.upsertJournalStudent(groupName: _group!.name, studentName: name);
+          await widget.client.upsertJournalStudent(
+            groupName: _group!.name,
+            studentName: name,
+          );
         } catch (_) {
           if (mounted) setState(() => _online = false);
         }
@@ -525,9 +583,14 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
     );
     if (picked == null) return;
     final label = _formatDateLabel(picked);
-    await _service.addDate(LessonDate(date: picked, label: label, groupId: _group!.groupId));
+    await _service.addDate(
+      LessonDate(date: picked, label: label, groupId: _group!.groupId),
+    );
     try {
-      await widget.client.upsertJournalDate(groupName: _group!.name, classDate: picked);
+      await widget.client.upsertJournalDate(
+        groupName: _group!.name,
+        classDate: picked,
+      );
     } catch (_) {
       if (mounted) setState(() => _online = false);
     }
@@ -537,7 +600,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
   @override
   Widget build(BuildContext context) {
     if (!_isInitialized) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: BrandLoadingIndicator());
     }
 
     if (_group == null) {
@@ -556,10 +619,12 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
             children: [
               _buildSyncIndicator(),
               IconButton(
-                onPressed: _syncing ? null : () async {
-                  await _syncFromServer();
-                  await _loadGroupData(sync: false);
-                },
+                onPressed: _syncing
+                    ? null
+                    : () async {
+                        await _syncFromServer();
+                        await _loadGroupData(sync: false);
+                      },
                 icon: const Icon(Icons.refresh),
                 tooltip: 'Retry sync',
               ),
@@ -604,7 +669,9 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
         ),
         Expanded(
           child: PlutoGrid(
-            key: ValueKey('${_group?.groupId}_${_dates.length}_${_students.length}'),
+            key: ValueKey(
+              '${_group?.groupId}_${_dates.length}_${_students.length}',
+            ),
             columns: _columns,
             rows: _rows,
             onLoaded: (event) {

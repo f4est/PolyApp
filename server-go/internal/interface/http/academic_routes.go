@@ -122,6 +122,23 @@ func (h *Handler) RegisterAcademicRoutes(router *gin.Engine, auth *httpMiddlewar
 		secured.DELETE("/grades", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteGrade)
 		secured.GET("/grades/summary", httpMiddleware.RequireRoles("teacher", "admin", "parent"), h.gradeSummary)
 
+		secured.GET("/grading-presets", h.listGradingPresetsV2)
+		secured.POST("/grading-presets", httpMiddleware.RequireRoles("teacher", "admin"), h.createGradingPresetV2)
+		secured.GET("/grading-presets/:id", h.getGradingPresetV2)
+		secured.PATCH("/grading-presets/:id", httpMiddleware.RequireRoles("teacher", "admin"), h.updateGradingPresetV2)
+		secured.POST("/grading-presets/:id/publish", httpMiddleware.RequireRoles("teacher", "admin"), h.publishGradingPresetV2)
+		secured.POST("/grading-presets/:id/unpublish", httpMiddleware.RequireRoles("teacher", "admin"), h.unpublishGradingPresetV2)
+
+		secured.GET("/journal/v2/groups/:group_name/preset", h.getGroupPresetBindingV2)
+		secured.PUT("/journal/v2/groups/:group_name/preset", httpMiddleware.RequireRoles("teacher", "admin"), h.applyGroupPresetBindingV2)
+		secured.DELETE("/journal/v2/groups/:group_name/preset", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteGroupPresetBindingV2)
+
+		secured.GET("/journal/v2/groups/:group_name/grid", h.getJournalGridV2)
+		secured.POST("/journal/v2/groups/:group_name/date-cells/bulk-upsert", httpMiddleware.RequireRoles("teacher", "admin"), h.bulkUpsertDateCellsV2)
+		secured.POST("/journal/v2/groups/:group_name/date-cells/bulk-delete", httpMiddleware.RequireRoles("teacher", "admin"), h.bulkDeleteDateCellsV2)
+		secured.POST("/journal/v2/groups/:group_name/manual-cells/bulk-upsert", httpMiddleware.RequireRoles("teacher", "admin"), h.bulkUpsertManualCellsV2)
+		secured.POST("/journal/v2/groups/:group_name/recalculate", httpMiddleware.RequireRoles("teacher", "admin"), h.recalculateJournalV2)
+
 		secured.GET("/teacher-assignments", httpMiddleware.RequireRoles("teacher", "admin"), h.listTeacherAssignments)
 		secured.POST("/teacher-assignments", httpMiddleware.RequireRoles("admin"), h.createTeacherAssignment)
 		secured.PATCH("/teacher-assignments/:id", httpMiddleware.RequireRoles("admin"), h.updateTeacherAssignment)

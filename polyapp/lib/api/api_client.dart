@@ -876,6 +876,222 @@ class ApiClient {
         .toList();
   }
 
+  Future<List<GradingPreset>> listPresets({
+    String? q,
+    int? authorId,
+    String? tag,
+    String? visibility,
+  }) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/grading-presets').replace(
+        queryParameters: {
+          if (q != null && q.trim().isNotEmpty) 'q': q.trim(),
+          if (authorId != null) 'author_id': authorId.toString(),
+          if (tag != null && tag.trim().isNotEmpty) 'tag': tag.trim(),
+          if (visibility != null && visibility.trim().isNotEmpty)
+            'visibility': visibility.trim(),
+        },
+      ),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data
+        .map((item) => GradingPreset.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<GradingPreset> createPreset({
+    required String name,
+    String? description,
+    List<String> tags = const [],
+    String visibility = 'private',
+    required PresetDefinition definition,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/grading-presets'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({
+        'name': name,
+        'description': description ?? '',
+        'tags': tags,
+        'visibility': visibility,
+        'definition': definition.toJson(),
+      }),
+    );
+    _ensureSuccess(response);
+    return GradingPreset.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GradingPreset> getPreset(int presetId) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/grading-presets/$presetId'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    return GradingPreset.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GradingPreset> updatePreset(
+    int presetId, {
+    String? name,
+    String? description,
+    List<String>? tags,
+    String? visibility,
+    PresetDefinition? definition,
+  }) async {
+    final response = await http.patch(
+      Uri.parse('$baseUrl/grading-presets/$presetId'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({
+        if (name != null) 'name': name,
+        if (description != null) 'description': description,
+        if (tags != null) 'tags': tags,
+        if (visibility != null) 'visibility': visibility,
+        if (definition != null) 'definition': definition.toJson(),
+      }),
+    );
+    _ensureSuccess(response);
+    return GradingPreset.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GradingPreset> publishPreset(int presetId) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/grading-presets/$presetId/publish'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    return GradingPreset.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GradingPreset> unpublishPreset(int presetId) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/grading-presets/$presetId/unpublish'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    return GradingPreset.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GroupPresetBindingDto?> getGroupPresetV2(String groupName) async {
+    final response = await http.get(
+      Uri.parse(
+        '$baseUrl/journal/v2/groups/${Uri.encodeComponent(groupName)}/preset',
+      ),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    final body = response.body.trim();
+    if (body.isEmpty || body == 'null') {
+      return null;
+    }
+    return GroupPresetBindingDto.fromJson(
+      jsonDecode(body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<GroupPresetBindingDto> applyPresetV2({
+    required String groupName,
+    required int presetId,
+  }) async {
+    final response = await http.put(
+      Uri.parse(
+        '$baseUrl/journal/v2/groups/${Uri.encodeComponent(groupName)}/preset',
+      ),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({'preset_id': presetId}),
+    );
+    _ensureSuccess(response);
+    return GroupPresetBindingDto.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<void> removePresetV2(String groupName) async {
+    final response = await http.delete(
+      Uri.parse(
+        '$baseUrl/journal/v2/groups/${Uri.encodeComponent(groupName)}/preset',
+      ),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<JournalGridDto> getGroupGridV2(String groupName) async {
+    final response = await http.get(
+      Uri.parse(
+        '$baseUrl/journal/v2/groups/${Uri.encodeComponent(groupName)}/grid',
+      ),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    return JournalGridDto.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<void> upsertDateCellsV2({
+    required String groupName,
+    required List<DateCellWriteDto> items,
+  }) async {
+    final response = await http.post(
+      Uri.parse(
+        '$baseUrl/journal/v2/groups/${Uri.encodeComponent(groupName)}/date-cells/bulk-upsert',
+      ),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({'items': items.map((item) => item.toJson()).toList()}),
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<void> deleteDateCellsV2({
+    required String groupName,
+    required List<DateCellDeleteDto> items,
+  }) async {
+    final response = await http.post(
+      Uri.parse(
+        '$baseUrl/journal/v2/groups/${Uri.encodeComponent(groupName)}/date-cells/bulk-delete',
+      ),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({'items': items.map((item) => item.toJson()).toList()}),
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<void> upsertManualCellsV2({
+    required String groupName,
+    required List<ManualCellWriteDto> items,
+  }) async {
+    final response = await http.post(
+      Uri.parse(
+        '$baseUrl/journal/v2/groups/${Uri.encodeComponent(groupName)}/manual-cells/bulk-upsert',
+      ),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({'items': items.map((item) => item.toJson()).toList()}),
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<void> recalculateGridV2(String groupName) async {
+    final response = await http.post(
+      Uri.parse(
+        '$baseUrl/journal/v2/groups/${Uri.encodeComponent(groupName)}/recalculate',
+      ),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+  }
+
   AuthResponse _parseAuthResponse(http.Response response) {
     _ensureSuccess(response);
     return AuthResponse.fromJson(
@@ -1524,5 +1740,482 @@ class GroupAnalytics {
           .map((e) => e.toString())
           .toList(),
     );
+  }
+}
+
+class GradingPreset {
+  GradingPreset({
+    required this.id,
+    required this.ownerId,
+    required this.name,
+    required this.description,
+    required this.tags,
+    required this.visibility,
+    required this.createdAt,
+    required this.updatedAt,
+    this.archivedAt,
+    this.currentVersion,
+  });
+
+  final int id;
+  final int ownerId;
+  final String name;
+  final String description;
+  final List<String> tags;
+  final String visibility;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final DateTime? archivedAt;
+  final GradingPresetVersion? currentVersion;
+
+  factory GradingPreset.fromJson(Map<String, dynamic> json) {
+    return GradingPreset(
+      id: json['id'] as int,
+      ownerId: json['owner_id'] as int? ?? 0,
+      name: (json['name'] as String?) ?? '',
+      description: (json['description'] as String?) ?? '',
+      tags: (json['tags'] as List<dynamic>? ?? [])
+          .map((item) => item.toString())
+          .toList(),
+      visibility: (json['visibility'] as String?) ?? 'private',
+      createdAt: DateTime.parse(json['created_at'] as String),
+      updatedAt: DateTime.parse(json['updated_at'] as String),
+      archivedAt: json['archived_at'] == null
+          ? null
+          : DateTime.parse(json['archived_at'] as String),
+      currentVersion: json['current_version'] == null
+          ? null
+          : GradingPresetVersion.fromJson(
+              json['current_version'] as Map<String, dynamic>,
+            ),
+    );
+  }
+}
+
+class GradingPresetVersion {
+  GradingPresetVersion({
+    required this.id,
+    required this.presetId,
+    required this.version,
+    required this.createdBy,
+    required this.createdAt,
+    required this.definition,
+  });
+
+  final int id;
+  final int presetId;
+  final int version;
+  final int createdBy;
+  final DateTime createdAt;
+  final PresetDefinition definition;
+
+  factory GradingPresetVersion.fromJson(Map<String, dynamic> json) {
+    return GradingPresetVersion(
+      id: json['id'] as int,
+      presetId: json['preset_id'] as int,
+      version: json['version'] as int,
+      createdBy: json['created_by'] as int? ?? 0,
+      createdAt: DateTime.parse(json['created_at'] as String),
+      definition: PresetDefinition.fromJson(
+        json['definition'] as Map<String, dynamic>? ?? const {},
+      ),
+    );
+  }
+}
+
+class PresetDefinition {
+  PresetDefinition({
+    this.statusCodes = const [],
+    this.variables = const [],
+    this.columns = const [],
+  });
+
+  final List<StatusCodeRuleDto> statusCodes;
+  final List<PresetVariableDto> variables;
+  final List<PresetColumnDto> columns;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'status_codes': statusCodes.map((item) => item.toJson()).toList(),
+      'variables': variables.map((item) => item.toJson()).toList(),
+      'columns': columns.map((item) => item.toJson()).toList(),
+    };
+  }
+
+  factory PresetDefinition.fromJson(Map<String, dynamic> json) {
+    return PresetDefinition(
+      statusCodes: (json['status_codes'] as List<dynamic>? ?? [])
+          .map(
+            (item) => StatusCodeRuleDto.fromJson(item as Map<String, dynamic>),
+          )
+          .toList(),
+      variables: (json['variables'] as List<dynamic>? ?? [])
+          .map(
+            (item) => PresetVariableDto.fromJson(item as Map<String, dynamic>),
+          )
+          .toList(),
+      columns: (json['columns'] as List<dynamic>? ?? [])
+          .map((item) => PresetColumnDto.fromJson(item as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
+class StatusCodeRuleDto {
+  StatusCodeRuleDto({
+    required this.key,
+    required this.code,
+    this.numericValue,
+    this.countsAsMiss = false,
+    this.countsInStats = true,
+  });
+
+  final String key;
+  final String code;
+  final double? numericValue;
+  final bool countsAsMiss;
+  final bool countsInStats;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'key': key,
+      'code': code,
+      'numeric_value': numericValue,
+      'counts_as_miss': countsAsMiss,
+      'counts_in_stats': countsInStats,
+    };
+  }
+
+  factory StatusCodeRuleDto.fromJson(Map<String, dynamic> json) {
+    final numericRaw = json['numeric_value'];
+    final fallbackCode = (json['code'] as String?) ?? '';
+    return StatusCodeRuleDto(
+      key: ((json['key'] as String?) ?? '').trim().isEmpty
+          ? fallbackCode
+          : (json['key'] as String?) ?? '',
+      code: fallbackCode,
+      numericValue: numericRaw is num ? numericRaw.toDouble() : null,
+      countsAsMiss: (json['counts_as_miss'] as bool?) ?? false,
+      countsInStats: (json['counts_in_stats'] as bool?) ?? true,
+    );
+  }
+}
+
+class PresetVariableDto {
+  PresetVariableDto({
+    required this.key,
+    required this.title,
+    required this.type,
+    this.defaultValue,
+  });
+
+  final String key;
+  final String title;
+  final String type;
+  final dynamic defaultValue;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'key': key,
+      'title': title,
+      'type': type,
+      'default_value': defaultValue,
+    };
+  }
+
+  factory PresetVariableDto.fromJson(Map<String, dynamic> json) {
+    return PresetVariableDto(
+      key: (json['key'] as String?) ?? '',
+      title: (json['title'] as String?) ?? '',
+      type: (json['type'] as String?) ?? 'number',
+      defaultValue: json['default_value'],
+    );
+  }
+}
+
+class PresetColumnDto {
+  PresetColumnDto({
+    required this.key,
+    required this.title,
+    required this.kind,
+    required this.type,
+    this.editable = false,
+    this.formula = '',
+    this.format = '',
+    this.dependsOn = const [],
+  });
+
+  final String key;
+  final String title;
+  final String kind;
+  final String type;
+  final bool editable;
+  final String formula;
+  final String format;
+  final List<String> dependsOn;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'key': key,
+      'title': title,
+      'kind': kind,
+      'type': type,
+      'editable': editable,
+      'formula': formula,
+      'format': format,
+      'depends_on': dependsOn,
+    };
+  }
+
+  factory PresetColumnDto.fromJson(Map<String, dynamic> json) {
+    return PresetColumnDto(
+      key: (json['key'] as String?) ?? '',
+      title: (json['title'] as String?) ?? '',
+      kind: (json['kind'] as String?) ?? 'manual',
+      type: (json['type'] as String?) ?? 'number',
+      editable: (json['editable'] as bool?) ?? false,
+      formula: (json['formula'] as String?) ?? '',
+      format: (json['format'] as String?) ?? '',
+      dependsOn: (json['depends_on'] as List<dynamic>? ?? [])
+          .map((item) => item.toString())
+          .toList(),
+    );
+  }
+}
+
+class GroupPresetBindingDto {
+  GroupPresetBindingDto({
+    required this.id,
+    required this.groupName,
+    required this.presetId,
+    required this.presetVersionId,
+    required this.autoUpdate,
+    required this.appliedBy,
+    required this.appliedAt,
+    required this.updatedAt,
+  });
+
+  final int id;
+  final String groupName;
+  final int presetId;
+  final int presetVersionId;
+  final bool autoUpdate;
+  final int appliedBy;
+  final DateTime appliedAt;
+  final DateTime updatedAt;
+
+  factory GroupPresetBindingDto.fromJson(Map<String, dynamic> json) {
+    return GroupPresetBindingDto(
+      id: json['id'] as int,
+      groupName: json['group_name'] as String,
+      presetId: json['preset_id'] as int,
+      presetVersionId: json['preset_version_id'] as int,
+      autoUpdate: (json['auto_update'] as bool?) ?? true,
+      appliedBy: json['applied_by'] as int? ?? 0,
+      appliedAt: DateTime.parse(json['applied_at'] as String),
+      updatedAt: DateTime.parse(json['updated_at'] as String),
+    );
+  }
+}
+
+class JournalGridDto {
+  JournalGridDto({
+    required this.groupName,
+    required this.students,
+    required this.dates,
+    required this.dateCells,
+    required this.manualCells,
+    required this.computedCells,
+    required this.syncState,
+    this.binding,
+    this.preset,
+    this.presetVersion,
+  });
+
+  final String groupName;
+  final List<String> students;
+  final List<DateTime> dates;
+  final List<DateCellDto> dateCells;
+  final List<ManualCellDto> manualCells;
+  final List<ComputedCellDto> computedCells;
+  final String syncState;
+  final GroupPresetBindingDto? binding;
+  final GradingPreset? preset;
+  final GradingPresetVersion? presetVersion;
+
+  factory JournalGridDto.fromJson(Map<String, dynamic> json) {
+    return JournalGridDto(
+      groupName: (json['group_name'] as String?) ?? '',
+      students: (json['students'] as List<dynamic>? ?? [])
+          .map((item) => item.toString())
+          .toList(),
+      dates: (json['dates'] as List<dynamic>? ?? [])
+          .map((item) => DateTime.parse(item.toString()))
+          .toList(),
+      dateCells: (json['date_cells'] as List<dynamic>? ?? [])
+          .map((item) => DateCellDto.fromJson(item as Map<String, dynamic>))
+          .toList(),
+      manualCells: (json['manual_cells'] as List<dynamic>? ?? [])
+          .map((item) => ManualCellDto.fromJson(item as Map<String, dynamic>))
+          .toList(),
+      computedCells: (json['computed_cells'] as List<dynamic>? ?? [])
+          .map((item) => ComputedCellDto.fromJson(item as Map<String, dynamic>))
+          .toList(),
+      syncState: (json['sync_state'] as String?) ?? 'authoritative',
+      binding: json['binding'] == null
+          ? null
+          : GroupPresetBindingDto.fromJson(
+              json['binding'] as Map<String, dynamic>,
+            ),
+      preset: json['preset'] == null
+          ? null
+          : GradingPreset.fromJson(json['preset'] as Map<String, dynamic>),
+      presetVersion: json['preset_version'] == null
+          ? null
+          : GradingPresetVersion.fromJson(
+              json['preset_version'] as Map<String, dynamic>,
+            ),
+    );
+  }
+}
+
+class DateCellDto {
+  DateCellDto({
+    required this.groupName,
+    required this.classDate,
+    required this.studentName,
+    required this.rawValue,
+    this.numericValue,
+    this.statusCode,
+  });
+
+  final String groupName;
+  final DateTime classDate;
+  final String studentName;
+  final String rawValue;
+  final double? numericValue;
+  final String? statusCode;
+
+  factory DateCellDto.fromJson(Map<String, dynamic> json) {
+    final numericRaw = json['numeric_value'];
+    return DateCellDto(
+      groupName: (json['group_name'] as String?) ?? '',
+      classDate: DateTime.parse(json['class_date'] as String),
+      studentName: (json['student_name'] as String?) ?? '',
+      rawValue: (json['raw_value'] as String?) ?? '',
+      numericValue: numericRaw is num ? numericRaw.toDouble() : null,
+      statusCode: json['status_code'] as String?,
+    );
+  }
+}
+
+class ManualCellDto {
+  ManualCellDto({
+    required this.groupName,
+    required this.studentName,
+    required this.columnKey,
+    required this.rawValue,
+    this.numericValue,
+  });
+
+  final String groupName;
+  final String studentName;
+  final String columnKey;
+  final String rawValue;
+  final double? numericValue;
+
+  factory ManualCellDto.fromJson(Map<String, dynamic> json) {
+    final numericRaw = json['numeric_value'];
+    return ManualCellDto(
+      groupName: (json['group_name'] as String?) ?? '',
+      studentName: (json['student_name'] as String?) ?? '',
+      columnKey: (json['column_key'] as String?) ?? '',
+      rawValue: (json['raw_value'] as String?) ?? '',
+      numericValue: numericRaw is num ? numericRaw.toDouble() : null,
+    );
+  }
+}
+
+class ComputedCellDto {
+  ComputedCellDto({
+    required this.groupName,
+    required this.studentName,
+    required this.presetVersionId,
+    required this.values,
+    required this.calculatedAt,
+  });
+
+  final String groupName;
+  final String studentName;
+  final int presetVersionId;
+  final Map<String, dynamic> values;
+  final DateTime calculatedAt;
+
+  factory ComputedCellDto.fromJson(Map<String, dynamic> json) {
+    final valuesRaw = json['values'];
+    return ComputedCellDto(
+      groupName: (json['group_name'] as String?) ?? '',
+      studentName: (json['student_name'] as String?) ?? '',
+      presetVersionId: json['preset_version_id'] as int? ?? 0,
+      values: valuesRaw is Map<String, dynamic>
+          ? valuesRaw
+          : <String, dynamic>{},
+      calculatedAt: DateTime.parse(json['calculated_at'] as String),
+    );
+  }
+}
+
+class DateCellWriteDto {
+  DateCellWriteDto({
+    required this.classDate,
+    required this.studentName,
+    required this.rawValue,
+  });
+
+  final DateTime classDate;
+  final String studentName;
+  final String rawValue;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'class_date': classDate.toIso8601String().substring(0, 10),
+      'student_name': studentName,
+      'raw_value': rawValue,
+    };
+  }
+}
+
+class DateCellDeleteDto {
+  DateCellDeleteDto({required this.classDate, required this.studentName});
+
+  final DateTime classDate;
+  final String studentName;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'class_date': classDate.toIso8601String().substring(0, 10),
+      'student_name': studentName,
+      'raw_value': '',
+    };
+  }
+}
+
+class ManualCellWriteDto {
+  ManualCellWriteDto({
+    required this.studentName,
+    required this.columnKey,
+    required this.rawValue,
+  });
+
+  final String studentName;
+  final String columnKey;
+  final String rawValue;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'student_name': studentName,
+      'column_key': columnKey,
+      'raw_value': rawValue,
+    };
   }
 }

@@ -181,6 +181,70 @@ type DBJournalDate struct {
 	ClassDate time.Time `gorm:"type:date;uniqueIndex:idx_journal_date;not null"`
 }
 
+type DBGradingPreset struct {
+	ID          uint      `gorm:"primaryKey"`
+	OwnerID     uint      `gorm:"index;not null"`
+	Name        string    `gorm:"size:255;not null;index"`
+	Description string    `gorm:"type:text"`
+	TagsJSON    string    `gorm:"type:text;not null;default:'[]'"`
+	Visibility  string    `gorm:"size:16;index;not null;default:private"`
+	CreatedAt   time.Time `gorm:"index"`
+	UpdatedAt   time.Time
+	ArchivedAt  *time.Time `gorm:"index"`
+}
+
+type DBGradingPresetVersion struct {
+	ID             uint      `gorm:"primaryKey"`
+	PresetID       uint      `gorm:"uniqueIndex:idx_preset_version;index;not null"`
+	Version        int       `gorm:"uniqueIndex:idx_preset_version;not null"`
+	DefinitionJSON string    `gorm:"type:text;not null"`
+	CreatedBy      uint      `gorm:"index;not null"`
+	CreatedAt      time.Time `gorm:"index"`
+}
+
+type DBGroupPresetBinding struct {
+	ID              uint      `gorm:"primaryKey"`
+	GroupName       string    `gorm:"size:64;uniqueIndex;not null"`
+	PresetID        uint      `gorm:"index;not null"`
+	PresetVersionID uint      `gorm:"index;not null"`
+	AutoUpdate      bool      `gorm:"not null;default:true"`
+	AppliedBy       uint      `gorm:"index;not null"`
+	AppliedAt       time.Time `gorm:"index"`
+	UpdatedAt       time.Time `gorm:"index"`
+}
+
+type DBJournalDateCellV2 struct {
+	ID           uint      `gorm:"primaryKey"`
+	GroupName    string    `gorm:"size:64;uniqueIndex:idx_journal_date_cell_v2;index;not null"`
+	ClassDate    time.Time `gorm:"type:date;uniqueIndex:idx_journal_date_cell_v2;not null"`
+	StudentName  string    `gorm:"size:255;uniqueIndex:idx_journal_date_cell_v2;not null"`
+	RawValue     string    `gorm:"size:128;not null;default:''"`
+	NumericValue *float64
+	StatusCode   string    `gorm:"size:32;index"`
+	UpdatedBy    uint      `gorm:"index;not null"`
+	UpdatedAt    time.Time `gorm:"index"`
+}
+
+type DBJournalManualCellV2 struct {
+	ID           uint   `gorm:"primaryKey"`
+	GroupName    string `gorm:"size:64;uniqueIndex:idx_journal_manual_cell_v2;index;not null"`
+	StudentName  string `gorm:"size:255;uniqueIndex:idx_journal_manual_cell_v2;not null"`
+	ColumnKey    string `gorm:"size:64;uniqueIndex:idx_journal_manual_cell_v2;not null"`
+	RawValue     string `gorm:"size:128;not null;default:''"`
+	NumericValue *float64
+	UpdatedBy    uint      `gorm:"index;not null"`
+	UpdatedAt    time.Time `gorm:"index"`
+}
+
+type DBJournalComputedRowV2 struct {
+	ID              uint      `gorm:"primaryKey"`
+	GroupName       string    `gorm:"size:64;uniqueIndex:idx_journal_computed_row_v2;index;not null"`
+	StudentName     string    `gorm:"size:255;uniqueIndex:idx_journal_computed_row_v2;not null"`
+	PresetVersionID uint      `gorm:"index;not null"`
+	ValuesJSON      string    `gorm:"type:text;not null;default:'{}'"`
+	CalculatedAt    time.Time `gorm:"index"`
+}
+
 func ModelSet() []any {
 	return []any{
 		&DBUser{},
@@ -202,5 +266,11 @@ func ModelSet() []any {
 		&DBJournalGroup{},
 		&DBJournalStudent{},
 		&DBJournalDate{},
+		&DBGradingPreset{},
+		&DBGradingPresetVersion{},
+		&DBGroupPresetBinding{},
+		&DBJournalDateCellV2{},
+		&DBJournalManualCellV2{},
+		&DBJournalComputedRowV2{},
 	}
 }

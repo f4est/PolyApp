@@ -50,5 +50,4 @@ flutter run -d chrome --dart-define=API_BASE_URL=http://localhost:8000
 
 ## Важно
 
-Старый Python-код сохранён в каталоге `server` как legacy-референс, но новый runtime — это `server-go`.
-
+Старый Python-код перенесён в `legacy-files/server-legacy` как legacy-референс, но новый runtime — это `server-go`.

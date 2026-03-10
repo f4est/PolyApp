@@ -18,13 +18,15 @@ import (
 )
 
 type Handler struct {
-	cfg      config.Config
-	db       *gorm.DB
-	redis    *redis.Client
-	authUC   *usecase.AuthUseCase
-	newsUC   *usecase.NewsUseCase
-	userRepo *persistence.UserRepo
-	newsRepo *persistence.NewsRepo
+	cfg       config.Config
+	db        *gorm.DB
+	redis     *redis.Client
+	authUC    *usecase.AuthUseCase
+	newsUC    *usecase.NewsUseCase
+	presetUC  *usecase.PresetUseCase
+	journalUC *usecase.JournalUseCase
+	userRepo  *persistence.UserRepo
+	newsRepo  *persistence.NewsRepo
 }
 
 func NewHandler(
@@ -33,17 +35,21 @@ func NewHandler(
 	redisClient *redis.Client,
 	authUC *usecase.AuthUseCase,
 	newsUC *usecase.NewsUseCase,
+	presetUC *usecase.PresetUseCase,
+	journalUC *usecase.JournalUseCase,
 	userRepo *persistence.UserRepo,
 	newsRepo *persistence.NewsRepo,
 ) *Handler {
 	return &Handler{
-		cfg:      cfg,
-		db:       db,
-		redis:    redisClient,
-		authUC:   authUC,
-		newsUC:   newsUC,
-		userRepo: userRepo,
-		newsRepo: newsRepo,
+		cfg:       cfg,
+		db:        db,
+		redis:     redisClient,
+		authUC:    authUC,
+		newsUC:    newsUC,
+		presetUC:  presetUC,
+		journalUC: journalUC,
+		userRepo:  userRepo,
+		newsRepo:  newsRepo,
 	}
 }
 

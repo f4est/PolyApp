@@ -9,7 +9,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -21,8 +20,8 @@ import 'firebase_options.dart';
 import 'api/api_client.dart';
 import 'journal/journal_store.dart';
 import 'journal/attendance_journal_page.dart';
-import 'journal/grades_journal_page.dart';
-import 'journal/grades_pluto_page.dart';
+import 'journal/grades_preset_journal_page.dart';
+import 'widgets/brand_logo.dart';
 
 const String apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
@@ -859,9 +858,9 @@ class SplashPage extends StatelessWidget {
         child: Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            children: const [
-              Icon(Icons.school, size: 72, color: Colors.white),
-              SizedBox(height: 16),
+            children: [
+              const BrandLogo(size: 96, animated: true),
+              const SizedBox(height: 16),
               Text(
                 'PolyApp',
                 style: TextStyle(
@@ -870,8 +869,20 @@ class SplashPage extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                 ),
               ),
-              SizedBox(height: 16),
-              CircularProgressIndicator(color: Colors.white),
+              const SizedBox(height: 16),
+              Text(
+                l10n.t('loading'),
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+              ),
+              const SizedBox(height: 10),
+              const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2.2,
+                ),
+              ),
             ],
           ),
         ),
@@ -1028,10 +1039,19 @@ class _AuthPageState extends State<AuthPage> {
                         children: [
                           Row(
                             children: [
-                              const CircleAvatar(
-                                radius: 24,
-                                backgroundColor: kSecondaryBackground,
-                                child: Icon(Icons.school, color: kBrandPrimary),
+                              Container(
+                                width: 58,
+                                height: 58,
+                                decoration: BoxDecoration(
+                                  color: kSecondaryBackground,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: kBrandPrimary.withValues(
+                                      alpha: 0.15,
+                                    ),
+                                  ),
+                                ),
+                                child: const Center(child: BrandLogo(size: 42)),
                               ),
                               const SizedBox(width: 12),
                               Expanded(
@@ -1379,14 +1399,7 @@ class LoadingOverlay extends StatelessWidget {
     return Container(
       color: Colors.black54,
       child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: const [
-            Icon(Icons.school, size: 64, color: Colors.white),
-            SizedBox(height: 16),
-            CircularProgressIndicator(color: Colors.white),
-          ],
-        ),
+        child: const BrandLoadingIndicator(dark: true, logoSize: 88),
       ),
     );
   }
@@ -1592,7 +1605,7 @@ final List<RoleDefinition> kRoles = [
   RoleDefinition(
     id: 'teacher',
     title: 'Teacher',
-    subtitle: 'Journals and feed',
+    subtitle: 'Journals, feed and requests',
     color: const Color(0xFF6C3B2A),
     features: [
       FeatureDefinition(
@@ -1630,6 +1643,12 @@ final List<RoleDefinition> kRoles = [
         title: 'News feed',
         icon: Icons.dynamic_feed,
         builder: (context) => const NewsFeedPage(canEdit: false),
+      ),
+      FeatureDefinition(
+        id: 'requests',
+        title: 'Requests',
+        icon: Icons.receipt_long,
+        builder: (context) => const RequestsPage(canProcess: true),
       ),
       FeatureDefinition(
         id: 'profile',
@@ -1713,6 +1732,17 @@ class _RoleHomePageState extends State<RoleHomePage> {
           t('Аналитика', 'Analytics'),
           Icons.analytics_outlined,
           (context) => const AnalyticsPage(),
+        ),
+      );
+    }
+    if (featureIds.contains('requests')) {
+      final canProcess =
+          widget.role.id != 'student' && widget.role.id != 'parent';
+      items.add(
+        _NavItem(
+          t('Заявки', 'Requests'),
+          Icons.receipt_long,
+          (context) => RequestsPage(canProcess: canProcess),
         ),
       );
     }
@@ -2449,7 +2479,7 @@ class _SchedulePageState extends State<SchedulePage> {
           ),
         ),
         const SizedBox(height: 16),
-        if (_loading) const Center(child: CircularProgressIndicator()),
+        if (_loading) const Center(child: BrandLoadingIndicator()),
         if (!_loading && isEmpty)
           const Text('No lessons for this day')
         else if (!_loading)
@@ -2539,7 +2569,7 @@ class GradesPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final role = AppStateScope.of(context).user?.role ?? '';
     final canEdit = role == 'teacher' || role == 'admin';
-    return GradesPlutoPage(
+    return GradesPresetJournalPage(
       canEdit: canEdit,
       client: AppStateScope.of(context).client,
     );
@@ -2748,7 +2778,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(child: BrandLoadingIndicator());
         }
         if (snapshot.hasError) {
           return Text('Failed to load exam grades: ${snapshot.error}');
@@ -2763,7 +2793,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
               Card(
                 margin: const EdgeInsets.only(bottom: 12),
                 child: ListTile(
-                  leading: const CircleAvatar(child: Icon(Icons.school)),
+                  leading: const CircleAvatar(child: BrandLogo(size: 20)),
                   title: Text('${item.examName} (${item.groupName})'),
                   subtitle: Text(
                     '${item.studentName} - ${_dateFormat.format(item.createdAt)}',
@@ -2890,7 +2920,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(child: BrandLoadingIndicator());
         }
         if (snapshot.hasError) {
           return Text('Failed to load uploads: ${snapshot.error}');
@@ -3301,7 +3331,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(child: BrandLoadingIndicator());
         }
         if (snapshot.hasError) {
           return Text('Failed to load groups: ${snapshot.error}');
@@ -3335,7 +3365,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(child: BrandLoadingIndicator());
         }
         if (snapshot.hasError) {
           return Text('Failed to load attendance: ${snapshot.error}');
@@ -3373,7 +3403,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(child: BrandLoadingIndicator());
         }
         if (snapshot.hasError) {
           return Text('Failed to load grades: ${snapshot.error}');
@@ -3411,7 +3441,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(child: BrandLoadingIndicator());
         }
         if (snapshot.hasError) {
           return Text('Failed to load assignments: ${snapshot.error}');
@@ -3559,7 +3589,7 @@ class _RequestsPageState extends State<RequestsPage> {
         future: _requestsFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(child: BrandLoadingIndicator());
           }
           if (snapshot.hasError) {
             return Text('Failed to load requests: ${snapshot.error}');
@@ -4448,7 +4478,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
           future: _future,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
+              return const Center(child: BrandLoadingIndicator());
             }
             if (snapshot.hasError) {
               final message = humanizeError(snapshot.error ?? '');
@@ -5530,7 +5560,9 @@ class _HomeNewsPreviewState extends State<_HomeNewsPreview> {
             if (_loading)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 18),
-                child: Center(child: CircularProgressIndicator()),
+                child: Center(
+                  child: BrandLoadingIndicator(logoSize: 48, spacing: 8),
+                ),
               )
             else if (_error != null)
               InlineNotice(message: _error!, isError: true)
@@ -5658,7 +5690,9 @@ class _HomeAttendancePreviewState extends State<_HomeAttendancePreview> {
             if (_loading)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 18),
-                child: Center(child: CircularProgressIndicator()),
+                child: Center(
+                  child: BrandLoadingIndicator(logoSize: 48, spacing: 8),
+                ),
               )
             else if (_error != null)
               InlineNotice(message: _error!, isError: true)
@@ -6044,7 +6078,7 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
             child: RefreshIndicator(
               onRefresh: _refresh,
               child: _loading && _posts.isEmpty
-                  ? const Center(child: CircularProgressIndicator())
+                  ? const Center(child: BrandLoadingIndicator())
                   : ListView.builder(
                       controller: _scrollController,
                       itemCount: _posts.length + (_loadingMore ? 1 : 0),
@@ -6052,7 +6086,12 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
                         if (index >= _posts.length) {
                           return const Padding(
                             padding: EdgeInsets.symmetric(vertical: 16),
-                            child: Center(child: CircularProgressIndicator()),
+                            child: Center(
+                              child: BrandLoadingIndicator(
+                                logoSize: 44,
+                                spacing: 8,
+                              ),
+                            ),
                           );
                         }
                         final post = _posts[index];
@@ -6231,7 +6270,10 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
                                                           kSecondaryBackground,
                                                       child: const Center(
                                                         child:
-                                                            CircularProgressIndicator(),
+                                                            BrandLoadingIndicator(
+                                                              logoSize: 40,
+                                                              spacing: 8,
+                                                            ),
                                                       ),
                                                     );
                                                   },
@@ -6728,7 +6770,7 @@ class _NewsPostDetailPageState extends State<NewsPostDetailPage> {
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: BrandLoadingIndicator())
           : ListView(
               padding: const EdgeInsets.all(20),
               children: [
@@ -6997,7 +7039,7 @@ class _VideoPlayerFullState extends State<_VideoPlayerFull> {
   @override
   Widget build(BuildContext context) {
     if (!_ready || _controller == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: BrandLoadingIndicator());
     }
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
