@@ -1,6 +1,7 @@
 package http
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -139,6 +140,18 @@ func (h *Handler) RegisterAcademicRoutes(router *gin.Engine, auth *httpMiddlewar
 		secured.POST("/journal/v2/groups/:group_name/manual-cells/bulk-upsert", httpMiddleware.RequireRoles("teacher", "admin"), h.bulkUpsertManualCellsV2)
 		secured.POST("/journal/v2/groups/:group_name/recalculate", httpMiddleware.RequireRoles("teacher", "admin"), h.recalculateJournalV2)
 
+		secured.GET("/makeups", h.listMakeupCases)
+		secured.POST("/makeups", httpMiddleware.RequireRoles("teacher", "admin"), h.createMakeupCase)
+		secured.GET("/makeups/:id", h.getMakeupCase)
+		secured.PATCH("/makeups/:id", h.patchMakeupCase)
+		secured.DELETE("/makeups/:id", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteMakeupCase)
+		secured.GET("/makeups/:id/messages", h.listMakeupMessages)
+		secured.POST("/makeups/:id/messages", h.createMakeupMessage)
+		secured.POST("/makeups/:id/proof", httpMiddleware.RequireRoles("student", "admin"), h.uploadMakeupProof)
+		secured.POST("/makeups/:id/submission", httpMiddleware.RequireRoles("student", "admin"), h.uploadMakeupSubmission)
+		secured.GET("/makeups/groups", httpMiddleware.RequireRoles("teacher", "admin"), h.listMakeupGroupsForActor)
+		secured.GET("/makeups/groups/:group_name/students", httpMiddleware.RequireRoles("teacher", "admin"), h.listMakeupStudentsForGroup)
+
 		secured.GET("/teacher-assignments", httpMiddleware.RequireRoles("teacher", "admin"), h.listTeacherAssignments)
 		secured.POST("/teacher-assignments", httpMiddleware.RequireRoles("admin"), h.createTeacherAssignment)
 		secured.PATCH("/teacher-assignments/:id", httpMiddleware.RequireRoles("admin"), h.updateTeacherAssignment)
@@ -197,7 +210,22 @@ func mapScheduleUpload(item persistence.DBScheduleUpload) gin.H {
 
 func mapScheduleLessons(lessons []persistence.DBScheduleLesson) []gin.H {
 	out := make([]gin.H, 0, len(lessons))
+	seen := make(map[string]struct{}, len(lessons))
 	for _, row := range lessons {
+		key := strings.ToLower(strings.TrimSpace(strings.Join([]string{
+			strconv.Itoa(row.Shift),
+			strconv.Itoa(row.Period),
+			strings.TrimSpace(row.TimeText),
+			strings.TrimSpace(row.GroupName),
+			strings.TrimSpace(row.Lesson),
+			strings.TrimSpace(row.TeacherName),
+		}, "|")))
+		if key != "" {
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+		}
 		out = append(out, gin.H{
 			"shift":      row.Shift,
 			"period":     row.Period,

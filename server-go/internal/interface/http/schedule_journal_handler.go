@@ -1,14 +1,14 @@
 package http
 
 import (
-	"bytes"
 	"context"
-	"encoding/csv"
 	"errors"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -48,16 +48,107 @@ func (h *Handler) uploadSchedule(c *gin.Context) {
 		return
 	}
 
-	upload := persistence.DBScheduleUpload{
-		Filename:   file.Filename,
-		DBFilename: storedName,
-		UploadedAt: time.Now().UTC(),
-	}
-	if err := h.db.WithContext(c.Request.Context()).Create(&upload).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save upload"})
+	drafts, detectedDate, err := parseScheduleLessonsFromDOCX(file.Filename, buf)
+	if err != nil {
+		_ = os.Remove(target)
+		c.JSON(http.StatusBadRequest, gin.H{"detail": err.Error()})
 		return
 	}
-	_ = h.tryParseScheduleCSV(c.Request.Context(), upload.ID, buf)
+	if len(drafts) == 0 {
+		_ = os.Remove(target)
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "No lessons found in DOCX"})
+		return
+	}
+
+	scheduleDate, err := parseScheduleDateInput(c.PostForm("schedule_date"), file.Filename, detectedDate)
+	if err != nil {
+		_ = os.Remove(target)
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "schedule_date should be YYYY-MM-DD"})
+		return
+	}
+	var previousForDate []persistence.DBScheduleUpload
+	if scheduleDate != nil {
+		_ = h.db.WithContext(c.Request.Context()).
+			Where("schedule_date = ?", *scheduleDate).
+			Find(&previousForDate).Error
+	}
+
+	upload := persistence.DBScheduleUpload{
+		Filename:     file.Filename,
+		DBFilename:   storedName,
+		ScheduleDate: scheduleDate,
+		UploadedAt:   time.Now().UTC(),
+	}
+	idsToReplace := make([]uint, 0, len(previousForDate))
+	filesToRemove := make([]string, 0, len(previousForDate))
+	for _, prev := range previousForDate {
+		idsToReplace = append(idsToReplace, prev.ID)
+		if strings.TrimSpace(prev.DBFilename) != "" {
+			filesToRemove = append(filesToRemove, filepath.Join(scheduleDir, prev.DBFilename))
+		}
+	}
+
+	if err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		if len(idsToReplace) > 0 {
+			if err := tx.Where("upload_id IN ?", idsToReplace).Delete(&persistence.DBScheduleLesson{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("id IN ?", idsToReplace).Delete(&persistence.DBScheduleUpload{}).Error; err != nil {
+				return err
+			}
+		}
+
+		if err := tx.Create(&upload).Error; err != nil {
+			return err
+		}
+
+		lessons := make([]persistence.DBScheduleLesson, 0, len(drafts))
+		seenLessonKeys := make(map[string]struct{}, len(drafts))
+		now := time.Now().UTC()
+		for _, draft := range drafts {
+			// Ignore duplicate rows from DOCX. We intentionally do not use audience in
+			// dedupe key to avoid duplicate same lesson/group/time with accidental room drift.
+			dedupeKey := strings.ToLower(strings.TrimSpace(strings.Join([]string{
+				strconv.Itoa(draft.Shift),
+				strconv.Itoa(draft.Period),
+				strings.TrimSpace(draft.TimeText),
+				strings.TrimSpace(draft.GroupName),
+				strings.TrimSpace(draft.Lesson),
+				strings.TrimSpace(draft.TeacherName),
+			}, "|")))
+			if dedupeKey != "" {
+				if _, exists := seenLessonKeys[dedupeKey]; exists {
+					continue
+				}
+				seenLessonKeys[dedupeKey] = struct{}{}
+			}
+			lessons = append(lessons, persistence.DBScheduleLesson{
+				UploadID:    upload.ID,
+				Shift:       draft.Shift,
+				Period:      draft.Period,
+				TimeText:    draft.TimeText,
+				Audience:    draft.Audience,
+				Lesson:      draft.Lesson,
+				GroupName:   draft.GroupName,
+				TeacherName: draft.TeacherName,
+				CreatedAt:   now,
+			})
+		}
+		if len(lessons) == 0 {
+			return errors.New("no parsed lessons")
+		}
+		return tx.Create(&lessons).Error
+	}); err != nil {
+		_ = os.Remove(target)
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Failed to parse DOCX lessons"})
+		return
+	}
+
+	for _, filename := range filesToRemove {
+		_ = os.Remove(filename)
+	}
+
+	_ = h.cleanupOldSchedules(c.Request.Context(), 30)
 	c.JSON(http.StatusOK, mapScheduleUpload(upload))
 }
 
@@ -79,6 +170,7 @@ func (h *Handler) listScheduleUploads(c *gin.Context) {
 func (h *Handler) latestScheduleUpload(c *gin.Context) {
 	var upload persistence.DBScheduleUpload
 	if err := h.db.WithContext(c.Request.Context()).
+		Order("schedule_date desc nulls last").
 		Order("uploaded_at desc").
 		First(&upload).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -92,30 +184,99 @@ func (h *Handler) latestScheduleUpload(c *gin.Context) {
 }
 
 func (h *Handler) scheduleGroups(c *gin.Context) {
-	var groups []string
-	if err := h.db.WithContext(c.Request.Context()).
-		Model(&persistence.DBScheduleLesson{}).
-		Distinct("group_name").
-		Where("group_name <> ''").
-		Order("group_name asc").
-		Pluck("group_name", &groups).Error; err != nil {
+	scheduleAt, err := parseScheduleAt(c.Query("at"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid 'at' date. Use YYYY-MM-DD"})
+		return
+	}
+	uploadID, err := h.resolveScheduleUploadID(c.Request.Context(), scheduleAt)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load groups"})
 		return
 	}
+	if scheduleAt != nil && uploadID == 0 {
+		c.JSON(http.StatusOK, []string{})
+		return
+	}
+
+	var rawGroups []string
+	query := h.db.WithContext(c.Request.Context()).
+		Model(&persistence.DBScheduleLesson{}).
+		Where("group_name <> ''")
+	if uploadID > 0 {
+		query = query.Where("upload_id = ?", uploadID)
+	}
+	if err := query.Pluck("group_name", &rawGroups).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load groups"})
+		return
+	}
+	unique := map[string]struct{}{}
+	groups := make([]string, 0, len(rawGroups))
+	for _, value := range rawGroups {
+		for _, token := range extractGroupTokens(value) {
+			normalized := strings.TrimSpace(token)
+			if normalized == "" {
+				continue
+			}
+			key := strings.ToLower(normalized)
+			if _, exists := unique[key]; exists {
+				continue
+			}
+			unique[key] = struct{}{}
+			groups = append(groups, normalized)
+		}
+	}
+	sort.Strings(groups)
 	c.JSON(http.StatusOK, groups)
 }
 
 func (h *Handler) scheduleTeachers(c *gin.Context) {
-	var teachers []string
-	if err := h.db.WithContext(c.Request.Context()).
-		Model(&persistence.DBScheduleLesson{}).
-		Distinct("teacher_name").
-		Where("teacher_name <> ''").
-		Order("teacher_name asc").
-		Pluck("teacher_name", &teachers).Error; err != nil {
+	scheduleAt, err := parseScheduleAt(c.Query("at"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid 'at' date. Use YYYY-MM-DD"})
+		return
+	}
+	uploadID, err := h.resolveScheduleUploadID(c.Request.Context(), scheduleAt)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load teachers"})
 		return
 	}
+	if scheduleAt != nil && uploadID == 0 {
+		c.JSON(http.StatusOK, []string{})
+		return
+	}
+
+	var rows []persistence.DBScheduleLesson
+	query := h.db.WithContext(c.Request.Context()).
+		Model(&persistence.DBScheduleLesson{})
+	if uploadID > 0 {
+		query = query.Where("upload_id = ?", uploadID)
+	}
+	if err := query.Find(&rows).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load teachers"})
+		return
+	}
+
+	unique := map[string]struct{}{}
+	teachers := make([]string, 0, len(rows))
+	for _, row := range rows {
+		candidates := []string{
+			strings.TrimSpace(row.TeacherName),
+			strings.TrimSpace(deriveTeacherNameFromLesson(row.Lesson)),
+		}
+		for _, value := range candidates {
+			if value == "" {
+				continue
+			}
+			key := strings.ToLower(value)
+			if _, exists := unique[key]; exists {
+				continue
+			}
+			unique[key] = struct{}{}
+			teachers = append(teachers, value)
+		}
+	}
+	sort.Strings(teachers)
 	c.JSON(http.StatusOK, teachers)
 }
 
@@ -126,18 +287,62 @@ func (h *Handler) scheduleForMe(c *gin.Context) {
 		return
 	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBScheduleLesson{})
+	scheduleAt, err := parseScheduleAt(c.Query("at"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid 'at' date. Use YYYY-MM-DD"})
+		return
+	}
 	if user.Role == "student" && strings.TrimSpace(user.StudentGroup) != "" {
-		query = query.Where("group_name = ?", user.StudentGroup)
-	} else if user.Role == "teacher" && strings.TrimSpace(user.TeacherName) != "" {
-		query = query.Where("teacher_name = ?", user.TeacherName)
+		// Student filtering is applied after fetch to support legacy merged group
+		// cells like "ИС23-3А ИС25-1Б".
+	} else if user.Role == "teacher" {
+		teacherName := strings.TrimSpace(user.TeacherName)
+		if teacherName == "" {
+			teacherName = strings.TrimSpace(user.FullName)
+		}
+		if teacherName == "" {
+			c.JSON(http.StatusOK, []gin.H{})
+			return
+		}
+		pattern := "%" + strings.ToLower(teacherName) + "%"
+		query = query.Where(
+			"lower(teacher_name) = lower(?) OR lower(teacher_name) LIKE ? OR lower(lesson) LIKE ?",
+			teacherName,
+			pattern,
+			pattern,
+		)
 	} else {
 		c.JSON(http.StatusOK, []gin.H{})
 		return
+	}
+	uploadID, err := h.resolveScheduleUploadID(c.Request.Context(), scheduleAt)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load schedule"})
+		return
+	}
+	if scheduleAt != nil && uploadID == 0 {
+		c.JSON(http.StatusOK, []gin.H{})
+		return
+	}
+	if uploadID > 0 {
+		query = query.Where("upload_id = ?", uploadID)
 	}
 	var lessons []persistence.DBScheduleLesson
 	if err := query.Order("shift asc").Order("period asc").Find(&lessons).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load schedule"})
 		return
+	}
+	if user.Role == "student" {
+		group := strings.TrimSpace(user.StudentGroup)
+		if group != "" {
+			filtered := make([]persistence.DBScheduleLesson, 0, len(lessons))
+			for _, row := range lessons {
+				if groupIncludesToken(row.GroupName, group) {
+					filtered = append(filtered, row)
+				}
+			}
+			lessons = filtered
+		}
 	}
 	c.JSON(http.StatusOK, mapScheduleLessons(lessons))
 }
@@ -148,14 +353,39 @@ func (h *Handler) scheduleForGroup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Group is required"})
 		return
 	}
+	scheduleAt, err := parseScheduleAt(c.Query("at"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid 'at' date. Use YYYY-MM-DD"})
+		return
+	}
+	uploadID, err := h.resolveScheduleUploadID(c.Request.Context(), scheduleAt)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load schedule"})
+		return
+	}
+	if scheduleAt != nil && uploadID == 0 {
+		c.JSON(http.StatusOK, []gin.H{})
+		return
+	}
 	var lessons []persistence.DBScheduleLesson
-	if err := h.db.WithContext(c.Request.Context()).
-		Where("group_name = ?", groupName).
+	query := h.db.WithContext(c.Request.Context()).
+		Model(&persistence.DBScheduleLesson{})
+	if uploadID > 0 {
+		query = query.Where("upload_id = ?", uploadID)
+	}
+	if err := query.
 		Order("shift asc").Order("period asc").
 		Find(&lessons).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load schedule"})
 		return
 	}
+	filtered := make([]persistence.DBScheduleLesson, 0, len(lessons))
+	for _, row := range lessons {
+		if groupIncludesToken(row.GroupName, groupName) {
+			filtered = append(filtered, row)
+		}
+	}
+	lessons = filtered
 	c.JSON(http.StatusOK, mapScheduleLessons(lessons))
 }
 
@@ -165,9 +395,33 @@ func (h *Handler) scheduleForTeacher(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Teacher is required"})
 		return
 	}
+	scheduleAt, err := parseScheduleAt(c.Query("at"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid 'at' date. Use YYYY-MM-DD"})
+		return
+	}
+	uploadID, err := h.resolveScheduleUploadID(c.Request.Context(), scheduleAt)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load schedule"})
+		return
+	}
+	if scheduleAt != nil && uploadID == 0 {
+		c.JSON(http.StatusOK, []gin.H{})
+		return
+	}
 	var lessons []persistence.DBScheduleLesson
-	if err := h.db.WithContext(c.Request.Context()).
-		Where("teacher_name = ?", teacherName).
+	pattern := "%" + strings.ToLower(teacherName) + "%"
+	query := h.db.WithContext(c.Request.Context()).
+		Where(
+			"lower(teacher_name) = lower(?) OR lower(teacher_name) LIKE ? OR lower(lesson) LIKE ?",
+			teacherName,
+			pattern,
+			pattern,
+		)
+	if uploadID > 0 {
+		query = query.Where("upload_id = ?", uploadID)
+	}
+	if err := query.
 		Order("shift asc").Order("period asc").
 		Find(&lessons).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load schedule"})
@@ -352,43 +606,141 @@ func (h *Handler) deleteJournalDate(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func (h *Handler) tryParseScheduleCSV(ctx context.Context, uploadID uint, data []byte) error {
-	reader := csv.NewReader(bytes.NewReader(data))
-	rows, err := reader.ReadAll()
+func parseScheduleDateInput(raw string, filename string, detected *time.Time) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw != "" {
+		parsed, err := parseDate(raw)
+		if err != nil {
+			return nil, err
+		}
+		return &parsed, nil
+	}
+	if detected != nil {
+		return detected, nil
+	}
+	if parsed, ok := parseScheduleDateFromFilename(filename); ok {
+		return &parsed, nil
+	}
+	today := time.Now().UTC()
+	defaultDate := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+	return &defaultDate, nil
+}
+
+func parseScheduleDateFromFilename(filename string) (time.Time, bool) {
+	base := strings.ToLower(filepath.Base(filename))
+	reDots := regexp.MustCompile(`(\d{2}\.\d{2}\.\d{4})`)
+	if m := reDots.FindStringSubmatch(base); len(m) == 2 {
+		if parsed, err := time.Parse("02.01.2006", m[1]); err == nil {
+			value := time.Date(parsed.Year(), parsed.Month(), parsed.Day(), 0, 0, 0, 0, time.UTC)
+			return value, true
+		}
+	}
+	base = strings.ReplaceAll(base, "_", "-")
+	base = strings.ReplaceAll(base, ".", "-")
+	parts := strings.Split(base, "-")
+	for i := 0; i+2 < len(parts); i++ {
+		a := strings.TrimSpace(parts[i])
+		b := strings.TrimSpace(parts[i+1])
+		c := strings.TrimSpace(parts[i+2])
+		if len(a) == 4 && len(b) == 2 && len(c) == 2 {
+			if parsed, err := parseDate(a + "-" + b + "-" + c); err == nil {
+				return parsed, true
+			}
+		}
+		if len(a) == 2 && len(b) == 2 && len(c) == 4 {
+			if parsed, err := parseDate(c + "-" + b + "-" + a); err == nil {
+				return parsed, true
+			}
+		}
+	}
+	return time.Time{}, false
+}
+
+func parseScheduleAt(value string) (*time.Time, error) {
+	raw := strings.TrimSpace(value)
+	if raw == "" {
+		return nil, nil
+	}
+	parsed, err := parseDate(raw)
 	if err != nil {
+		return nil, err
+	}
+	return &parsed, nil
+}
+
+func (h *Handler) resolveScheduleUploadID(ctx context.Context, at *time.Time) (uint, error) {
+	query := h.db.WithContext(ctx).Model(&persistence.DBScheduleUpload{})
+
+	var upload persistence.DBScheduleUpload
+	if at != nil {
+		// Day-specific schedule is strict: only exact date package.
+		err := query.
+			Where("schedule_date IS NOT NULL AND schedule_date = ?", *at).
+			Order("uploaded_at desc").
+			First(&upload).Error
+		if err == nil {
+			return upload.ID, nil
+		}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, nil
+		}
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	err := query.
+		Order("schedule_date desc nulls last").
+		Order("uploaded_at desc").
+		First(&upload).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return upload.ID, nil
+}
+
+func (h *Handler) cleanupOldSchedules(ctx context.Context, keepDays int) error {
+	if keepDays <= 0 {
+		keepDays = 30
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -keepDays)
+
+	var oldUploads []persistence.DBScheduleUpload
+	if err := h.db.WithContext(ctx).
+		Where("(schedule_date IS NOT NULL AND schedule_date < ?) OR (schedule_date IS NULL AND uploaded_at < ?)", cutoff, cutoff).
+		Find(&oldUploads).Error; err != nil {
 		return err
 	}
-	if len(rows) == 0 {
+	if len(oldUploads) == 0 {
 		return nil
 	}
-	lessons := make([]persistence.DBScheduleLesson, 0, len(rows))
-	for _, row := range rows {
-		if len(row) < 6 {
-			continue
+
+	ids := make([]uint, 0, len(oldUploads))
+	files := make([]string, 0, len(oldUploads))
+	for _, item := range oldUploads {
+		ids = append(ids, item.ID)
+		if strings.TrimSpace(item.DBFilename) != "" {
+			files = append(files, filepath.Join(h.cfg.MediaDir, "schedule", item.DBFilename))
 		}
-		shift, err1 := strconv.Atoi(strings.TrimSpace(row[0]))
-		period, err2 := strconv.Atoi(strings.TrimSpace(row[1]))
-		if err1 != nil || err2 != nil {
-			continue
-		}
-		teacher := ""
-		if len(row) > 6 {
-			teacher = strings.TrimSpace(row[6])
-		}
-		lessons = append(lessons, persistence.DBScheduleLesson{
-			UploadID:    uploadID,
-			Shift:       shift,
-			Period:      period,
-			TimeText:    strings.TrimSpace(row[2]),
-			Audience:    strings.TrimSpace(row[3]),
-			Lesson:      strings.TrimSpace(row[4]),
-			GroupName:   strings.TrimSpace(row[5]),
-			TeacherName: teacher,
-			CreatedAt:   time.Now().UTC(),
-		})
 	}
-	if len(lessons) == 0 {
+
+	if err := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("upload_id IN ?", ids).Delete(&persistence.DBScheduleLesson{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id IN ?", ids).Delete(&persistence.DBScheduleUpload{}).Error; err != nil {
+			return err
+		}
 		return nil
+	}); err != nil {
+		return err
 	}
-	return h.db.WithContext(ctx).Create(&lessons).Error
+
+	for _, filename := range files {
+		_ = os.Remove(filename)
+	}
+	return nil
 }

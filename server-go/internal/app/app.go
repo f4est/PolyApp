@@ -35,6 +35,9 @@ func Bootstrap(ctx context.Context) (*Runtime, error) {
 	if err := os.MkdirAll(filepath.Join(cfg.MediaDir, "schedule"), 0o755); err != nil {
 		return nil, fmt.Errorf("create media/schedule dir: %w", err)
 	}
+	if err := os.MkdirAll(filepath.Join(cfg.MediaDir, "makeup"), 0o755); err != nil {
+		return nil, fmt.Errorf("create media/makeup dir: %w", err)
+	}
 
 	db, err := persistence.OpenPostgres(cfg.DatabaseURL)
 	if err != nil {

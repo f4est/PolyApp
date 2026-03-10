@@ -68,10 +68,12 @@ func (h *Handler) RegisterAuthRoutes(router *gin.Engine, auth *httpMiddleware.Au
 	{
 		admin.POST("/users", h.createUser)
 		admin.GET("/users", h.listUsers)
+		admin.DELETE("/users/:id", h.deleteUser)
 	}
 	userRoutes := router.Group("/")
 	userRoutes.Use(auth.RequireAuth())
 	{
+		userRoutes.GET("/users/:id/public", h.getUserPublic)
 		userRoutes.GET("/users/:id", h.getUser)
 		userRoutes.PATCH("/users/:id", h.updateUser)
 	}
@@ -222,6 +224,64 @@ func (h *Handler) getUser(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, toUserPublic(*user))
+}
+
+func (h *Handler) getUserPublic(c *gin.Context) {
+	currentUser := httpMiddleware.CurrentUser(c)
+	if currentUser == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid user id"})
+		return
+	}
+	user, err := h.userRepo.GetByID(c.Request.Context(), uint(id))
+	if err != nil {
+		if errors.Is(err, domainErrors.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"detail": "User not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load user"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id":            user.ID,
+		"role":          user.Role,
+		"full_name":     user.FullName,
+		"avatar_url":    nullOrString(user.AvatarURL),
+		"about":         nullOrString(user.About),
+		"student_group": nullOrString(user.StudentGroup),
+		"teacher_name":  nullOrString(user.TeacherName),
+	})
+}
+
+func (h *Handler) deleteUser(c *gin.Context) {
+	currentUser := httpMiddleware.CurrentUser(c)
+	if currentUser == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid user id"})
+		return
+	}
+	userID := uint(id)
+	if currentUser.ID == userID {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Admin cannot delete self"})
+		return
+	}
+	if err := h.userRepo.Delete(c.Request.Context(), userID); err != nil {
+		if errors.Is(err, domainErrors.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"detail": "User not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete user"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 func (h *Handler) updateUser(c *gin.Context) {

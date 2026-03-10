@@ -1,12 +1,22 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 
 class ApiClient {
-  ApiClient({required this.baseUrl, this.token});
+  ApiClient({required String baseUrl, this.token})
+    : baseUrl = _normalizeBaseUrl(baseUrl);
 
   final String baseUrl;
   final String? token;
+
+  static String _normalizeBaseUrl(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return trimmed;
+    }
+    return trimmed.replaceFirst(RegExp(r'/+$'), '');
+  }
 
   Map<String, String> _headers({bool jsonBody = false}) {
     final headers = <String, String>{};
@@ -17,6 +27,11 @@ class ApiClient {
       headers['Authorization'] = 'Bearer $token';
     }
     return headers;
+  }
+
+  String _formatDateOnly(DateTime value) {
+    final localDate = DateTime(value.year, value.month, value.day);
+    return DateFormat('yyyy-MM-dd').format(localDate);
   }
 
   String _sanitizeFilename(String filename) {
@@ -101,6 +116,49 @@ class ApiClient {
     return data
         .map((item) => UserProfile.fromJson(item as Map<String, dynamic>))
         .toList();
+  }
+
+  Future<UserProfile> createUserAsAdmin({
+    required String role,
+    required String fullName,
+    required String email,
+    required String password,
+    String? deviceId,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/users'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({
+        'role': role,
+        'full_name': fullName,
+        'email': email,
+        'password': password,
+        'device_id': deviceId,
+      }),
+    );
+    _ensureSuccess(response);
+    return UserProfile.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<void> deleteUserAsAdmin(int userId) async {
+    final response = await http.delete(
+      Uri.parse('$baseUrl/users/$userId'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<UserPublicProfile> getUserPublic(int userId) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/users/$userId/public'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    return UserPublicProfile.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 
   Future<void> logout() async {
@@ -320,21 +378,21 @@ class ApiClient {
     return null;
   }
 
-  Future<List<String>> listScheduleGroups() async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/schedule/groups'),
-      headers: _headers(),
-    );
+  Future<List<String>> listScheduleGroups({DateTime? at}) async {
+    final uri = Uri.parse(
+      '$baseUrl/schedule/groups',
+    ).replace(queryParameters: {if (at != null) 'at': _formatDateOnly(at)});
+    final response = await http.get(uri, headers: _headers());
     _ensureSuccess(response);
     final data = jsonDecode(response.body) as List<dynamic>;
     return data.map((item) => item.toString()).toList();
   }
 
-  Future<List<String>> listScheduleTeachers() async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/schedule/teachers'),
-      headers: _headers(),
-    );
+  Future<List<String>> listScheduleTeachers({DateTime? at}) async {
+    final uri = Uri.parse(
+      '$baseUrl/schedule/teachers',
+    ).replace(queryParameters: {if (at != null) 'at': _formatDateOnly(at)});
+    final response = await http.get(uri, headers: _headers());
     _ensureSuccess(response);
     final data = jsonDecode(response.body) as List<dynamic>;
     return data.map((item) => item.toString()).toList();
@@ -343,6 +401,7 @@ class ApiClient {
   Future<ScheduleUpload> uploadScheduleBytes({
     required String filename,
     required List<int> bytes,
+    DateTime? scheduleDate,
   }) async {
     final request = http.MultipartRequest(
       'POST',
@@ -355,6 +414,9 @@ class ApiClient {
     request.files.add(
       http.MultipartFile.fromBytes('file', bytes, filename: safeName),
     );
+    if (scheduleDate != null) {
+      request.fields['schedule_date'] = _formatDateOnly(scheduleDate);
+    }
     final response = await request.send();
     final responseBytes = await response.stream.toBytes();
     final body = utf8.decode(responseBytes, allowMalformed: true);
@@ -367,11 +429,14 @@ class ApiClient {
     }
   }
 
-  Future<List<ScheduleLesson>> scheduleForGroup(String groupName) async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/schedule/group/${Uri.encodeComponent(groupName)}'),
-      headers: _headers(),
-    );
+  Future<List<ScheduleLesson>> scheduleForGroup(
+    String groupName, {
+    DateTime? at,
+  }) async {
+    final uri = Uri.parse(
+      '$baseUrl/schedule/group/${Uri.encodeComponent(groupName)}',
+    ).replace(queryParameters: {if (at != null) 'at': _formatDateOnly(at)});
+    final response = await http.get(uri, headers: _headers());
     _ensureSuccess(response);
     final data = jsonDecode(response.body) as List<dynamic>;
     return data
@@ -379,11 +444,11 @@ class ApiClient {
         .toList();
   }
 
-  Future<List<ScheduleLesson>> scheduleForMe() async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/schedule/me'),
-      headers: _headers(),
-    );
+  Future<List<ScheduleLesson>> scheduleForMe({DateTime? at}) async {
+    final uri = Uri.parse(
+      '$baseUrl/schedule/me',
+    ).replace(queryParameters: {if (at != null) 'at': _formatDateOnly(at)});
+    final response = await http.get(uri, headers: _headers());
     _ensureSuccess(response);
     final data = jsonDecode(response.body) as List<dynamic>;
     return data
@@ -391,13 +456,14 @@ class ApiClient {
         .toList();
   }
 
-  Future<List<ScheduleLesson>> scheduleForTeacher(String teacherName) async {
-    final response = await http.get(
-      Uri.parse(
-        '$baseUrl/schedule/teacher/${Uri.encodeComponent(teacherName)}',
-      ),
-      headers: _headers(),
-    );
+  Future<List<ScheduleLesson>> scheduleForTeacher(
+    String teacherName, {
+    DateTime? at,
+  }) async {
+    final uri = Uri.parse(
+      '$baseUrl/schedule/teacher/${Uri.encodeComponent(teacherName)}',
+    ).replace(queryParameters: {if (at != null) 'at': _formatDateOnly(at)});
+    final response = await http.get(uri, headers: _headers());
     _ensureSuccess(response);
     final data = jsonDecode(response.body) as List<dynamic>;
     return data
@@ -1092,11 +1158,319 @@ class ApiClient {
     _ensureSuccess(response);
   }
 
+  Future<List<MakeupCaseDto>> listMakeups({
+    String? groupName,
+    String? status,
+    int? studentId,
+    int? teacherId,
+  }) async {
+    final query = <String, String>{};
+    if (groupName != null && groupName.trim().isNotEmpty) {
+      query['group_name'] = groupName.trim();
+    }
+    if (status != null && status.trim().isNotEmpty) {
+      query['status'] = status.trim();
+    }
+    if (studentId != null && studentId > 0) {
+      query['student_id'] = '$studentId';
+    }
+    if (teacherId != null && teacherId > 0) {
+      query['teacher_id'] = '$teacherId';
+    }
+    final uri = Uri.parse(
+      '$baseUrl/makeups',
+    ).replace(queryParameters: query.isEmpty ? null : query);
+    final response = await _getWithApiFallback(uri);
+    _ensureSuccess(response);
+    final data = _decodeJsonList(response.body);
+    return data
+        .map((item) => MakeupCaseDto.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<MakeupCaseDto> getMakeup(int id) async {
+    final response = await _getWithApiFallback(
+      Uri.parse('$baseUrl/makeups/$id'),
+    );
+    _ensureSuccess(response);
+    return MakeupCaseDto.fromJson(_decodeJsonObject(response.body));
+  }
+
+  Future<MakeupCaseDto> createMakeup({
+    int? teacherId,
+    required int studentId,
+    required String groupName,
+    required DateTime classDate,
+    String teacherNote = '',
+  }) async {
+    final body = <String, dynamic>{
+      'student_id': studentId,
+      'group_name': groupName,
+      'class_date': DateFormat('yyyy-MM-dd').format(classDate.toUtc()),
+      'teacher_note': teacherNote,
+    };
+    if (teacherId != null && teacherId > 0) {
+      body['teacher_id'] = teacherId;
+    }
+    final response = await _postWithApiFallback(
+      Uri.parse('$baseUrl/makeups'),
+      jsonBody: true,
+      body: jsonEncode(body),
+    );
+    _ensureSuccess(response);
+    return MakeupCaseDto.fromJson(_decodeJsonObject(response.body));
+  }
+
+  Future<MakeupCaseDto> updateMakeup(
+    int id,
+    Map<String, dynamic> payload,
+  ) async {
+    final response = await _patchWithApiFallback(
+      Uri.parse('$baseUrl/makeups/$id'),
+      jsonBody: true,
+      body: jsonEncode(payload),
+    );
+    _ensureSuccess(response);
+    return MakeupCaseDto.fromJson(_decodeJsonObject(response.body));
+  }
+
+  Future<void> deleteMakeup(int id) async {
+    final response = await _deleteWithApiFallback(
+      Uri.parse('$baseUrl/makeups/$id'),
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<MakeupCaseDto> uploadMakeupProof({
+    required int caseId,
+    required String filename,
+    required List<int> bytes,
+    String? comment,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/makeups/$caseId/proof'),
+    );
+    request.headers.addAll(_headers());
+    request.files.add(
+      http.MultipartFile.fromBytes('file', bytes, filename: filename),
+    );
+    if (comment != null && comment.trim().isNotEmpty) {
+      request.fields['comment'] = comment.trim();
+    }
+    final sent = await request.send();
+    final bodyText = utf8.decode(
+      await sent.stream.toBytes(),
+      allowMalformed: true,
+    );
+    final wrapped = http.Response(bodyText, sent.statusCode);
+    _ensureSuccess(wrapped);
+    return MakeupCaseDto.fromJson(_decodeJsonObject(bodyText));
+  }
+
+  Future<MakeupCaseDto> uploadMakeupSubmission({
+    required int caseId,
+    String? text,
+    String? filename,
+    List<int>? bytes,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/makeups/$caseId/submission'),
+    );
+    request.headers.addAll(_headers());
+    if (text != null && text.trim().isNotEmpty) {
+      request.fields['text'] = text.trim();
+    }
+    if (bytes != null &&
+        bytes.isNotEmpty &&
+        filename != null &&
+        filename.isNotEmpty) {
+      request.files.add(
+        http.MultipartFile.fromBytes('file', bytes, filename: filename),
+      );
+    }
+    final sent = await request.send();
+    final bodyText = utf8.decode(
+      await sent.stream.toBytes(),
+      allowMalformed: true,
+    );
+    final wrapped = http.Response(bodyText, sent.statusCode);
+    _ensureSuccess(wrapped);
+    return MakeupCaseDto.fromJson(_decodeJsonObject(bodyText));
+  }
+
+  Future<List<MakeupMessageDto>> listMakeupMessages(int caseId) async {
+    final response = await _getWithApiFallback(
+      Uri.parse('$baseUrl/makeups/$caseId/messages'),
+    );
+    _ensureSuccess(response);
+    final data = _decodeJsonList(response.body);
+    return data
+        .map((item) => MakeupMessageDto.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<MakeupMessageDto> sendMakeupMessage({
+    required int caseId,
+    String? text,
+    String? filename,
+    List<int>? bytes,
+  }) async {
+    if ((text == null || text.trim().isEmpty) &&
+        (bytes == null ||
+            bytes.isEmpty ||
+            filename == null ||
+            filename.isEmpty)) {
+      throw Exception('Message text or attachment is required.');
+    }
+    if (bytes != null &&
+        bytes.isNotEmpty &&
+        filename != null &&
+        filename.isNotEmpty) {
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$baseUrl/makeups/$caseId/messages'),
+      );
+      request.headers.addAll(_headers());
+      if (text != null && text.trim().isNotEmpty) {
+        request.fields['text'] = text.trim();
+      }
+      request.files.add(
+        http.MultipartFile.fromBytes('file', bytes, filename: filename),
+      );
+      final sent = await request.send();
+      final bodyText = utf8.decode(
+        await sent.stream.toBytes(),
+        allowMalformed: true,
+      );
+      final wrapped = http.Response(bodyText, sent.statusCode);
+      _ensureSuccess(wrapped);
+      return MakeupMessageDto.fromJson(_decodeJsonObject(bodyText));
+    }
+
+    final response = await _postWithApiFallback(
+      Uri.parse('$baseUrl/makeups/$caseId/messages'),
+      jsonBody: true,
+      body: jsonEncode({'text': text?.trim() ?? ''}),
+    );
+    _ensureSuccess(response);
+    return MakeupMessageDto.fromJson(_decodeJsonObject(response.body));
+  }
+
+  Future<List<String>> listMakeupGroups() async {
+    final response = await _getWithApiFallback(
+      Uri.parse('$baseUrl/makeups/groups'),
+    );
+    _ensureSuccess(response);
+    final data = _decodeJsonList(response.body);
+    return data.map((item) => item.toString()).toList();
+  }
+
+  Future<List<UserPublicProfile>> listMakeupStudentsByGroup(
+    String groupName,
+  ) async {
+    final response = await _getWithApiFallback(
+      Uri.parse(
+        '$baseUrl/makeups/groups/${Uri.encodeComponent(groupName)}/students',
+      ),
+    );
+    _ensureSuccess(response);
+    final data = _decodeJsonList(response.body);
+    return data
+        .map((item) => UserPublicProfile.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
   AuthResponse _parseAuthResponse(http.Response response) {
     _ensureSuccess(response);
     return AuthResponse.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
+  }
+
+  Future<http.Response> _getWithApiFallback(Uri uri) async {
+    final primary = await http.get(uri, headers: _headers());
+    if (primary.statusCode != 404) {
+      return primary;
+    }
+    final fallbackUri = _toggleApiPrefix(uri);
+    if (fallbackUri.toString() == uri.toString()) {
+      return primary;
+    }
+    return http.get(fallbackUri, headers: _headers());
+  }
+
+  Future<http.Response> _postWithApiFallback(
+    Uri uri, {
+    required bool jsonBody,
+    Object? body,
+  }) async {
+    final primary = await http.post(
+      uri,
+      headers: _headers(jsonBody: jsonBody),
+      body: body,
+    );
+    if (primary.statusCode != 404) {
+      return primary;
+    }
+    final fallbackUri = _toggleApiPrefix(uri);
+    if (fallbackUri.toString() == uri.toString()) {
+      return primary;
+    }
+    return http.post(
+      fallbackUri,
+      headers: _headers(jsonBody: jsonBody),
+      body: body,
+    );
+  }
+
+  Future<http.Response> _patchWithApiFallback(
+    Uri uri, {
+    required bool jsonBody,
+    Object? body,
+  }) async {
+    final primary = await http.patch(
+      uri,
+      headers: _headers(jsonBody: jsonBody),
+      body: body,
+    );
+    if (primary.statusCode != 404) {
+      return primary;
+    }
+    final fallbackUri = _toggleApiPrefix(uri);
+    if (fallbackUri.toString() == uri.toString()) {
+      return primary;
+    }
+    return http.patch(
+      fallbackUri,
+      headers: _headers(jsonBody: jsonBody),
+      body: body,
+    );
+  }
+
+  Future<http.Response> _deleteWithApiFallback(Uri uri) async {
+    final primary = await http.delete(uri, headers: _headers());
+    if (primary.statusCode != 404) {
+      return primary;
+    }
+    final fallbackUri = _toggleApiPrefix(uri);
+    if (fallbackUri.toString() == uri.toString()) {
+      return primary;
+    }
+    return http.delete(fallbackUri, headers: _headers());
+  }
+
+  Uri _toggleApiPrefix(Uri uri) {
+    final path = uri.path;
+    if (path == '/api' || path.startsWith('/api/')) {
+      final nextPath = path == '/api' ? '/' : path.substring(4);
+      return uri.replace(path: nextPath.isEmpty ? '/' : nextPath);
+    }
+    if (path == '/') {
+      return uri.replace(path: '/api');
+    }
+    return uri.replace(path: '/api$path');
   }
 
   void _ensureSuccess(http.Response response) {
@@ -1107,24 +1481,74 @@ class ApiClient {
 
   Map<String, dynamic> _decodeJsonObject(String body) {
     final trimmed = body.trim();
+    if (trimmed.isEmpty) {
+      throw const FormatException('Empty JSON object');
+    }
+
+    String normalizeEscapedJson(String value) {
+      return value
+          .replaceAll('\uFEFF', '')
+          .replaceAll(r'\"', '"')
+          .replaceAll(r'\\/', '/')
+          .replaceAll(r'\/', '/')
+          .replaceAll(r'\\n', '\n')
+          .replaceAll(r'\\t', '\t')
+          .replaceAll(r'\\r', '\r');
+    }
+
     dynamic decoded;
     try {
       decoded = jsonDecode(trimmed);
     } catch (_) {
       if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
         final unescaped = jsonDecode(trimmed) as String;
-        decoded = jsonDecode(unescaped);
+        decoded = jsonDecode(normalizeEscapedJson(unescaped));
       } else {
-        rethrow;
+        decoded = jsonDecode(normalizeEscapedJson(trimmed));
       }
     }
     if (decoded is String) {
-      decoded = jsonDecode(decoded);
+      decoded = jsonDecode(normalizeEscapedJson(decoded));
     }
     if (decoded is Map<String, dynamic>) {
       return decoded;
     }
     throw FormatException('Invalid JSON object');
+  }
+
+  List<dynamic> _decodeJsonList(String body) {
+    final trimmed = body.trim();
+    if (trimmed.isEmpty) return const [];
+
+    String normalizeEscapedJson(String value) {
+      return value
+          .replaceAll('\uFEFF', '')
+          .replaceAll(r'\"', '"')
+          .replaceAll(r'\\/', '/')
+          .replaceAll(r'\/', '/')
+          .replaceAll(r'\\n', '\n')
+          .replaceAll(r'\\t', '\t')
+          .replaceAll(r'\\r', '\r');
+    }
+
+    dynamic decoded;
+    try {
+      decoded = jsonDecode(trimmed);
+    } catch (_) {
+      if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+        final unescaped = jsonDecode(trimmed) as String;
+        decoded = jsonDecode(normalizeEscapedJson(unescaped));
+      } else {
+        decoded = jsonDecode(normalizeEscapedJson(trimmed));
+      }
+    }
+    if (decoded is String) {
+      decoded = jsonDecode(normalizeEscapedJson(decoded));
+    }
+    if (decoded is List<dynamic>) {
+      return decoded;
+    }
+    throw const FormatException('Invalid JSON list');
   }
 }
 
@@ -2217,5 +2641,175 @@ class ManualCellWriteDto {
       'column_key': columnKey,
       'raw_value': rawValue,
     };
+  }
+}
+
+class UserPublicProfile {
+  UserPublicProfile({
+    required this.id,
+    required this.role,
+    required this.fullName,
+    this.avatarUrl,
+    this.about,
+    this.studentGroup,
+    this.teacherName,
+  });
+
+  final int id;
+  final String role;
+  final String fullName;
+  final String? avatarUrl;
+  final String? about;
+  final String? studentGroup;
+  final String? teacherName;
+
+  factory UserPublicProfile.fromJson(Map<String, dynamic> json) {
+    return UserPublicProfile(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      role: (json['role'] as String?) ?? '',
+      fullName: (json['full_name'] as String?) ?? '',
+      avatarUrl: json['avatar_url'] as String?,
+      about: json['about'] as String?,
+      studentGroup: json['student_group'] as String?,
+      teacherName: json['teacher_name'] as String?,
+    );
+  }
+}
+
+class MakeupCaseDto {
+  MakeupCaseDto({
+    required this.id,
+    required this.groupName,
+    required this.teacherId,
+    required this.teacherName,
+    required this.studentId,
+    required this.studentName,
+    required this.classDate,
+    required this.status,
+    required this.createdAt,
+    required this.updatedAt,
+    this.closedAt,
+    this.teacherNote,
+    this.medicalProofUrl,
+    this.medicalProofComment,
+    this.teacherTask,
+    this.teacherTaskAt,
+    this.studentSubmission,
+    this.studentSubmissionUrl,
+    this.submissionSentAt,
+    this.grade,
+    this.gradeComment,
+    this.gradeSetAt,
+    this.proofSubmittedAt,
+    this.teacherNoteAt,
+  });
+
+  final int id;
+  final String groupName;
+  final int teacherId;
+  final String teacherName;
+  final int studentId;
+  final String studentName;
+  final DateTime classDate;
+  final String status;
+  final String? teacherNote;
+  final String? medicalProofUrl;
+  final String? medicalProofComment;
+  final String? teacherTask;
+  final DateTime? teacherTaskAt;
+  final String? studentSubmission;
+  final String? studentSubmissionUrl;
+  final DateTime? submissionSentAt;
+  final String? grade;
+  final String? gradeComment;
+  final DateTime? gradeSetAt;
+  final DateTime? proofSubmittedAt;
+  final DateTime? teacherNoteAt;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final DateTime? closedAt;
+
+  factory MakeupCaseDto.fromJson(Map<String, dynamic> json) {
+    return MakeupCaseDto(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      groupName: (json['group_name'] as String?) ?? '',
+      teacherId: (json['teacher_id'] as num?)?.toInt() ?? 0,
+      teacherName: (json['teacher_name'] as String?) ?? '',
+      studentId: (json['student_id'] as num?)?.toInt() ?? 0,
+      studentName: (json['student_name'] as String?) ?? '',
+      classDate: DateTime.parse(
+        (json['class_date'] as String?) ?? '1970-01-01',
+      ),
+      status: (json['status'] as String?) ?? '',
+      teacherNote: json['teacher_note'] as String?,
+      medicalProofUrl: json['medical_proof_url'] as String?,
+      medicalProofComment: json['medical_proof_comment'] as String?,
+      teacherTask: json['teacher_task'] as String?,
+      teacherTaskAt: json['teacher_task_at'] == null
+          ? null
+          : DateTime.parse(json['teacher_task_at'] as String),
+      studentSubmission: json['student_submission'] as String?,
+      studentSubmissionUrl: json['student_submission_url'] as String?,
+      submissionSentAt: json['submission_sent_at'] == null
+          ? null
+          : DateTime.parse(json['submission_sent_at'] as String),
+      grade: json['grade'] as String?,
+      gradeComment: json['grade_comment'] as String?,
+      gradeSetAt: json['grade_set_at'] == null
+          ? null
+          : DateTime.parse(json['grade_set_at'] as String),
+      proofSubmittedAt: json['proof_submitted_at'] == null
+          ? null
+          : DateTime.parse(json['proof_submitted_at'] as String),
+      teacherNoteAt: json['teacher_note_at'] == null
+          ? null
+          : DateTime.parse(json['teacher_note_at'] as String),
+      createdAt: DateTime.parse(
+        (json['created_at'] as String?) ?? DateTime.now().toIso8601String(),
+      ),
+      updatedAt: DateTime.parse(
+        (json['updated_at'] as String?) ?? DateTime.now().toIso8601String(),
+      ),
+      closedAt: json['closed_at'] == null
+          ? null
+          : DateTime.parse(json['closed_at'] as String),
+    );
+  }
+}
+
+class MakeupMessageDto {
+  MakeupMessageDto({
+    required this.id,
+    required this.makeupCaseId,
+    required this.senderId,
+    required this.senderName,
+    required this.senderRole,
+    required this.createdAt,
+    this.body,
+    this.attachmentUrl,
+  });
+
+  final int id;
+  final int makeupCaseId;
+  final int senderId;
+  final String senderName;
+  final String senderRole;
+  final String? body;
+  final String? attachmentUrl;
+  final DateTime createdAt;
+
+  factory MakeupMessageDto.fromJson(Map<String, dynamic> json) {
+    return MakeupMessageDto(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      makeupCaseId: (json['makeup_case_id'] as num?)?.toInt() ?? 0,
+      senderId: (json['sender_id'] as num?)?.toInt() ?? 0,
+      senderName: (json['sender_name'] as String?) ?? '',
+      senderRole: (json['sender_role'] as String?) ?? '',
+      body: json['body'] as String?,
+      attachmentUrl: json['attachment_url'] as String?,
+      createdAt: DateTime.parse(
+        (json['created_at'] as String?) ?? DateTime.now().toIso8601String(),
+      ),
+    );
   }
 }

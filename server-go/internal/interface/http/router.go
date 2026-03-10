@@ -60,6 +60,9 @@ func NewRouter(handler *Handler, authMiddleware *httpMiddleware.AuthMiddleware) 
 	newsDir := filepath.Join(handler.cfg.MediaDir, "news")
 	_ = os.MkdirAll(newsDir, 0o755)
 	router.Static("/media/news", newsDir)
+	makeupDir := filepath.Join(handler.cfg.MediaDir, "makeup")
+	_ = os.MkdirAll(makeupDir, 0o755)
+	router.Static("/media/makeup", makeupDir)
 
 	router.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -71,6 +74,16 @@ func NewRouter(handler *Handler, authMiddleware *httpMiddleware.AuthMiddleware) 
 	handler.RegisterAuthRoutes(router, authMiddleware)
 	handler.RegisterNewsRoutes(router, authMiddleware)
 	handler.RegisterAcademicRoutes(router, authMiddleware)
+
+	// Compatibility alias: allow clients that use API_BASE_URL ending with "/api".
+	router.Any("/api/*path", func(c *gin.Context) {
+		path := c.Param("path")
+		if path == "" {
+			path = "/"
+		}
+		c.Request.URL.Path = path
+		router.HandleContext(c)
+	})
 
 	return router
 }

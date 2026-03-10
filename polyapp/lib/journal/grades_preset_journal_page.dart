@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/api_client.dart';
 import '../widgets/brand_logo.dart';
+import 'journal_date_picker.dart';
 import 'services/journal_service.dart';
 
 const Set<String> _presetFormulaFunctions = {
@@ -1062,17 +1063,23 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
   Future<void> _addDate() async {
     final groupName = _groupName;
     if (groupName == null) return;
-    final selected = await _pickDate();
-    if (selected == null) return;
+    final selectedDates = await _pickDates();
+    if (selectedDates == null || selectedDates.isEmpty) return;
     setState(() => _saving = true);
     try {
-      await widget.client.upsertJournalDate(
-        groupName: groupName,
-        classDate: selected,
-      );
+      for (final selected in selectedDates) {
+        await widget.client.upsertJournalDate(
+          groupName: groupName,
+          classDate: selected,
+        );
+      }
       await _reloadGrid();
       if (!mounted) return;
-      _showMessage(_tr('Дата добавлена.', 'Date added.'));
+      _showMessage(
+        selectedDates.length == 1
+            ? _tr('Дата добавлена.', 'Date added.')
+            : _tr('Даты добавлены.', 'Dates added.'),
+      );
     } catch (error) {
       if (!mounted) return;
       _showMessage(_readErrorText(error), isError: true);
@@ -1202,16 +1209,23 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
     }
   }
 
-  Future<DateTime?> _pickDate({DateTime? initial}) async {
-    final now = DateTime.now();
-    final selected = await showDatePicker(
-      context: context,
-      initialDate: initial ?? now,
-      firstDate: DateTime(2000, 1, 1),
-      lastDate: DateTime(2100, 12, 31),
+  Future<List<DateTime>?> _pickDates({DateTime? initial}) async {
+    final selected = await showJournalMultiDatePicker(
+      context,
+      title: _tr('Выберите даты', 'Select dates'),
+      locale: Localizations.localeOf(context),
+      initialDate: initial ?? DateTime.now(),
     );
-    if (selected == null) return null;
-    return DateTime(selected.year, selected.month, selected.day);
+    if (selected == null || selected.isEmpty) return null;
+    return selected
+        .map((d) => DateTime(d.year, d.month, d.day))
+        .toList(growable: false);
+  }
+
+  Future<DateTime?> _pickDate({DateTime? initial}) async {
+    final selected = await _pickDates(initial: initial);
+    if (selected == null || selected.isEmpty) return null;
+    return selected.first;
   }
 
   Future<bool> _showConfirmDialog(String question) async {

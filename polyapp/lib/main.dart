@@ -21,6 +21,7 @@ import 'api/api_client.dart';
 import 'journal/journal_store.dart';
 import 'journal/attendance_journal_page.dart';
 import 'journal/grades_preset_journal_page.dart';
+import 'makeup/makeup_pages.dart';
 import 'widgets/brand_logo.dart';
 
 const String apiBaseUrl = String.fromEnvironment(
@@ -145,6 +146,11 @@ String humanizeError(Object error) {
   if (raw.startsWith('{') && raw.endsWith('}')) {
     raw = _extractApiDetail(raw) ?? raw;
   }
+  if (raw.contains('Invalid argument (string): Contains invalid characters')) {
+    return isRu
+        ? 'Некорректная ссылка на файл. Обновите страницу и попробуйте снова.'
+        : 'Invalid file link. Refresh and try again.';
+  }
   if (raw.contains('Invalid credentials')) {
     return isRu
         ? '\u041d\u0435\u0432\u0435\u0440\u043d\u0430\u044f \u043f\u043e\u0447\u0442\u0430 \u0438\u043b\u0438 \u043f\u0430\u0440\u043e\u043b\u044c.'
@@ -208,8 +214,20 @@ String? _extractApiDetail(String input) {
   if (text.isEmpty) return null;
   final jsonStart = text.indexOf('{');
   final jsonText = jsonStart >= 0 ? text.substring(jsonStart) : text;
+  String normalized = jsonText;
+  if (normalized.contains(r'\"') || normalized.contains(r'\/')) {
+    normalized = normalized
+        .replaceAll(r'\"', '"')
+        .replaceAll(r'\/', '/')
+        .replaceAll(r'\\n', '\n')
+        .replaceAll(r'\\t', '\t')
+        .replaceAll(r'\\r', '\r');
+  }
   try {
-    final decoded = jsonDecode(jsonText);
+    dynamic decoded = jsonDecode(normalized);
+    if (decoded is String) {
+      decoded = jsonDecode(decoded);
+    }
     if (decoded is Map<String, dynamic>) {
       final detail = decoded['detail'];
       if (detail is String && detail.trim().isNotEmpty) return detail.trim();
@@ -1435,6 +1453,32 @@ class FeatureDefinition {
   final WidgetBuilder builder;
 }
 
+Widget _buildMakeupFeaturePage(BuildContext context) {
+  final state = AppStateScope.of(context);
+  final user = state.user;
+  if (user == null) return const SizedBox.shrink();
+  return MakeupWorkspacePage(
+    client: state.client,
+    currentUser: user,
+    locale: state.locale,
+    baseUrl: state.baseUrl,
+    errorText: humanizeError,
+  );
+}
+
+Widget _buildAdminFeaturePage(BuildContext context) {
+  final state = AppStateScope.of(context);
+  final user = state.user;
+  if (user == null) return const SizedBox.shrink();
+  return AdminWorkspacePage(
+    client: state.client,
+    currentUser: user,
+    locale: state.locale,
+    baseUrl: state.baseUrl,
+    errorText: humanizeError,
+  );
+}
+
 final List<RoleDefinition> kRoles = [
   RoleDefinition(
     id: 'smm',
@@ -1515,6 +1559,12 @@ final List<RoleDefinition> kRoles = [
     color: const Color(0xFF1C3F60),
     features: [
       FeatureDefinition(
+        id: 'admin_panel',
+        title: 'Admin panel',
+        icon: Icons.admin_panel_settings_outlined,
+        builder: _buildAdminFeaturePage,
+      ),
+      FeatureDefinition(
         id: 'schedule',
         title: 'Schedule',
         icon: Icons.calendar_month,
@@ -1549,6 +1599,12 @@ final List<RoleDefinition> kRoles = [
         title: 'News feed',
         icon: Icons.dynamic_feed,
         builder: (context) => const NewsFeedPage(canEdit: true),
+      ),
+      FeatureDefinition(
+        id: 'makeup',
+        title: 'Makeups',
+        icon: Icons.assignment_late_outlined,
+        builder: _buildMakeupFeaturePage,
       ),
       FeatureDefinition(
         id: 'requests',
@@ -1587,6 +1643,12 @@ final List<RoleDefinition> kRoles = [
         title: 'Requests',
         icon: Icons.mail_outline,
         builder: (context) => const RequestsPage(canProcess: false),
+      ),
+      FeatureDefinition(
+        id: 'makeup',
+        title: 'Makeups',
+        icon: Icons.assignment_late_outlined,
+        builder: _buildMakeupFeaturePage,
       ),
       FeatureDefinition(
         id: 'news',
@@ -1651,6 +1713,12 @@ final List<RoleDefinition> kRoles = [
         builder: (context) => const RequestsPage(canProcess: true),
       ),
       FeatureDefinition(
+        id: 'makeup',
+        title: 'Makeups',
+        icon: Icons.assignment_late_outlined,
+        builder: _buildMakeupFeaturePage,
+      ),
+      FeatureDefinition(
         id: 'profile',
         title: 'Profile',
         icon: Icons.person,
@@ -1671,6 +1739,36 @@ class RoleHomePage extends StatefulWidget {
 
 class _RoleHomePageState extends State<RoleHomePage> {
   int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreTab();
+  }
+
+  String _tabKey() => 'home_tab_${widget.role.id}';
+
+  Future<void> _restoreTab() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getInt(_tabKey());
+    if (!mounted) return;
+    setState(() {
+      if (saved != null && saved >= 0) {
+        _index = saved;
+      }
+    });
+  }
+
+  Future<void> _saveTab(int value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_tabKey(), value);
+  }
+
+  void _setIndex(int value) {
+    if (_index == value) return;
+    setState(() => _index = value);
+    _saveTab(value);
+  }
 
   void _openNotifications() {
     Navigator.of(
@@ -1732,6 +1830,24 @@ class _RoleHomePageState extends State<RoleHomePage> {
           t('Аналитика', 'Analytics'),
           Icons.analytics_outlined,
           (context) => const AnalyticsPage(),
+        ),
+      );
+    }
+    if (featureIds.contains('makeup')) {
+      items.add(
+        _NavItem(
+          t('Отработки', 'Makeups'),
+          Icons.assignment_late_outlined,
+          _buildMakeupFeaturePage,
+        ),
+      );
+    }
+    if (featureIds.contains('admin_panel')) {
+      items.add(
+        _NavItem(
+          t('Админ панель', 'Admin panel'),
+          Icons.admin_panel_settings_outlined,
+          _buildAdminFeaturePage,
         ),
       );
     }
@@ -1843,7 +1959,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
                                 color: selected ? kPrimaryText : kSecondaryText,
                               ),
                             ),
-                            onTap: () => setState(() => _index = i),
+                            onTap: () => _setIndex(i),
                           ),
                         );
                       },
@@ -1929,7 +2045,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
                                 child: ChoiceChip(
                                   selected: _index == i,
                                   label: Text(tabs[i].title),
-                                  onSelected: (_) => setState(() => _index = i),
+                                  onSelected: (_) => _setIndex(i),
                                 ),
                               ),
                           ],
@@ -1952,7 +2068,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
               Expanded(
                 child: Center(
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 1280),
+                    constraints: const BoxConstraints(maxWidth: 1560),
                     child: Card(
                       margin: const EdgeInsets.fromLTRB(20, 8, 20, 20),
                       clipBehavior: Clip.antiAlias,
@@ -2013,7 +2129,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
             ),
         ],
         onDestinationSelected: (value) {
-          setState(() => _index = value);
+          _setIndex(value);
         },
       ),
     );
@@ -2022,6 +2138,9 @@ class _RoleHomePageState extends State<RoleHomePage> {
   @override
   Widget build(BuildContext context) {
     final tabs = _buildTabs();
+    if (_index < 0 || _index >= tabs.length) {
+      _index = 0;
+    }
     final color = widget.role.color;
     final title = tabs[_index].title;
     return LayoutBuilder(
@@ -2110,6 +2229,7 @@ class _SchedulePageState extends State<SchedulePage> {
   bool _loading = false;
   bool _uploading = false;
   bool _initialized = false;
+  Timer? _autoRefreshTimer;
   late final List<DateTime> _dateRange;
   late DateTime _selectedDate;
 
@@ -2129,27 +2249,41 @@ class _SchedulePageState extends State<SchedulePage> {
     super.didChangeDependencies();
     if (_initialized) return;
     _loadLatest();
-    _loadGroups();
-    _loadTeachers();
-    _loadCachedSchedule();
+    _loadAdminFiltersForSelectedDate();
+    _loadCachedSchedule(forDate: _selectedDate);
     final user = AppStateScope.of(context).user;
     if (user != null && (user.role == 'student' || user.role == 'teacher')) {
       final hasValue =
           (user.role == 'student' &&
               (user.studentGroup ?? '').trim().isNotEmpty) ||
           (user.role == 'teacher' &&
-              (user.teacherName ?? '').trim().isNotEmpty);
+              ((user.teacherName ?? '').trim().isNotEmpty ||
+                  user.fullName.trim().isNotEmpty));
       if (hasValue) {
         _loadScheduleForMe();
       }
     }
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+      if (!mounted) return;
+      _loadLatest();
+      _loadAdminFiltersForSelectedDate(silent: true);
+      _reloadForSelectedDate(silent: true);
+    });
     _initialized = true;
+  }
+
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    _groupController.dispose();
+    _teacherController.dispose();
+    super.dispose();
   }
 
   List<DateTime> _buildDateRange() {
     final today = DateUtils.dateOnly(DateTime.now());
-    final start = today.subtract(const Duration(days: 5));
-    final end = today.add(const Duration(days: 1));
+    final start = today.subtract(const Duration(days: 7));
+    final end = today.add(const Duration(days: 3));
     final items = <DateTime>[];
     for (int i = 0; i <= end.difference(start).inDays; i++) {
       final day = DateTime(start.year, start.month, start.day + i);
@@ -2161,6 +2295,21 @@ class _SchedulePageState extends State<SchedulePage> {
 
   bool _isWeekend(DateTime day) {
     return day.weekday == DateTime.saturday || day.weekday == DateTime.sunday;
+  }
+
+  String _lessonsSignature(List<ScheduleLesson> items) {
+    return items
+        .map(
+          (item) => [
+            item.shift,
+            item.period,
+            item.time,
+            item.audience,
+            item.lesson,
+            item.groupName,
+          ].join('|'),
+        )
+        .join('||');
   }
 
   String _lessonType(String lesson) {
@@ -2193,28 +2342,47 @@ class _SchedulePageState extends State<SchedulePage> {
     try {
       final latest = await client.latestSchedule();
       if (!mounted) return;
-      setState(() => _latest = latest);
+      final oldKey = _latest == null
+          ? ''
+          : '${_latest!.id}|${_latest!.scheduleDate?.toIso8601String() ?? ''}|${_latest!.uploadedAt.toIso8601String()}';
+      final newKey = latest == null
+          ? ''
+          : '${latest.id}|${latest.scheduleDate?.toIso8601String() ?? ''}|${latest.uploadedAt.toIso8601String()}';
+      if (oldKey != newKey) {
+        setState(() => _latest = latest);
+      }
     } catch (_) {}
   }
 
-  Future<void> _loadGroups() async {
+  Future<void> _loadAdminFiltersForSelectedDate({bool silent = false}) async {
+    final user = AppStateScope.of(context).user;
+    if (user?.role != 'admin') return;
     try {
-      final groups = await AppStateScope.of(
-        context,
-      ).client.listScheduleGroups();
+      final client = AppStateScope.of(context).client;
+      final groups = await client.listScheduleGroups(at: _selectedDate);
+      final teachers = await client.listScheduleTeachers(at: _selectedDate);
       if (!mounted) return;
-      setState(() => _groups = groups);
-    } catch (_) {}
-  }
-
-  Future<void> _loadTeachers() async {
-    try {
-      final teachers = await AppStateScope.of(
-        context,
-      ).client.listScheduleTeachers();
-      if (!mounted) return;
-      setState(() => _teachers = teachers);
-    } catch (_) {}
+      final selectedGroup = _groupController.text.trim();
+      final selectedTeacher = _teacherController.text.trim();
+      final hasGroup = groups.any((item) => item == selectedGroup);
+      final hasTeacher = teachers.any((item) => item == selectedTeacher);
+      setState(() {
+        _groups = groups;
+        _teachers = teachers;
+        if (selectedGroup.isNotEmpty && !hasGroup) {
+          _groupController.clear();
+        }
+        if (selectedTeacher.isNotEmpty && !hasTeacher) {
+          _teacherController.clear();
+        }
+      });
+    } catch (error) {
+      if (!mounted || silent) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = humanizeError(error);
+      });
+    }
   }
 
   Future<void> _uploadSchedule() async {
@@ -2246,6 +2414,8 @@ class _SchedulePageState extends State<SchedulePage> {
         _noticeError = false;
         _noticeMessage = 'Расписание загружено: ${uploaded.filename}';
       });
+      await _loadAdminFiltersForSelectedDate();
+      await _reloadForSelectedDate();
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -2259,50 +2429,134 @@ class _SchedulePageState extends State<SchedulePage> {
     }
   }
 
-  Future<void> _loadSchedule() async {
+  Future<void> _loadSchedule({bool silent = false}) async {
     final group = _groupController.text.trim();
     if (group.isEmpty) return;
-    setState(() => _loading = true);
+    if (!silent) {
+      setState(() => _loading = true);
+    }
     try {
       final data = await AppStateScope.of(
         context,
-      ).client.scheduleForGroup(group);
+      ).client.scheduleForGroup(group, at: _selectedDate);
       if (!mounted) return;
-      setState(() => _lessons = data);
-      _saveCachedSchedule();
+      final changed = _lessonsSignature(_lessons) != _lessonsSignature(data);
+      if (changed) {
+        setState(() => _lessons = data);
+        _saveCachedSchedule(forDate: _selectedDate);
+      }
     } catch (error) {
       if (!mounted) return;
-      setState(() {
-        _noticeError = true;
-        _noticeMessage =
-            'Не удалось загрузить расписание: ${humanizeError(error)}';
-      });
+      if (!silent) {
+        setState(() {
+          _noticeError = true;
+          _noticeMessage =
+              'Не удалось загрузить расписание: ${humanizeError(error)}';
+        });
+      }
     } finally {
-      if (mounted) {
+      if (!silent && mounted) {
         setState(() => _loading = false);
       }
     }
   }
 
-  Future<void> _loadScheduleForMe() async {
-    setState(() => _loading = true);
+  Future<void> _loadScheduleForMe({bool silent = false}) async {
+    if (!silent) {
+      setState(() => _loading = true);
+    }
     try {
-      final data = await AppStateScope.of(context).client.scheduleForMe();
+      final data = await AppStateScope.of(
+        context,
+      ).client.scheduleForMe(at: _selectedDate);
       if (!mounted) return;
-      setState(() => _lessons = data);
-      _saveCachedSchedule();
+      final changed = _lessonsSignature(_lessons) != _lessonsSignature(data);
+      if (changed) {
+        setState(() => _lessons = data);
+        _saveCachedSchedule(forDate: _selectedDate);
+      }
     } catch (error) {
       if (!mounted) return;
-      setState(() {
-        _noticeError = true;
-        _noticeMessage =
-            'Не удалось загрузить расписание: ${humanizeError(error)}';
-      });
+      if (!silent) {
+        setState(() {
+          _noticeError = true;
+          _noticeMessage =
+              'Не удалось загрузить расписание: ${humanizeError(error)}';
+        });
+      }
     } finally {
-      if (mounted) {
+      if (!silent && mounted) {
         setState(() => _loading = false);
       }
     }
+  }
+
+  Future<void> _loadScheduleForTeacher({bool silent = false}) async {
+    final teacher = _teacherController.text.trim();
+    if (teacher.isEmpty) return;
+    if (!silent) {
+      setState(() => _loading = true);
+    }
+    try {
+      final data = await AppStateScope.of(
+        context,
+      ).client.scheduleForTeacher(teacher, at: _selectedDate);
+      if (!mounted) return;
+      final changed = _lessonsSignature(_lessons) != _lessonsSignature(data);
+      if (changed) {
+        setState(() => _lessons = data);
+        _saveCachedSchedule(forDate: _selectedDate);
+      }
+    } catch (error) {
+      if (!mounted) return;
+      if (!silent) {
+        setState(() {
+          _noticeError = true;
+          _noticeMessage =
+              'Не удалось загрузить расписание: ${humanizeError(error)}';
+        });
+      }
+    } finally {
+      if (!silent && mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _reloadForSelectedDate({bool silent = false}) async {
+    final user = AppStateScope.of(context).user;
+    try {
+      if (user != null && (user.role == 'student' || user.role == 'teacher')) {
+        await _loadScheduleForMe(silent: silent);
+        return;
+      }
+      final group = _groupController.text.trim();
+      if (group.isNotEmpty) {
+        await _loadSchedule(silent: silent);
+        return;
+      }
+      final teacher = _teacherController.text.trim();
+      if (teacher.isNotEmpty) {
+        await _loadScheduleForTeacher(silent: silent);
+        return;
+      }
+      if (_lessons.isNotEmpty) {
+        setState(() => _lessons = []);
+      }
+    } catch (error) {
+      if (!mounted || silent) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = humanizeError(error);
+      });
+    }
+  }
+
+  Future<void> _onDateSelected(DateTime value) async {
+    setState(() => _selectedDate = DateUtils.dateOnly(value));
+    await _loadAdminFiltersForSelectedDate(silent: true);
+    await _loadCachedSchedule(forDate: _selectedDate);
+    await _reloadForSelectedDate();
   }
 
   String _cacheKey(UserProfile? user) {
@@ -2311,16 +2565,29 @@ class _SchedulePageState extends State<SchedulePage> {
       return 'schedule_cache_student_${user.studentGroup ?? 'none'}';
     }
     if (user.role == 'teacher') {
-      return 'schedule_cache_teacher_${user.teacherName ?? 'none'}';
+      final teacherKey = (user.teacherName ?? '').trim().isNotEmpty
+          ? user.teacherName!.trim()
+          : user.fullName.trim();
+      return 'schedule_cache_teacher_${teacherKey.isEmpty ? 'none' : teacherKey}';
     }
     return 'schedule_cache_admin';
   }
 
-  Future<void> _loadCachedSchedule() async {
+  String _cacheKeyForDate(UserProfile? user, DateTime date) {
+    final day = DateUtils.dateOnly(date);
+    return '${_cacheKey(user)}_${DateFormat('yyyyMMdd').format(day)}';
+  }
+
+  Future<void> _loadCachedSchedule({required DateTime forDate}) async {
     final prefs = await SharedPreferences.getInstance();
-    final key = _cacheKey(AppStateScope.of(context).user);
+    final key = _cacheKeyForDate(AppStateScope.of(context).user, forDate);
     final raw = prefs.getString(key);
-    if (raw == null || raw.isEmpty) return;
+    if (raw == null || raw.isEmpty) {
+      if (mounted && _lessons.isNotEmpty) {
+        setState(() => _lessons = []);
+      }
+      return;
+    }
     try {
       final data = jsonDecode(raw) as List<dynamic>;
       final lessons = data
@@ -2331,9 +2598,9 @@ class _SchedulePageState extends State<SchedulePage> {
     } catch (_) {}
   }
 
-  Future<void> _saveCachedSchedule() async {
+  Future<void> _saveCachedSchedule({required DateTime forDate}) async {
     final prefs = await SharedPreferences.getInstance();
-    final key = _cacheKey(AppStateScope.of(context).user);
+    final key = _cacheKeyForDate(AppStateScope.of(context).user, forDate);
     final payload = _lessons
         .map(
           (item) => {
@@ -2351,14 +2618,9 @@ class _SchedulePageState extends State<SchedulePage> {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
     final user = AppStateScope.of(context).user;
     final canUpload = user?.role == 'admin';
-    final scheduleDate = _latest?.scheduleDate;
-    final matchesDate =
-        scheduleDate == null ||
-        DateUtils.isSameDay(scheduleDate, _selectedDate);
-    final visibleLessons = matchesDate ? _lessons : <ScheduleLesson>[];
+    final visibleLessons = _lessons;
     final isEmpty = visibleLessons.isEmpty;
 
     return ListView(
@@ -2367,6 +2629,13 @@ class _SchedulePageState extends State<SchedulePage> {
         if (_noticeMessage != null)
           InlineNotice(message: _noticeMessage!, isError: _noticeError),
         if (_noticeMessage != null) const SizedBox(height: 12),
+        if (_latest?.scheduleDate != null) ...[
+          Text(
+            'Актуальный пакет: ${DateFormat('dd.MM.yyyy').format(_latest!.scheduleDate!)}',
+            style: TextStyle(color: kSecondaryText),
+          ),
+          const SizedBox(height: 10),
+        ],
         if (canUpload)
           Card(
             child: Padding(
@@ -2398,10 +2667,19 @@ class _SchedulePageState extends State<SchedulePage> {
                       runSpacing: 8,
                       children: [
                         for (final group in _groups.take(12))
-                          ActionChip(
+                          ChoiceChip(
+                            selected: _groupController.text.trim() == group,
                             label: Text(group),
-                            onPressed: () {
+                            onSelected: (selected) {
+                              if (!selected) {
+                                setState(() {
+                                  _groupController.clear();
+                                  _lessons = [];
+                                });
+                                return;
+                              }
                               _groupController.text = group;
+                              _teacherController.clear();
                               _loadSchedule();
                             },
                           ),
@@ -2415,13 +2693,52 @@ class _SchedulePageState extends State<SchedulePage> {
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 280,
+                          child: TextField(
+                            controller: _teacherController,
+                            decoration: const InputDecoration(
+                              hintText: 'Search teacher',
+                              isDense: true,
+                            ),
+                            onSubmitted: (_) {
+                              _groupController.clear();
+                              _loadScheduleForTeacher();
+                            },
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            _groupController.clear();
+                            _loadScheduleForTeacher();
+                          },
+                          icon: const Icon(Icons.search),
+                          label: const Text('Find'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
                       children: [
                         for (final teacher in _teachers.take(12))
-                          ActionChip(
+                          ChoiceChip(
+                            selected: _teacherController.text.trim() == teacher,
                             label: Text(teacher),
-                            onPressed: () {
+                            onSelected: (selected) {
+                              if (!selected) {
+                                setState(() {
+                                  _teacherController.clear();
+                                  _lessons = [];
+                                });
+                                return;
+                              }
                               _teacherController.text = teacher;
-                              _loadScheduleForMe();
+                              _groupController.clear();
+                              _loadScheduleForTeacher();
                             },
                           ),
                       ],
@@ -2443,7 +2760,7 @@ class _SchedulePageState extends State<SchedulePage> {
               final isSelected = DateUtils.isSameDay(day, _selectedDate);
               final isToday = DateUtils.isSameDay(day, DateTime.now());
               return InkWell(
-                onTap: () => setState(() => _selectedDate = day),
+                onTap: () => _onDateSelected(day),
                 child: Container(
                   width: 64,
                   decoration: BoxDecoration(
@@ -4585,12 +4902,12 @@ class FeatureScaffold extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final maxWidth = constraints.maxWidth >= 1200
-            ? 1140.0
-            : constraints.maxWidth >= 900
-            ? 980.0
+        final maxWidth = constraints.maxWidth >= 1440
+            ? 1320.0
+            : constraints.maxWidth >= 1100
+            ? 1120.0
             : double.infinity;
-        final horizontal = constraints.maxWidth >= 900 ? 24.0 : 16.0;
+        final horizontal = constraints.maxWidth >= 1100 ? 28.0 : 16.0;
         return Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
@@ -4723,6 +5040,10 @@ class HomePage extends StatelessWidget {
           return 'News feed';
         case 'requests':
           return 'Request queue';
+        case 'makeup':
+          return 'Missed class makeups';
+        case 'admin_panel':
+          return 'Users and system CRUD';
         case 'exams':
           return 'Exam results';
         case 'profile':
@@ -4743,6 +5064,10 @@ class HomePage extends StatelessWidget {
         return 'Лента новостей';
       case 'requests':
         return 'Очередь заявок';
+      case 'makeup':
+        return 'Отработки занятий';
+      case 'admin_panel':
+        return 'CRUD и контроль системы';
       case 'exams':
         return 'Экзаменационные оценки';
       case 'profile':
@@ -4766,6 +5091,10 @@ class HomePage extends StatelessWidget {
         return 'Новости';
       case 'requests':
         return 'Заявки';
+      case 'makeup':
+        return 'Отработки';
+      case 'admin_panel':
+        return 'Админ панель';
       case 'exams':
         return 'Экзамены';
       case 'profile':

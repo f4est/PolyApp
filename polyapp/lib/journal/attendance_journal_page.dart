@@ -5,6 +5,7 @@ import 'pluto_localization.dart';
 
 import '../api/api_client.dart';
 import '../widgets/brand_logo.dart';
+import 'journal_date_picker.dart';
 import 'models/journal_models.dart';
 import 'services/journal_service.dart';
 
@@ -575,24 +576,27 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
 
   Future<void> _addDate() async {
     if (_group == null) return;
-    final picked = await showDatePicker(
-      context: context,
+    final pickedDates = await showJournalMultiDatePicker(
+      context,
+      title: 'Select dates',
+      locale: Localizations.localeOf(context),
       initialDate: DateTime.now(),
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2035),
     );
-    if (picked == null) return;
-    final label = _formatDateLabel(picked);
-    await _service.addDate(
-      LessonDate(date: picked, label: label, groupId: _group!.groupId),
-    );
-    try {
-      await widget.client.upsertJournalDate(
-        groupName: _group!.name,
-        classDate: picked,
+    if (pickedDates == null || pickedDates.isEmpty) return;
+    for (final picked in pickedDates) {
+      final normalized = DateTime(picked.year, picked.month, picked.day);
+      final label = _formatDateLabel(normalized);
+      await _service.addDate(
+        LessonDate(date: normalized, label: label, groupId: _group!.groupId),
       );
-    } catch (_) {
-      if (mounted) setState(() => _online = false);
+      try {
+        await widget.client.upsertJournalDate(
+          groupName: _group!.name,
+          classDate: normalized,
+        );
+      } catch (_) {
+        if (mounted) setState(() => _online = false);
+      }
     }
     await _loadGroupData(sync: false);
   }

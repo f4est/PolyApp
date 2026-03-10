@@ -116,6 +116,25 @@ func (r *UserRepo) Update(ctx context.Context, user *entity.User) error {
 	return nil
 }
 
+func (r *UserRepo) Delete(ctx context.Context, id uint) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("user_id = ?", id).Delete(&DBAuthSession{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", id).Delete(&DBDeviceToken{}).Error; err != nil {
+			return err
+		}
+		res := tx.Delete(&DBUser{}, id)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return domainErrors.ErrNotFound
+		}
+		return nil
+	})
+}
+
 type SessionRepo struct {
 	db *gorm.DB
 }

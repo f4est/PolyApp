@@ -72,6 +72,16 @@ func (r *fakeUserRepo) Update(_ context.Context, user *entity.User) error {
 	return nil
 }
 
+func (r *fakeUserRepo) Delete(_ context.Context, id uint) error {
+	user, ok := r.byID[id]
+	if !ok {
+		return domainErrors.ErrNotFound
+	}
+	delete(r.byID, id)
+	delete(r.byEmail, user.Email)
+	return nil
+}
+
 type fakeSessionRepo struct {
 	items map[string]entity.AuthSession
 }

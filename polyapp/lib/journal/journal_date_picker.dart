@@ -2,19 +2,51 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:table_calendar/table_calendar.dart';
 
+Future<List<DateTime>?> showJournalMultiDatePicker(
+  BuildContext context, {
+  String? title,
+  Locale? locale,
+  DateTime? initialDate,
+}) async {
+  final result = await showDialog<Map<String, dynamic>?>(
+    context: context,
+    builder: (context) => JournalDatePickerDialog(
+      title: title,
+      locale: locale,
+      initialDate: initialDate,
+    ),
+  );
+  final raw = result?['dates'];
+  if (raw is! List) return null;
+  final dates = raw.whereType<DateTime>().toList();
+  if (dates.isEmpty) return null;
+  dates.sort();
+  return dates;
+}
+
 class JournalDatePickerDialog extends StatefulWidget {
   final String? initialLabel;
+  final String? title;
+  final Locale? locale;
+  final DateTime? initialDate;
 
-  const JournalDatePickerDialog({super.key, this.initialLabel});
+  const JournalDatePickerDialog({
+    super.key,
+    this.initialLabel,
+    this.title,
+    this.locale,
+    this.initialDate,
+  });
 
   @override
-  State<JournalDatePickerDialog> createState() => _JournalDatePickerDialogState();
+  State<JournalDatePickerDialog> createState() =>
+      _JournalDatePickerDialogState();
 }
 
 class _JournalDatePickerDialogState extends State<JournalDatePickerDialog> {
   String? _noticeMessage;
 
-  DateTime focusedDay = DateTime.now();
+  late DateTime focusedDay;
   DateTime firstDay = DateTime.utc(2020, 1, 1);
   DateTime lastDay = DateTime.utc(2100, 12, 31);
   Set<DateTime> selectedDates = {};
@@ -23,17 +55,32 @@ class _JournalDatePickerDialogState extends State<JournalDatePickerDialog> {
   DateTime? lastSelectedDay;
   bool _ctrlPressed = false;
   bool _shiftPressed = false;
-  
+
   // Режимы для мобильных устройств
   String _selectionMode = 'single'; // 'single', 'multiple', 'range'
 
+  bool get _isRu => (widget.locale?.languageCode ?? 'ru') == 'ru';
+  String _t(String ru, String en) => _isRu ? ru : en;
+
+  @override
+  void initState() {
+    super.initState();
+    focusedDay = widget.initialDate ?? DateTime.now();
+    final initial = DateTime(focusedDay.year, focusedDay.month, focusedDay.day);
+    selectedDates = {initial};
+    lastSelectedDay = initial;
+  }
 
   void _onDaySelected(DateTime selectedDay, DateTime focusedDayNew) {
-    final normalizedDay = DateTime(selectedDay.year, selectedDay.month, selectedDay.day);
-    
+    final normalizedDay = DateTime(
+      selectedDay.year,
+      selectedDay.month,
+      selectedDay.day,
+    );
+
     setState(() {
       focusedDay = focusedDayNew;
-      
+
       // Для мобильных устройств используем режим выбора
       if (_selectionMode == 'multiple') {
         // Множественный выбор (переключение)
@@ -105,146 +152,208 @@ class _JournalDatePickerDialogState extends State<JournalDatePickerDialog> {
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width < 600;
-    
+    final viewport = MediaQuery.of(context).size;
+    final calendarHeight = isMobile
+        ? (viewport.height * 0.42).clamp(220.0, 300.0)
+        : (viewport.height * 0.5).clamp(280.0, 380.0);
+    final maxDialogHeight = (viewport.height * 0.92).clamp(420.0, 760.0);
+
     return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
       child: Container(
         width: isMobile ? double.infinity : 400,
+        constraints: BoxConstraints(maxHeight: maxDialogHeight),
         padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-          if (_noticeMessage != null) ...[
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(_noticeMessage!, style: const TextStyle(color: Colors.red)),
-            ),
-          ],
-            const Text(
-              'Добавить даты',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            // Визуальные кнопки для мобильных устройств
-            if (isMobile) ...[
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  _buildModeButton('Одна', 'single', Icons.circle_outlined),
-                  const SizedBox(width: 8),
-                  _buildModeButton('Несколько', 'multiple', Icons.check_circle_outline),
-                  const SizedBox(width: 8),
-                  _buildModeButton('Диапазон', 'range', Icons.date_range),
-                ],
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_noticeMessage != null) ...[
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    _noticeMessage!,
+                    style: const TextStyle(color: Colors.red),
+                  ),
+                ),
+              ],
+              Text(
+                widget.title ?? _t('Выбор дат', 'Select dates'),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-            ] else ...[
-              const Text(
-                'Выберите даты (Ctrl - множественный выбор, Shift - диапазон)',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-              const SizedBox(height: 8),
-            ],
-            SizedBox(
-              height: isMobile ? 300 : 350,
-              child: isMobile
-                  ? TableCalendar(
-                      firstDay: firstDay,
-                      lastDay: lastDay,
-                      focusedDay: focusedDay,
-                      selectedDayPredicate: (day) {
-                        final normalizedDay = DateTime(day.year, day.month, day.day);
-                        return selectedDates.contains(normalizedDay);
-                      },
-                      rangeStartDay: rangeStart,
-                      rangeEndDay: rangeEnd,
-                      rangeSelectionMode: _selectionMode == 'range'
-                          ? RangeSelectionMode.enforced
-                          : RangeSelectionMode.disabled,
-                      onDaySelected: _onDaySelected,
-                      onRangeSelected: _selectionMode == 'range' ? _onRangeSelected : null,
-                      calendarFormat: CalendarFormat.month,
-                      startingDayOfWeek: StartingDayOfWeek.monday,
-                      locale: 'ru_RU',
-                    )
-                  : KeyboardListener(
-                      focusNode: FocusNode()..requestFocus(),
-                      onKeyEvent: (event) {
-                        if (event is KeyDownEvent) {
-                          final isCtrl = event.logicalKey == LogicalKeyboardKey.controlLeft ||
-                              event.logicalKey == LogicalKeyboardKey.controlRight ||
-                              event.logicalKey == LogicalKeyboardKey.metaLeft ||
-                              event.logicalKey == LogicalKeyboardKey.metaRight;
-                          final isShift = event.logicalKey == LogicalKeyboardKey.shiftLeft ||
-                              event.logicalKey == LogicalKeyboardKey.shiftRight;
-                          setState(() {
-                            if (isCtrl) _ctrlPressed = true;
-                            if (isShift) _shiftPressed = true;
-                          });
-                        } else if (event is KeyUpEvent) {
-                          final isCtrl = event.logicalKey == LogicalKeyboardKey.controlLeft ||
-                              event.logicalKey == LogicalKeyboardKey.controlRight ||
-                              event.logicalKey == LogicalKeyboardKey.metaLeft ||
-                              event.logicalKey == LogicalKeyboardKey.metaRight;
-                          final isShift = event.logicalKey == LogicalKeyboardKey.shiftLeft ||
-                              event.logicalKey == LogicalKeyboardKey.shiftRight;
-                          setState(() {
-                            if (isCtrl) _ctrlPressed = false;
-                            if (isShift) _shiftPressed = false;
-                          });
-                        }
-                      },
-                      child: TableCalendar(
+              // Визуальные кнопки для мобильных устройств
+              if (isMobile) ...[
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _buildModeButton(
+                      _t('Одна', 'Single'),
+                      'single',
+                      Icons.circle_outlined,
+                    ),
+                    const SizedBox(width: 8),
+                    _buildModeButton(
+                      _t('Несколько', 'Multi'),
+                      'multiple',
+                      Icons.check_circle_outline,
+                    ),
+                    const SizedBox(width: 8),
+                    _buildModeButton(
+                      _t('Диапазон', 'Range'),
+                      'range',
+                      Icons.date_range,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+              ] else ...[
+                Text(
+                  _t(
+                    'Выберите даты (Ctrl/Cmd - множественный выбор, Shift - диапазон)',
+                    'Pick dates (Ctrl/Cmd - multi, Shift - range)',
+                  ),
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 8),
+              ],
+              SizedBox(
+                height: calendarHeight,
+                child: isMobile
+                    ? TableCalendar(
                         firstDay: firstDay,
                         lastDay: lastDay,
                         focusedDay: focusedDay,
                         selectedDayPredicate: (day) {
-                          final normalizedDay = DateTime(day.year, day.month, day.day);
+                          final normalizedDay = DateTime(
+                            day.year,
+                            day.month,
+                            day.day,
+                          );
                           return selectedDates.contains(normalizedDay);
                         },
                         rangeStartDay: rangeStart,
                         rangeEndDay: rangeEnd,
-                        rangeSelectionMode: RangeSelectionMode.disabled,
+                        rangeSelectionMode: _selectionMode == 'range'
+                            ? RangeSelectionMode.enforced
+                            : RangeSelectionMode.disabled,
                         onDaySelected: _onDaySelected,
+                        onRangeSelected: _selectionMode == 'range'
+                            ? _onRangeSelected
+                            : null,
                         calendarFormat: CalendarFormat.month,
                         startingDayOfWeek: StartingDayOfWeek.monday,
-                        locale: 'ru_RU',
+                        locale: _isRu ? 'ru_RU' : 'en_US',
+                      )
+                    : KeyboardListener(
+                        focusNode: FocusNode()..requestFocus(),
+                        onKeyEvent: (event) {
+                          if (event is KeyDownEvent) {
+                            final isCtrl =
+                                event.logicalKey ==
+                                    LogicalKeyboardKey.controlLeft ||
+                                event.logicalKey ==
+                                    LogicalKeyboardKey.controlRight ||
+                                event.logicalKey ==
+                                    LogicalKeyboardKey.metaLeft ||
+                                event.logicalKey ==
+                                    LogicalKeyboardKey.metaRight;
+                            final isShift =
+                                event.logicalKey ==
+                                    LogicalKeyboardKey.shiftLeft ||
+                                event.logicalKey ==
+                                    LogicalKeyboardKey.shiftRight;
+                            setState(() {
+                              if (isCtrl) _ctrlPressed = true;
+                              if (isShift) _shiftPressed = true;
+                            });
+                          } else if (event is KeyUpEvent) {
+                            final isCtrl =
+                                event.logicalKey ==
+                                    LogicalKeyboardKey.controlLeft ||
+                                event.logicalKey ==
+                                    LogicalKeyboardKey.controlRight ||
+                                event.logicalKey ==
+                                    LogicalKeyboardKey.metaLeft ||
+                                event.logicalKey ==
+                                    LogicalKeyboardKey.metaRight;
+                            final isShift =
+                                event.logicalKey ==
+                                    LogicalKeyboardKey.shiftLeft ||
+                                event.logicalKey ==
+                                    LogicalKeyboardKey.shiftRight;
+                            setState(() {
+                              if (isCtrl) _ctrlPressed = false;
+                              if (isShift) _shiftPressed = false;
+                            });
+                          }
+                        },
+                        child: TableCalendar(
+                          firstDay: firstDay,
+                          lastDay: lastDay,
+                          focusedDay: focusedDay,
+                          selectedDayPredicate: (day) {
+                            final normalizedDay = DateTime(
+                              day.year,
+                              day.month,
+                              day.day,
+                            );
+                            return selectedDates.contains(normalizedDay);
+                          },
+                          rangeStartDay: rangeStart,
+                          rangeEndDay: rangeEnd,
+                          rangeSelectionMode: RangeSelectionMode.disabled,
+                          onDaySelected: _onDaySelected,
+                          calendarFormat: CalendarFormat.month,
+                          startingDayOfWeek: StartingDayOfWeek.monday,
+                          locale: _isRu ? 'ru_RU' : 'en_US',
+                        ),
                       ),
-                    ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Выбрано дат: ${selectedDates.length}',
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, null),
-                  child: const Text('Отмена'),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _t(
+                  'Выбрано дат: ${selectedDates.length}',
+                  'Selected dates: ${selectedDates.length}',
                 ),
-                const SizedBox(width: 8),
-                TextButton(
-                  onPressed: () {
-                    if (selectedDates.isEmpty) {
-                      setState(() => _noticeMessage = 'Выберите хотя бы одну дату');
-                      return;
-                    }
-                    Navigator.pop(context, {
-                      'dates': selectedDates.toList()..sort(),
-                    });
-                  },
-                  child: const Text('Добавить'),
-                ),
-              ],
-            ),
-          ],
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 16),
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, null),
+                    child: Text(_t('Отмена', 'Cancel')),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      if (selectedDates.isEmpty) {
+                        setState(
+                          () => _noticeMessage = _t(
+                            'Выберите хотя бы одну дату',
+                            'Select at least one date',
+                          ),
+                        );
+                        return;
+                      }
+                      Navigator.pop(context, {
+                        'dates': selectedDates.toList()..sort(),
+                      });
+                    },
+                    child: Text(_t('Добавить', 'Apply')),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
-  
+
   Widget _buildModeButton(String label, String mode, IconData icon) {
     final isSelected = _selectionMode == mode;
     return ElevatedButton.icon(
@@ -268,8 +377,12 @@ class _JournalDatePickerDialogState extends State<JournalDatePickerDialog> {
       ),
     );
   }
-  
-  void _onRangeSelected(DateTime? start, DateTime? end, DateTime focusedDayNew) {
+
+  void _onRangeSelected(
+    DateTime? start,
+    DateTime? end,
+    DateTime focusedDayNew,
+  ) {
     setState(() {
       focusedDay = focusedDayNew;
       rangeStart = start;

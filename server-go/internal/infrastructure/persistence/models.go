@@ -245,6 +245,40 @@ type DBJournalComputedRowV2 struct {
 	CalculatedAt    time.Time `gorm:"index"`
 }
 
+type DBMakeupCase struct {
+	ID                   uint       `gorm:"primaryKey"`
+	GroupName            string     `gorm:"size:64;index;not null"`
+	TeacherID            uint       `gorm:"index;not null"`
+	StudentID            uint       `gorm:"index;not null"`
+	ClassDate            time.Time  `gorm:"type:date;index;not null"`
+	Status               string     `gorm:"size:32;index;not null"`
+	TeacherNote          string     `gorm:"type:text"`
+	MedicalProofURL      string     `gorm:"size:512"`
+	MedicalProofComment  string     `gorm:"type:text"`
+	TeacherTask          string     `gorm:"type:text"`
+	TeacherTaskAt        *time.Time `gorm:"index"`
+	StudentSubmission    string     `gorm:"type:text"`
+	StudentSubmissionURL string     `gorm:"size:512"`
+	SubmissionSentAt     *time.Time `gorm:"index"`
+	Grade                string     `gorm:"size:64"`
+	GradeComment         string     `gorm:"type:text"`
+	GradeSetAt           *time.Time `gorm:"index"`
+	ProofSubmittedAt     *time.Time `gorm:"index"`
+	TeacherNoteAt        *time.Time `gorm:"index"`
+	CreatedAt            time.Time  `gorm:"index"`
+	UpdatedAt            time.Time  `gorm:"index"`
+	ClosedAt             *time.Time `gorm:"index"`
+}
+
+type DBMakeupMessage struct {
+	ID            uint      `gorm:"primaryKey"`
+	MakeupCaseID  uint      `gorm:"index;not null"`
+	SenderID      uint      `gorm:"index;not null"`
+	Body          string    `gorm:"type:text"`
+	AttachmentURL string    `gorm:"size:512"`
+	CreatedAt     time.Time `gorm:"index"`
+}
+
 func ModelSet() []any {
 	return []any{
 		&DBUser{},
@@ -272,5 +306,7 @@ func ModelSet() []any {
 		&DBJournalDateCellV2{},
 		&DBJournalManualCellV2{},
 		&DBJournalComputedRowV2{},
+		&DBMakeupCase{},
+		&DBMakeupMessage{},
 	}
 }
