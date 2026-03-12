@@ -61,6 +61,7 @@ func (h *Handler) RegisterAuthRoutes(router *gin.Engine, auth *httpMiddleware.Au
 		secured.POST("/devices/register", h.registerDeviceToken)
 		secured.GET("/notifications", h.listNotifications)
 		secured.POST("/notifications/:id/read", h.markNotificationRead)
+		secured.DELETE("/notifications/:id", h.deleteNotification)
 	}
 
 	admin := router.Group("/")
@@ -450,17 +451,10 @@ func (h *Handler) markNotificationRead(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid notification id"})
 		return
 	}
-	now := time.Now().UTC()
-	result := h.db.WithContext(c.Request.Context()).Model(&persistence.DBNotification{}).
-		Where("id = ? AND user_id = ?", id, currentUser.ID).
-		Where("read_at IS NULL").
-		Update("read_at", now)
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to update notification"})
-		return
-	}
 	var notification persistence.DBNotification
-	if err := h.db.WithContext(c.Request.Context()).First(&notification, id).Error; err != nil {
+	if err := h.db.WithContext(c.Request.Context()).
+		Where("id = ? AND user_id = ?", id, currentUser.ID).
+		First(&notification).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"detail": "Notification not found"})
 			return
@@ -468,18 +462,77 @@ func (h *Handler) markNotificationRead(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load notification"})
 		return
 	}
+	now := time.Now().UTC()
+	if err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		readAt := now
+		if notification.ReadAt != nil {
+			readAt = *notification.ReadAt
+		}
+		notification.ReadAt = &readAt
+		return tx.Where("id = ? AND user_id = ?", id, currentUser.ID).
+			Delete(&persistence.DBNotification{}).Error
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to update notification"})
+		return
+	}
 	_ = h.invalidateNotificationCache(c.Request.Context(), currentUser.ID)
-	c.JSON(http.StatusOK, mapNotification(notification))
+	out := mapNotification(notification)
+	out["deleted"] = true
+	out["is_deleted"] = true
+	out["is_unread"] = false
+	out["is_read"] = true
+	out["status"] = "deleted"
+	out["can_mark_read"] = false
+	out["can_delete"] = false
+	c.JSON(http.StatusOK, out)
+}
+
+func (h *Handler) deleteNotification(c *gin.Context) {
+	currentUser := httpMiddleware.CurrentUser(c)
+	if currentUser == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid notification id"})
+		return
+	}
+	result := h.db.WithContext(c.Request.Context()).
+		Where("id = ? AND user_id = ?", id, currentUser.ID).
+		Delete(&persistence.DBNotification{})
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete notification"})
+		return
+	}
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"detail": "Notification not found"})
+		return
+	}
+	_ = h.invalidateNotificationCache(c.Request.Context(), currentUser.ID)
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 func mapNotification(item persistence.DBNotification) gin.H {
+	isRead := item.ReadAt != nil
+	status := "unread"
+	if isRead {
+		status = "read"
+	}
 	out := gin.H{
-		"id":         item.ID,
-		"title":      item.Title,
-		"body":       item.Body,
-		"created_at": item.CreatedAt.Format(time.RFC3339),
-		"read_at":    nil,
-		"data":       nil,
+		"id":            item.ID,
+		"title":         item.Title,
+		"body":          item.Body,
+		"created_at":    item.CreatedAt.Format(time.RFC3339),
+		"read_at":       nil,
+		"data":          nil,
+		"is_read":       isRead,
+		"is_unread":     !isRead,
+		"is_deleted":    false,
+		"status":        status,
+		"can_mark_read": !isRead,
+		"can_delete":    true,
+		"deleted":       false,
 	}
 	if item.ReadAt != nil {
 		out["read_at"] = item.ReadAt.Format(time.RFC3339)

@@ -210,6 +210,14 @@ class ApiClient {
     );
   }
 
+  Future<void> deleteNotification(int id) async {
+    final response = await http.delete(
+      Uri.parse('$baseUrl/notifications/$id'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+  }
+
   Future<List<NewsPost>> listNews({
     int offset = 0,
     int limit = 20,
@@ -376,6 +384,45 @@ class ApiClient {
     }
     _ensureSuccess(response);
     return null;
+  }
+
+  Future<List<ScheduleUpload>> listScheduleUploads() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/schedule'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data
+        .map((item) => ScheduleUpload.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<ScheduleUpload> updateScheduleUpload({
+    required int id,
+    DateTime? scheduleDate,
+  }) async {
+    final response = await http.patch(
+      Uri.parse('$baseUrl/schedule/$id'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({
+        'schedule_date': scheduleDate == null
+            ? ''
+            : _formatDateOnly(scheduleDate),
+      }),
+    );
+    _ensureSuccess(response);
+    return ScheduleUpload.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<void> deleteScheduleUpload(int id) async {
+    final response = await http.delete(
+      Uri.parse('$baseUrl/schedule/$id'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
   }
 
   Future<List<String>> listScheduleGroups({DateTime? at}) async {
@@ -806,6 +853,155 @@ class ApiClient {
   Future<void> deleteTeacherAssignment(int assignmentId) async {
     final response = await http.delete(
       Uri.parse('$baseUrl/teacher-assignments/$assignmentId'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<List<DepartmentDto>> listDepartments() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/departments'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data
+        .map((item) => DepartmentDto.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<DepartmentDto> createDepartment({
+    required String name,
+    required String key,
+    int? headUserId,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/departments'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({'name': name, 'key': key, 'head_user_id': headUserId}),
+    );
+    _ensureSuccess(response);
+    final id = (jsonDecode(response.body) as Map<String, dynamic>)['id'] as int;
+    final departments = await listDepartments();
+    return departments.firstWhere(
+      (item) => item.id == id,
+      orElse: () => DepartmentDto(
+        id: id,
+        name: name,
+        key: key,
+        headUserId: headUserId,
+        headName: null,
+        groups: const [],
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  Future<DepartmentDto> updateDepartment({
+    required int id,
+    String? name,
+    String? key,
+    int? headUserId,
+  }) async {
+    final response = await http.patch(
+      Uri.parse('$baseUrl/departments/$id'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({
+        if (name != null) 'name': name,
+        if (key != null) 'key': key,
+        'head_user_id': headUserId,
+      }),
+    );
+    _ensureSuccess(response);
+    final departments = await listDepartments();
+    return departments.firstWhere(
+      (item) => item.id == id,
+      orElse: () => DepartmentDto(
+        id: id,
+        name: name ?? '',
+        key: key ?? '',
+        headUserId: headUserId,
+        headName: null,
+        groups: const [],
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  Future<void> deleteDepartment(int id) async {
+    final response = await http.delete(
+      Uri.parse('$baseUrl/departments/$id'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<void> addDepartmentGroup({
+    required int departmentId,
+    required String groupName,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/departments/$departmentId/groups'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({'group_name': groupName}),
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<void> removeDepartmentGroup({
+    required int departmentId,
+    required String groupName,
+  }) async {
+    final response = await http.delete(
+      Uri.parse(
+        '$baseUrl/departments/$departmentId/groups',
+      ).replace(queryParameters: {'group_name': groupName}),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<List<CuratorGroupAssignmentDto>> listCuratorGroups({
+    int? curatorId,
+  }) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/curator-groups').replace(
+        queryParameters: curatorId == null
+            ? null
+            : {'curator_id': curatorId.toString()},
+      ),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data
+        .map(
+          (item) =>
+              CuratorGroupAssignmentDto.fromJson(item as Map<String, dynamic>),
+        )
+        .toList();
+  }
+
+  Future<CuratorGroupAssignmentDto> createCuratorGroup({
+    required int curatorId,
+    required String groupName,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/curator-groups'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({'curator_id': curatorId, 'group_name': groupName}),
+    );
+    _ensureSuccess(response);
+    return CuratorGroupAssignmentDto.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<void> deleteCuratorGroup(int id) async {
+    final response = await http.delete(
+      Uri.parse('$baseUrl/curator-groups/$id'),
       headers: _headers(),
     );
     _ensureSuccess(response);
@@ -1633,6 +1829,13 @@ class AppNotification {
     required this.createdAt,
     this.data,
     this.readAt,
+    this.isReadFlag,
+    this.isUnreadFlag,
+    this.isDeleted = false,
+    this.status = 'unread',
+    this.canMarkRead = true,
+    this.canDelete = true,
+    this.deleted = false,
   });
 
   final int id;
@@ -1641,8 +1844,16 @@ class AppNotification {
   final Map<String, dynamic>? data;
   final DateTime createdAt;
   final DateTime? readAt;
+  final bool? isReadFlag;
+  final bool? isUnreadFlag;
+  final bool isDeleted;
+  final String status;
+  final bool canMarkRead;
+  final bool canDelete;
+  final bool deleted;
 
-  bool get isRead => readAt != null;
+  bool get isRead => isReadFlag ?? (readAt != null);
+  bool get isUnread => isUnreadFlag ?? !isRead;
 
   factory AppNotification.fromJson(Map<String, dynamic> json) {
     final rawData = json['data'];
@@ -1670,6 +1881,13 @@ class AppNotification {
       readAt: json['read_at'] == null
           ? null
           : DateTime.parse(json['read_at'] as String),
+      isReadFlag: json['is_read'] as bool?,
+      isUnreadFlag: json['is_unread'] as bool?,
+      isDeleted: (json['is_deleted'] as bool?) ?? false,
+      status: (json['status'] as String?) ?? 'unread',
+      canMarkRead: (json['can_mark_read'] as bool?) ?? true,
+      canDelete: (json['can_delete'] as bool?) ?? true,
+      deleted: (json['deleted'] as bool?) ?? false,
     );
   }
 }
@@ -1989,6 +2207,7 @@ class RequestTicket {
     required this.status,
     required this.details,
     required this.createdAt,
+    required this.updatedAt,
     required this.studentName,
   });
 
@@ -1998,6 +2217,7 @@ class RequestTicket {
   final String status;
   final String? details;
   final DateTime createdAt;
+  final DateTime updatedAt;
   final String studentName;
 
   factory RequestTicket.fromJson(Map<String, dynamic> json) {
@@ -2008,6 +2228,9 @@ class RequestTicket {
       status: json['status'] as String,
       details: json['details'] as String?,
       createdAt: DateTime.parse(json['created_at'] as String),
+      updatedAt: DateTime.parse(
+        (json['updated_at'] as String?) ?? (json['created_at'] as String),
+      ),
       studentName: (json['student_name'] as String?) ?? '',
     );
   }
@@ -2139,6 +2362,75 @@ class TeacherGroupAssignment {
       groupName: json['group_name'] as String,
       subject: json['subject'] as String,
       createdAt: DateTime.parse(json['created_at'] as String),
+    );
+  }
+}
+
+class DepartmentDto {
+  DepartmentDto({
+    required this.id,
+    required this.name,
+    required this.key,
+    required this.headUserId,
+    required this.headName,
+    required this.groups,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final int id;
+  final String name;
+  final String key;
+  final int? headUserId;
+  final String? headName;
+  final List<String> groups;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  factory DepartmentDto.fromJson(Map<String, dynamic> json) {
+    return DepartmentDto(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      name: (json['name'] as String?) ?? '',
+      key: (json['key'] as String?) ?? '',
+      headUserId: (json['head_user_id'] as num?)?.toInt(),
+      headName: json['head_name'] as String?,
+      groups: (json['groups'] as List<dynamic>? ?? [])
+          .map((item) => item.toString())
+          .toList(),
+      createdAt: DateTime.parse(
+        (json['created_at'] as String?) ?? DateTime.now().toIso8601String(),
+      ),
+      updatedAt: DateTime.parse(
+        (json['updated_at'] as String?) ?? DateTime.now().toIso8601String(),
+      ),
+    );
+  }
+}
+
+class CuratorGroupAssignmentDto {
+  CuratorGroupAssignmentDto({
+    required this.id,
+    required this.curatorId,
+    required this.curatorName,
+    required this.groupName,
+    required this.createdAt,
+  });
+
+  final int id;
+  final int curatorId;
+  final String? curatorName;
+  final String groupName;
+  final DateTime createdAt;
+
+  factory CuratorGroupAssignmentDto.fromJson(Map<String, dynamic> json) {
+    return CuratorGroupAssignmentDto(
+      id: (json['id'] as num?)?.toInt() ?? 0,
+      curatorId: (json['curator_id'] as num?)?.toInt() ?? 0,
+      curatorName: json['curator_name'] as String?,
+      groupName: (json['group_name'] as String?) ?? '',
+      createdAt: DateTime.parse(
+        (json['created_at'] as String?) ?? DateTime.now().toIso8601String(),
+      ),
     );
   }
 }

@@ -21,6 +21,10 @@ import (
 	"gorm.io/gorm"
 )
 
+type scheduleUploadUpdatePayload struct {
+	ScheduleDate *string `json:"schedule_date"`
+}
+
 func (h *Handler) uploadSchedule(c *gin.Context) {
 	file, err := c.FormFile("file")
 	if err != nil {
@@ -152,6 +156,112 @@ func (h *Handler) uploadSchedule(c *gin.Context) {
 	c.JSON(http.StatusOK, mapScheduleUpload(upload))
 }
 
+func (h *Handler) updateScheduleUpload(c *gin.Context) {
+	id, err := parseUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid schedule id"})
+		return
+	}
+	var payload scheduleUploadUpdatePayload
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
+		return
+	}
+	if payload.ScheduleDate == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "schedule_date is required"})
+		return
+	}
+
+	var scheduleDate *time.Time
+	rawDate := strings.TrimSpace(*payload.ScheduleDate)
+	if rawDate != "" {
+		parsed, parseErr := parseDate(rawDate)
+		if parseErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"detail": "schedule_date should be YYYY-MM-DD"})
+			return
+		}
+		scheduleDate = &parsed
+	}
+
+	var upload persistence.DBScheduleUpload
+	if err := h.db.WithContext(c.Request.Context()).First(&upload, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"detail": "Schedule upload not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to update schedule upload"})
+		return
+	}
+
+	scheduleDir := filepath.Join(h.cfg.MediaDir, "schedule")
+	filesToRemove := []string{}
+	if err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		if scheduleDate != nil {
+			var duplicates []persistence.DBScheduleUpload
+			if err := tx.
+				Where("id <> ? AND schedule_date = ?", upload.ID, *scheduleDate).
+				Find(&duplicates).Error; err != nil {
+				return err
+			}
+			if len(duplicates) > 0 {
+				ids := make([]uint, 0, len(duplicates))
+				for _, row := range duplicates {
+					ids = append(ids, row.ID)
+					if strings.TrimSpace(row.DBFilename) != "" {
+						filesToRemove = append(filesToRemove, filepath.Join(scheduleDir, row.DBFilename))
+					}
+				}
+				if err := tx.Where("upload_id IN ?", ids).Delete(&persistence.DBScheduleLesson{}).Error; err != nil {
+					return err
+				}
+				if err := tx.Where("id IN ?", ids).Delete(&persistence.DBScheduleUpload{}).Error; err != nil {
+					return err
+				}
+			}
+		}
+		upload.ScheduleDate = scheduleDate
+		return tx.Save(&upload).Error
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to update schedule upload"})
+		return
+	}
+
+	for _, filename := range filesToRemove {
+		_ = os.Remove(filename)
+	}
+	c.JSON(http.StatusOK, mapScheduleUpload(upload))
+}
+
+func (h *Handler) deleteScheduleUpload(c *gin.Context) {
+	id, err := parseUintParam(c, "id")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid schedule id"})
+		return
+	}
+	var upload persistence.DBScheduleUpload
+	if err := h.db.WithContext(c.Request.Context()).First(&upload, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"detail": "Schedule upload not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete schedule upload"})
+		return
+	}
+	if err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("upload_id = ?", id).Delete(&persistence.DBScheduleLesson{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&upload).Error
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete schedule upload"})
+		return
+	}
+	if strings.TrimSpace(upload.DBFilename) != "" {
+		_ = os.Remove(filepath.Join(h.cfg.MediaDir, "schedule", upload.DBFilename))
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
 func (h *Handler) listScheduleUploads(c *gin.Context) {
 	var uploads []persistence.DBScheduleUpload
 	if err := h.db.WithContext(c.Request.Context()).
@@ -184,6 +294,11 @@ func (h *Handler) latestScheduleUpload(c *gin.Context) {
 }
 
 func (h *Handler) scheduleGroups(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	scheduleAt, err := parseScheduleAt(c.Query("at"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid 'at' date. Use YYYY-MM-DD"})
@@ -212,10 +327,25 @@ func (h *Handler) scheduleGroups(c *gin.Context) {
 	}
 	unique := map[string]struct{}{}
 	groups := make([]string, 0, len(rawGroups))
+	var scope groupAccessScope
+	if user.Role == "teacher" {
+		scope, err = h.groupScopeForUser(c.Request.Context(), user)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load groups"})
+			return
+		}
+	}
+	userGroup := normalizeGroupName(user.StudentGroup)
 	for _, value := range rawGroups {
 		for _, token := range extractGroupTokens(value) {
 			normalized := strings.TrimSpace(token)
 			if normalized == "" {
+				continue
+			}
+			if user.Role == "teacher" && !scope.canView(normalized) {
+				continue
+			}
+			if (user.Role == "student" || user.Role == "parent") && (userGroup == "" || userGroup != normalized) {
 				continue
 			}
 			key := strings.ToLower(normalized)
@@ -348,10 +478,32 @@ func (h *Handler) scheduleForMe(c *gin.Context) {
 }
 
 func (h *Handler) scheduleForGroup(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	groupName := strings.TrimSpace(c.Param("group"))
 	if groupName == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Group is required"})
 		return
+	}
+	if user.Role == "teacher" {
+		scope, err := h.groupScopeForUser(c.Request.Context(), user)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load schedule"})
+			return
+		}
+		if !scope.canView(groupName) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
+	}
+	if user.Role == "student" || user.Role == "parent" {
+		if normalizeGroupName(user.StudentGroup) == "" || normalizeGroupName(user.StudentGroup) != groupName {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
 	}
 	scheduleAt, err := parseScheduleAt(c.Query("at"))
 	if err != nil {
@@ -431,6 +583,29 @@ func (h *Handler) scheduleForTeacher(c *gin.Context) {
 }
 
 func (h *Handler) listJournalGroups(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	if user.Role == "teacher" {
+		scope, err := h.groupScopeForUser(c.Request.Context(), user)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load groups"})
+			return
+		}
+		c.JSON(http.StatusOK, scope.asList())
+		return
+	}
+	if user.Role == "student" || user.Role == "parent" {
+		group := normalizeGroupName(user.StudentGroup)
+		if group == "" {
+			c.JSON(http.StatusOK, []string{})
+		} else {
+			c.JSON(http.StatusOK, []string{group})
+		}
+		return
+	}
 	var groups []string
 	if err := h.db.WithContext(c.Request.Context()).
 		Model(&persistence.DBJournalGroup{}).
@@ -443,6 +618,15 @@ func (h *Handler) listJournalGroups(c *gin.Context) {
 }
 
 func (h *Handler) upsertJournalGroup(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	if user.Role == "teacher" {
+		c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+		return
+	}
 	var payload journalGroupPayload
 	if err := c.ShouldBindJSON(&payload); err != nil || strings.TrimSpace(payload.Name) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Group name is required"})
@@ -458,6 +642,15 @@ func (h *Handler) upsertJournalGroup(c *gin.Context) {
 }
 
 func (h *Handler) deleteJournalGroup(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	if user.Role == "teacher" {
+		c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+		return
+	}
 	name := strings.TrimSpace(c.Query("group_name"))
 	if name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name is required"})
@@ -480,10 +673,32 @@ func (h *Handler) deleteJournalGroup(c *gin.Context) {
 }
 
 func (h *Handler) listJournalStudents(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	groupName := strings.TrimSpace(c.Query("group_name"))
 	if groupName == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name is required"})
 		return
+	}
+	if user.Role == "teacher" {
+		scope, err := h.groupScopeForUser(c.Request.Context(), user)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load students"})
+			return
+		}
+		if !scope.canView(groupName) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
+	}
+	if user.Role == "student" || user.Role == "parent" {
+		if normalizeGroupName(user.StudentGroup) == "" || normalizeGroupName(user.StudentGroup) != groupName {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
 	}
 	var students []string
 	if err := h.db.WithContext(c.Request.Context()).
@@ -498,6 +713,11 @@ func (h *Handler) listJournalStudents(c *gin.Context) {
 }
 
 func (h *Handler) upsertJournalStudent(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	var payload journalStudentPayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
@@ -508,6 +728,17 @@ func (h *Handler) upsertJournalStudent(c *gin.Context) {
 	if group == "" || name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name and student_name are required"})
 		return
+	}
+	if user.Role == "teacher" {
+		scope, err := h.groupScopeForUser(c.Request.Context(), user)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save student"})
+			return
+		}
+		if !scope.canEditGrades(group) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
 	}
 	row := persistence.DBJournalStudent{GroupName: group, StudentName: name}
 	if err := h.db.WithContext(c.Request.Context()).
@@ -524,11 +755,27 @@ func (h *Handler) upsertJournalStudent(c *gin.Context) {
 }
 
 func (h *Handler) deleteJournalStudent(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	name := strings.TrimSpace(c.Query("student_name"))
 	if group == "" || name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name and student_name are required"})
 		return
+	}
+	if user.Role == "teacher" {
+		scope, err := h.groupScopeForUser(c.Request.Context(), user)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete student"})
+			return
+		}
+		if !scope.canEditGrades(group) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
 	}
 	if err := h.db.WithContext(c.Request.Context()).
 		Where("group_name = ? AND student_name = ?", group, name).
@@ -540,10 +787,32 @@ func (h *Handler) deleteJournalStudent(c *gin.Context) {
 }
 
 func (h *Handler) listJournalDates(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	if group == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name is required"})
 		return
+	}
+	if user.Role == "teacher" {
+		scope, err := h.groupScopeForUser(c.Request.Context(), user)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load dates"})
+			return
+		}
+		if !scope.canView(group) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
+	}
+	if user.Role == "student" || user.Role == "parent" {
+		if normalizeGroupName(user.StudentGroup) == "" || normalizeGroupName(user.StudentGroup) != group {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
 	}
 	var dates []time.Time
 	if err := h.db.WithContext(c.Request.Context()).
@@ -562,6 +831,11 @@ func (h *Handler) listJournalDates(c *gin.Context) {
 }
 
 func (h *Handler) upsertJournalDate(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	var payload journalDatePayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
@@ -572,6 +846,17 @@ func (h *Handler) upsertJournalDate(c *gin.Context) {
 	if group == "" || err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid group_name or class_date"})
 		return
+	}
+	if user.Role == "teacher" {
+		scope, scopeErr := h.groupScopeForUser(c.Request.Context(), user)
+		if scopeErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save date"})
+			return
+		}
+		if !scope.canEditGrades(group) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
 	}
 	row := persistence.DBJournalDate{
 		GroupName: group,
@@ -591,11 +876,27 @@ func (h *Handler) upsertJournalDate(c *gin.Context) {
 }
 
 func (h *Handler) deleteJournalDate(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	dateValue, err := parseDate(c.Query("class_date"))
 	if group == "" || err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid group_name or class_date"})
 		return
+	}
+	if user.Role == "teacher" {
+		scope, scopeErr := h.groupScopeForUser(c.Request.Context(), user)
+		if scopeErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete date"})
+			return
+		}
+		if !scope.canEditGrades(group) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
 	}
 	if err := h.db.WithContext(c.Request.Context()).
 		Where("group_name = ? AND class_date = ?", group, dateValue).

@@ -132,7 +132,9 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
 
   bool _loading = true;
   bool _saving = false;
+  bool _online = true;
   String? _error;
+  DateTime? _lastSync;
 
   List<String> _groups = <String>[];
   String? _groupName;
@@ -141,7 +143,17 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
   bool get _isRu => Localizations.localeOf(
     context,
   ).languageCode.toLowerCase().startsWith('ru');
+  bool get _syncing => _loading || _saving;
   String _tr(String ru, String en) => _isRu ? ru : en;
+
+  void _markOnline() {
+    _online = true;
+    _lastSync = DateTime.now();
+  }
+
+  void _markOffline() {
+    _online = false;
+  }
 
   @override
   void initState() {
@@ -175,13 +187,17 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       }
       if (!mounted) return;
       setState(() {
+        _markOnline();
         _groups = groups;
         _groupName = selected;
         _grid = grid;
       });
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = _readErrorText(error));
+      setState(() {
+        _markOffline();
+        _error = _readErrorText(error);
+      });
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -259,10 +275,16 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
     try {
       final grid = await widget.client.getGroupGridV2(_groupName!);
       if (!mounted) return;
-      setState(() => _grid = grid);
+      setState(() {
+        _markOnline();
+        _grid = grid;
+      });
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = _readErrorText(error));
+      setState(() {
+        _markOffline();
+        _error = _readErrorText(error);
+      });
     } finally {
       if (mounted) {
         setState(() => _loading = false);
@@ -292,6 +314,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       _showMessage(_tr('Группа добавлена.', 'Group added.'));
     } catch (error) {
       if (!mounted) return;
+      setState(_markOffline);
       if (error is ApiException && error.statusCode == 403) {
         _showMessage(
           _tr(
@@ -337,6 +360,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       );
     } catch (error) {
       if (!mounted) return;
+      setState(_markOffline);
       _showMessage(_readErrorText(error), isError: true);
     } finally {
       if (mounted) {
@@ -353,6 +377,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       await _reloadGrid();
     } catch (error) {
       if (!mounted) return;
+      setState(_markOffline);
       _showMessage(_readErrorText(error), isError: true);
     } finally {
       if (mounted) {
@@ -369,6 +394,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       await _reloadGrid();
     } catch (error) {
       if (!mounted) return;
+      setState(_markOffline);
       _showMessage(_readErrorText(error), isError: true);
     } finally {
       if (mounted) {
@@ -389,6 +415,53 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
               : const Color(0xFF166534),
         ),
       );
+  }
+
+  String _formatSyncTime(DateTime time) {
+    final y = time.year.toString().padLeft(4, '0');
+    final m = time.month.toString().padLeft(2, '0');
+    final d = time.day.toString().padLeft(2, '0');
+    final h = time.hour.toString().padLeft(2, '0');
+    final min = time.minute.toString().padLeft(2, '0');
+    return '$y-$m-$d $h:$min';
+  }
+
+  Widget _buildSyncIndicator() {
+    final label = _syncing
+        ? _tr('Синхронизация...', 'Syncing...')
+        : _online
+        ? _tr('Онлайн', 'Online')
+        : _tr('Офлайн', 'Offline');
+    final color = _syncing
+        ? Colors.orange
+        : _online
+        ? Colors.green
+        : Colors.red;
+    final subtitle = _lastSync == null
+        ? ''
+        : ' • ${_formatSyncTime(_lastSync!)}';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            _online ? Icons.cloud_done : Icons.cloud_off,
+            size: 16,
+            color: color,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '$label$subtitle',
+            style: TextStyle(color: color, fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -494,6 +567,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
         spacing: 10,
         runSpacing: 10,
         children: [
+          _buildSyncIndicator(),
           SizedBox(
             width: compact ? double.infinity : 260,
             child: DropdownButtonFormField<String>(
@@ -907,6 +981,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       _showMessage(_tr('Студент добавлен.', 'Student added.'));
     } catch (error) {
       if (!mounted) return;
+      setState(_markOffline);
       _showMessage(_readErrorText(error), isError: true);
     } finally {
       if (mounted) {
@@ -1006,6 +1081,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       _showMessage(_tr('Студент переименован.', 'Student renamed.'));
     } catch (error) {
       if (!mounted) return;
+      setState(_markOffline);
       _showMessage(_readErrorText(error), isError: true);
     } finally {
       if (mounted) {
@@ -1052,6 +1128,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       _showMessage(_tr('Студент удалён.', 'Student deleted.'));
     } catch (error) {
       if (!mounted) return;
+      setState(_markOffline);
       _showMessage(_readErrorText(error), isError: true);
     } finally {
       if (mounted) {
@@ -1082,6 +1159,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       );
     } catch (error) {
       if (!mounted) return;
+      setState(_markOffline);
       _showMessage(_readErrorText(error), isError: true);
     } finally {
       if (mounted) {
@@ -1158,6 +1236,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       _showMessage(_tr('Дата изменена.', 'Date updated.'));
     } catch (error) {
       if (!mounted) return;
+      setState(_markOffline);
       _showMessage(_readErrorText(error), isError: true);
     } finally {
       if (mounted) {
@@ -1201,6 +1280,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       _showMessage(_tr('Дата удалена.', 'Date deleted.'));
     } catch (error) {
       if (!mounted) return;
+      setState(_markOffline);
       _showMessage(_readErrorText(error), isError: true);
     } finally {
       if (mounted) {
@@ -1414,6 +1494,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       await _reloadGrid();
     } catch (error) {
       if (!mounted) return;
+      setState(_markOffline);
       _showMessage(_readErrorText(error), isError: true);
     } finally {
       if (mounted) {
@@ -1448,6 +1529,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       await _reloadGrid();
     } catch (error) {
       if (!mounted) return;
+      setState(_markOffline);
       _showMessage(_readErrorText(error), isError: true);
     } finally {
       if (mounted) {

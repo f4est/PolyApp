@@ -109,12 +109,13 @@ type DBScheduleLesson struct {
 }
 
 type DBRequestTicket struct {
-	ID          uint      `gorm:"primaryKey"`
-	StudentID   uint      `gorm:"index;not null"`
-	RequestType string    `gorm:"size:255;not null"`
-	Status      string    `gorm:"size:64;index;not null"`
-	Details     string    `gorm:"type:text"`
-	CreatedAt   time.Time `gorm:"index"`
+	ID          uint       `gorm:"primaryKey"`
+	StudentID   uint       `gorm:"index;not null"`
+	RequestType string     `gorm:"size:255;not null"`
+	Status      string     `gorm:"size:64;index;not null"`
+	Details     string     `gorm:"type:text"`
+	CreatedAt   time.Time  `gorm:"index"`
+	UpdatedAt   *time.Time `gorm:"index"`
 }
 
 type DBAttendanceRecord struct {
@@ -162,6 +163,29 @@ type DBTeacherGroupAssignment struct {
 	GroupName string `gorm:"size:64;index;not null"`
 	Subject   string `gorm:"size:128;not null"`
 	CreatedAt time.Time
+}
+
+type DBDepartment struct {
+	ID         uint      `gorm:"primaryKey"`
+	Name       string    `gorm:"size:255;uniqueIndex;not null"`
+	Key        string    `gorm:"size:32;uniqueIndex;not null"`
+	HeadUserID *uint     `gorm:"index"`
+	CreatedAt  time.Time `gorm:"index"`
+	UpdatedAt  time.Time `gorm:"index"`
+}
+
+type DBDepartmentGroup struct {
+	ID           uint      `gorm:"primaryKey"`
+	DepartmentID uint      `gorm:"index;uniqueIndex:idx_department_group;not null"`
+	GroupName    string    `gorm:"size:64;uniqueIndex:idx_department_group;uniqueIndex;not null"`
+	CreatedAt    time.Time `gorm:"index"`
+}
+
+type DBCuratorGroupAssignment struct {
+	ID        uint      `gorm:"primaryKey"`
+	CuratorID uint      `gorm:"index;uniqueIndex:idx_curator_group;not null"`
+	GroupName string    `gorm:"size:64;uniqueIndex:idx_curator_group;uniqueIndex;not null"`
+	CreatedAt time.Time `gorm:"index"`
 }
 
 type DBJournalGroup struct {
@@ -297,6 +321,9 @@ func ModelSet() []any {
 		&DBExamUpload{},
 		&DBExamGrade{},
 		&DBTeacherGroupAssignment{},
+		&DBDepartment{},
+		&DBDepartmentGroup{},
+		&DBCuratorGroupAssignment{},
 		&DBJournalGroup{},
 		&DBJournalStudent{},
 		&DBJournalDate{},

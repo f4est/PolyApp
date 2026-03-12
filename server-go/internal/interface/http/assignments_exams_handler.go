@@ -129,10 +129,24 @@ func (h *Handler) deleteTeacherAssignment(c *gin.Context) {
 
 func (h *Handler) analyticsGroups(c *gin.Context) {
 	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	var rows []persistence.DBTeacherGroupAssignment
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBTeacherGroupAssignment{})
 	if user.Role == "teacher" {
-		query = query.Where("teacher_id = ?", user.ID)
+		scope, err := h.groupScopeForUser(c.Request.Context(), user)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load analytics"})
+			return
+		}
+		allowed := scope.asList()
+		if len(allowed) == 0 {
+			c.JSON(http.StatusOK, []gin.H{})
+			return
+		}
+		query = query.Where("group_name IN ?", allowed)
 	}
 	if err := query.Find(&rows).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load analytics"})

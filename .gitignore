@@ -1,0 +1,35 @@
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Logs and temp files
+*.log
+*.tmp
+tmp/
+temp/
+
+# Go cache and test artifacts
+.gocache/
+server-go/.gocache/
+server-go/bin/
+server-go/coverage.out
+server-go/*.test
+server-go/*.out
+
+# Flutter/Dart local artifacts (main rules are in polyapp/.gitignore)
+polyapp/.dart_tool/
+polyapp/.flutter-plugins
+polyapp/.flutter-plugins-dependencies
+polyapp/.pub-cache/
+polyapp/.pub/
+polyapp/build/
+polyapp/coverage/

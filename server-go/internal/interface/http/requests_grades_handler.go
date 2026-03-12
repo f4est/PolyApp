@@ -35,7 +35,10 @@ func (h *Handler) createRequest(c *gin.Context) {
 		Status:      requestStatuses[0],
 		Details:     strings.TrimSpace(payload.Details),
 		CreatedAt:   time.Now().UTC(),
+		UpdatedAt:   nil,
 	}
+	now := time.Now().UTC()
+	ticket.UpdatedAt = &now
 	if err := h.db.WithContext(c.Request.Context()).Create(&ticket).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to create request"})
 		return
@@ -131,6 +134,8 @@ func (h *Handler) updateRequest(c *gin.Context) {
 	if payload.Details != nil {
 		ticket.Details = strings.TrimSpace(*payload.Details)
 	}
+	now := time.Now().UTC()
+	ticket.UpdatedAt = &now
 	if err := h.db.WithContext(c.Request.Context()).Save(&ticket).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to update ticket"})
 		return
@@ -140,6 +145,10 @@ func (h *Handler) updateRequest(c *gin.Context) {
 
 func (h *Handler) upsertAttendance(c *gin.Context) {
 	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	var payload attendancePayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
@@ -160,6 +169,17 @@ func (h *Handler) upsertAttendance(c *gin.Context) {
 	if row.GroupName == "" || row.StudentName == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name and student_name are required"})
 		return
+	}
+	if user.Role == "teacher" {
+		scope, err := h.groupScopeForUser(c.Request.Context(), user)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save attendance"})
+			return
+		}
+		if !scope.canEditAttendance(row.GroupName) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
 	}
 	tx := h.db.WithContext(c.Request.Context())
 	var existing persistence.DBAttendanceRecord
@@ -187,22 +207,40 @@ func (h *Handler) upsertAttendance(c *gin.Context) {
 
 func (h *Handler) listAttendance(c *gin.Context) {
 	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBAttendanceRecord{})
 	if group != "" {
 		query = query.Where("group_name = ?", group)
 	}
 	if user.Role == "teacher" {
-		allowed, err := h.allowedGroupsForTeacher(c, user.ID)
+		scope, err := h.groupScopeForUser(c.Request.Context(), user)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load attendance"})
 			return
 		}
-		if len(allowed) == 0 {
+		if group != "" && !scope.canView(group) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
+		allowed := scope.asList()
+		if group == "" && len(allowed) == 0 {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
-		query = query.Where("group_name IN ?", allowed)
+		if group == "" {
+			query = query.Where("group_name IN ?", allowed)
+		}
+	}
+	if user.Role == "parent" {
+		if strings.TrimSpace(user.StudentGroup) == "" {
+			c.JSON(http.StatusOK, []gin.H{})
+			return
+		}
+		query = query.Where("group_name = ?", strings.TrimSpace(user.StudentGroup))
 	}
 	var rows []persistence.DBAttendanceRecord
 	if err := query.Order("class_date desc").Find(&rows).Error; err != nil {
@@ -217,12 +255,28 @@ func (h *Handler) listAttendance(c *gin.Context) {
 }
 
 func (h *Handler) deleteAttendance(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	student := strings.TrimSpace(c.Query("student_name"))
 	classDate, err := parseDate(c.Query("class_date"))
 	if group == "" || student == "" || err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name, class_date and student_name are required"})
 		return
+	}
+	if user.Role == "teacher" {
+		scope, scopeErr := h.groupScopeForUser(c.Request.Context(), user)
+		if scopeErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete attendance"})
+			return
+		}
+		if !scope.canEditAttendance(group) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
 	}
 	res := h.db.WithContext(c.Request.Context()).
 		Where("group_name = ? AND class_date = ? AND student_name = ?", group, classDate, student).
@@ -236,22 +290,40 @@ func (h *Handler) deleteAttendance(c *gin.Context) {
 
 func (h *Handler) attendanceSummary(c *gin.Context) {
 	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBAttendanceRecord{})
 	if group != "" {
 		query = query.Where("group_name = ?", group)
 	}
 	if user.Role == "teacher" {
-		allowed, err := h.allowedGroupsForTeacher(c, user.ID)
+		scope, err := h.groupScopeForUser(c.Request.Context(), user)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load attendance"})
 			return
 		}
-		if len(allowed) == 0 {
+		if group != "" && !scope.canView(group) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
+		allowed := scope.asList()
+		if group == "" && len(allowed) == 0 {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
-		query = query.Where("group_name IN ?", allowed)
+		if group == "" {
+			query = query.Where("group_name IN ?", allowed)
+		}
+	}
+	if user.Role == "parent" {
+		if strings.TrimSpace(user.StudentGroup) == "" {
+			c.JSON(http.StatusOK, []gin.H{})
+			return
+		}
+		query = query.Where("group_name = ?", strings.TrimSpace(user.StudentGroup))
 	}
 	var rows []persistence.DBAttendanceRecord
 	if err := query.Find(&rows).Error; err != nil {
@@ -283,6 +355,10 @@ func (h *Handler) attendanceSummary(c *gin.Context) {
 
 func (h *Handler) upsertGrade(c *gin.Context) {
 	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	var payload gradePayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
@@ -307,6 +383,17 @@ func (h *Handler) upsertGrade(c *gin.Context) {
 	if row.GroupName == "" || row.StudentName == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name and student_name are required"})
 		return
+	}
+	if user.Role == "teacher" {
+		scope, err := h.groupScopeForUser(c.Request.Context(), user)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save grade"})
+			return
+		}
+		if !scope.canEditGrades(row.GroupName) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
 	}
 	tx := h.db.WithContext(c.Request.Context())
 	var existing persistence.DBGradeRecord
@@ -334,22 +421,40 @@ func (h *Handler) upsertGrade(c *gin.Context) {
 
 func (h *Handler) listGrades(c *gin.Context) {
 	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBGradeRecord{})
 	if group != "" {
 		query = query.Where("group_name = ?", group)
 	}
 	if user.Role == "teacher" {
-		allowed, err := h.allowedGroupsForTeacher(c, user.ID)
+		scope, err := h.groupScopeForUser(c.Request.Context(), user)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load grades"})
 			return
 		}
-		if len(allowed) == 0 {
+		if group != "" && !scope.canView(group) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
+		allowed := scope.asList()
+		if group == "" && len(allowed) == 0 {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
-		query = query.Where("group_name IN ?", allowed)
+		if group == "" {
+			query = query.Where("group_name IN ?", allowed)
+		}
+	}
+	if user.Role == "parent" {
+		if strings.TrimSpace(user.StudentGroup) == "" {
+			c.JSON(http.StatusOK, []gin.H{})
+			return
+		}
+		query = query.Where("group_name = ?", strings.TrimSpace(user.StudentGroup))
 	}
 	var rows []persistence.DBGradeRecord
 	if err := query.Order("class_date desc").Find(&rows).Error; err != nil {
@@ -364,12 +469,28 @@ func (h *Handler) listGrades(c *gin.Context) {
 }
 
 func (h *Handler) deleteGrade(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	student := strings.TrimSpace(c.Query("student_name"))
 	classDate, err := parseDate(c.Query("class_date"))
 	if group == "" || student == "" || err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name, class_date and student_name are required"})
 		return
+	}
+	if user.Role == "teacher" {
+		scope, scopeErr := h.groupScopeForUser(c.Request.Context(), user)
+		if scopeErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete grade"})
+			return
+		}
+		if !scope.canEditGrades(group) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
 	}
 	res := h.db.WithContext(c.Request.Context()).
 		Where("group_name = ? AND class_date = ? AND student_name = ?", group, classDate, student).
@@ -383,22 +504,40 @@ func (h *Handler) deleteGrade(c *gin.Context) {
 
 func (h *Handler) gradeSummary(c *gin.Context) {
 	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBGradeRecord{})
 	if group != "" {
 		query = query.Where("group_name = ?", group)
 	}
 	if user.Role == "teacher" {
-		allowed, err := h.allowedGroupsForTeacher(c, user.ID)
+		scope, err := h.groupScopeForUser(c.Request.Context(), user)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load grades"})
 			return
 		}
-		if len(allowed) == 0 {
+		if group != "" && !scope.canView(group) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
+		allowed := scope.asList()
+		if group == "" && len(allowed) == 0 {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
-		query = query.Where("group_name IN ?", allowed)
+		if group == "" {
+			query = query.Where("group_name IN ?", allowed)
+		}
+	}
+	if user.Role == "parent" {
+		if strings.TrimSpace(user.StudentGroup) == "" {
+			c.JSON(http.StatusOK, []gin.H{})
+			return
+		}
+		query = query.Where("group_name = ?", strings.TrimSpace(user.StudentGroup))
 	}
 	var rows []persistence.DBGradeRecord
 	if err := query.Find(&rows).Error; err != nil {
@@ -438,22 +577,33 @@ func (h *Handler) gradeSummary(c *gin.Context) {
 
 func (h *Handler) analyticsAttendance(c *gin.Context) {
 	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBAttendanceRecord{})
 	if group != "" {
 		query = query.Where("group_name = ?", group)
 	}
 	if user.Role == "teacher" {
-		allowed, err := h.allowedGroupsForTeacher(c, user.ID)
+		scope, err := h.groupScopeForUser(c.Request.Context(), user)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load analytics"})
 			return
 		}
-		if len(allowed) == 0 {
+		if group != "" && !scope.canView(group) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
+		allowed := scope.asList()
+		if group == "" && len(allowed) == 0 {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
-		query = query.Where("group_name IN ?", allowed)
+		if group == "" {
+			query = query.Where("group_name IN ?", allowed)
+		}
 	}
 	var rows []persistence.DBAttendanceRecord
 	if err := query.Order("class_date desc").Find(&rows).Error; err != nil {
@@ -469,22 +619,33 @@ func (h *Handler) analyticsAttendance(c *gin.Context) {
 
 func (h *Handler) analyticsGrades(c *gin.Context) {
 	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBGradeRecord{})
 	if group != "" {
 		query = query.Where("group_name = ?", group)
 	}
 	if user.Role == "teacher" {
-		allowed, err := h.allowedGroupsForTeacher(c, user.ID)
+		scope, err := h.groupScopeForUser(c.Request.Context(), user)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load analytics"})
 			return
 		}
-		if len(allowed) == 0 {
+		if group != "" && !scope.canView(group) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
+		allowed := scope.asList()
+		if group == "" && len(allowed) == 0 {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
-		query = query.Where("group_name IN ?", allowed)
+		if group == "" {
+			query = query.Where("group_name IN ?", allowed)
+		}
 	}
 	var rows []persistence.DBGradeRecord
 	if err := query.Order("class_date desc").Find(&rows).Error; err != nil {
@@ -504,6 +665,10 @@ func (h *Handler) mapRequestTicket(c *gin.Context, ticket persistence.DBRequestT
 	if err := h.db.WithContext(c.Request.Context()).First(&user, ticket.StudentID).Error; err == nil {
 		studentName = user.FullName
 	}
+	updatedAt := ticket.CreatedAt
+	if ticket.UpdatedAt != nil {
+		updatedAt = *ticket.UpdatedAt
+	}
 	return gin.H{
 		"id":           ticket.ID,
 		"student_id":   ticket.StudentID,
@@ -512,6 +677,7 @@ func (h *Handler) mapRequestTicket(c *gin.Context, ticket persistence.DBRequestT
 		"status":       ticket.Status,
 		"details":      nullOrString(ticket.Details),
 		"created_at":   ticket.CreatedAt.Format(time.RFC3339),
+		"updated_at":   updatedAt.Format(time.RFC3339),
 	}
 }
 
@@ -536,13 +702,73 @@ func mapGrade(row persistence.DBGradeRecord) gin.H {
 }
 
 func (h *Handler) allowedGroupsForTeacher(c *gin.Context, teacherID uint) ([]string, error) {
-	var groups []string
+	unique := map[string]struct{}{}
+	var deptIDs []uint
+	if err := h.db.WithContext(c.Request.Context()).
+		Model(&persistence.DBDepartment{}).
+		Where("head_user_id = ?", teacherID).
+		Pluck("id", &deptIDs).Error; err != nil {
+		return nil, err
+	}
+	if len(deptIDs) > 0 {
+		var departmentGroups []string
+		if err := h.db.WithContext(c.Request.Context()).
+			Model(&persistence.DBDepartmentGroup{}).
+			Where("department_id IN ?", deptIDs).
+			Distinct("group_name").
+			Pluck("group_name", &departmentGroups).Error; err != nil {
+			return nil, err
+		}
+		for _, group := range departmentGroups {
+			group = normalizeGroupName(group)
+			if group != "" {
+				unique[group] = struct{}{}
+			}
+		}
+		if len(unique) > 0 {
+			out := make([]string, 0, len(unique))
+			for group := range unique {
+				out = append(out, group)
+			}
+			sort.Strings(out)
+			return out, nil
+		}
+	}
+
+	var teaching []string
 	if err := h.db.WithContext(c.Request.Context()).
 		Model(&persistence.DBTeacherGroupAssignment{}).
 		Where("teacher_id = ?", teacherID).
 		Distinct("group_name").
-		Pluck("group_name", &groups).Error; err != nil {
+		Pluck("group_name", &teaching).Error; err != nil {
 		return nil, err
 	}
-	return groups, nil
+	for _, group := range teaching {
+		group = normalizeGroupName(group)
+		if group != "" {
+			unique[group] = struct{}{}
+		}
+	}
+
+	var curated []string
+	if err := h.db.WithContext(c.Request.Context()).
+		Model(&persistence.DBCuratorGroupAssignment{}).
+		Where("curator_id = ?", teacherID).
+		Distinct("group_name").
+		Pluck("group_name", &curated).Error; err != nil {
+		return nil, err
+	}
+	for _, group := range curated {
+		group = normalizeGroupName(group)
+		if group != "" {
+			unique[group] = struct{}{}
+		}
+	}
+
+	out := make([]string, 0, len(unique))
+	for group := range unique {
+		out = append(out, group)
+	}
+	sort.Strings(out)
+	return out, nil
 }

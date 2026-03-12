@@ -1820,6 +1820,14 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
   Future<List<UserProfile>>? _teachersFuture;
   Future<List<NewsPost>>? _newsFuture;
   Future<List<ExamUpload>>? _examUploadsFuture;
+  Future<List<DepartmentDto>>? _departmentsFuture;
+  Future<List<CuratorGroupAssignmentDto>>? _curatorGroupsFuture;
+  Future<List<ScheduleUpload>>? _scheduleUploadsFuture;
+  Future<List<AttendanceRecord>>? _attendanceCrudFuture;
+  Future<List<GradeRecord>>? _gradesCrudFuture;
+  Future<List<GroupAnalytics>>? _analyticsGroupsFuture;
+  Future<List<AttendanceRecord>>? _analyticsAttendanceFuture;
+  Future<List<GradeRecord>>? _analyticsGradesFuture;
 
   Future<List<String>>? _journalGroupsFuture;
   Future<List<String>>? _journalStudentsFuture;
@@ -1847,16 +1855,12 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     _teachersFuture = widget.client.listUsers(role: 'teacher');
     _newsFuture = widget.client.listNews(limit: 100);
     _examUploadsFuture = widget.client.listExamUploads();
+    _departmentsFuture = widget.client.listDepartments();
+    _curatorGroupsFuture = widget.client.listCuratorGroups();
+    _scheduleUploadsFuture = widget.client.listScheduleUploads();
+    _analyticsGroupsFuture = widget.client.listAnalyticsGroups();
     _journalGroupsFuture = widget.client.listJournalGroups();
-    if (_journalGroup != null && _journalGroup!.trim().isNotEmpty) {
-      _journalStudentsFuture = widget.client.listJournalStudents(
-        _journalGroup!,
-      );
-      _journalDatesFuture = widget.client.listJournalDates(_journalGroup!);
-    } else {
-      _journalStudentsFuture = null;
-      _journalDatesFuture = null;
-    }
+    _setJournalGroupSelection(_journalGroup);
     setState(() {});
   }
 
@@ -2591,6 +2595,957 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     _reloadAll();
   }
 
+  Future<void> _createDepartment() async {
+    final teachers =
+        await (_teachersFuture ?? widget.client.listUsers(role: 'teacher'));
+    final nameController = TextEditingController();
+    final keyController = TextEditingController();
+    int? headUserId = teachers.isNotEmpty ? teachers.first.id : null;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(_t('Новое отделение', 'New department')),
+          content: SizedBox(
+            width: 560,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  decoration: InputDecoration(
+                    labelText: _t('Название', 'Name'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: keyController,
+                  decoration: InputDecoration(labelText: _t('Ключ', 'Key')),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<int?>(
+                  value: headUserId,
+                  items: [
+                    DropdownMenuItem<int?>(
+                      value: null,
+                      child: Text(_t('Без заведующей', 'No head')),
+                    ),
+                    for (final teacher in teachers)
+                      DropdownMenuItem<int?>(
+                        value: teacher.id,
+                        child: Text(teacher.fullName),
+                      ),
+                  ],
+                  onChanged: (value) =>
+                      setDialogState(() => headUserId = value),
+                  decoration: InputDecoration(
+                    labelText: _t('Заведующая', 'Head'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(_t('Отмена', 'Cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(_t('Создать', 'Create')),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    await widget.client.createDepartment(
+      name: nameController.text.trim(),
+      key: keyController.text.trim(),
+      headUserId: headUserId,
+    );
+    _reloadAll();
+  }
+
+  Future<void> _editDepartment(DepartmentDto item) async {
+    final teachers =
+        await (_teachersFuture ?? widget.client.listUsers(role: 'teacher'));
+    final nameController = TextEditingController(text: item.name);
+    final keyController = TextEditingController(text: item.key);
+    int? headUserId = item.headUserId;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(_t('Изменить отделение', 'Edit department')),
+          content: SizedBox(
+            width: 560,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameController,
+                  decoration: InputDecoration(
+                    labelText: _t('Название', 'Name'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: keyController,
+                  decoration: InputDecoration(labelText: _t('Ключ', 'Key')),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<int?>(
+                  value: headUserId,
+                  items: [
+                    DropdownMenuItem<int?>(
+                      value: null,
+                      child: Text(_t('Без заведующей', 'No head')),
+                    ),
+                    for (final teacher in teachers)
+                      DropdownMenuItem<int?>(
+                        value: teacher.id,
+                        child: Text(teacher.fullName),
+                      ),
+                  ],
+                  onChanged: (value) =>
+                      setDialogState(() => headUserId = value),
+                  decoration: InputDecoration(
+                    labelText: _t('Заведующая', 'Head'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(_t('Отмена', 'Cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(_t('Сохранить', 'Save')),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    await widget.client.updateDepartment(
+      id: item.id,
+      name: nameController.text.trim(),
+      key: keyController.text.trim(),
+      headUserId: headUserId,
+    );
+    _reloadAll();
+  }
+
+  Future<void> _deleteDepartment(DepartmentDto item) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(_t('Удалить отделение?', 'Delete department?')),
+        content: Text('${item.name} (${item.key})'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(_t('Отмена', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(_t('Удалить', 'Delete')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await widget.client.deleteDepartment(item.id);
+    _reloadAll();
+  }
+
+  Future<void> _addDepartmentGroup(DepartmentDto item) async {
+    final groups = await widget.client.listJournalGroups();
+    String groupName = groups.isNotEmpty ? groups.first : '';
+    final customController = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(_t('Добавить группу', 'Add group')),
+          content: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (groups.isNotEmpty)
+                  DropdownButtonFormField<String>(
+                    value: groupName,
+                    items: [
+                      for (final group in groups)
+                        DropdownMenuItem(value: group, child: Text(group)),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => groupName = value ?? groupName),
+                    decoration: InputDecoration(
+                      labelText: _t(
+                        'Группа (из журнала)',
+                        'Group from journal',
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: customController,
+                  decoration: InputDecoration(
+                    labelText: _t('Или вручную', 'Or manual value'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(_t('Отмена', 'Cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(_t('Добавить', 'Add')),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    final value = customController.text.trim().isNotEmpty
+        ? customController.text.trim()
+        : groupName;
+    if (value.isEmpty) return;
+    await widget.client.addDepartmentGroup(
+      departmentId: item.id,
+      groupName: value,
+    );
+    _reloadAll();
+  }
+
+  Future<void> _removeDepartmentGroup(
+    DepartmentDto item,
+    String groupName,
+  ) async {
+    await widget.client.removeDepartmentGroup(
+      departmentId: item.id,
+      groupName: groupName,
+    );
+    _reloadAll();
+  }
+
+  Future<void> _createCuratorGroupAssignment() async {
+    final teachers =
+        await (_teachersFuture ?? widget.client.listUsers(role: 'teacher'));
+    if (teachers.isEmpty) return;
+    final groups = await widget.client.listJournalGroups();
+    int curatorId = teachers.first.id;
+    String groupName = groups.isNotEmpty ? groups.first : '';
+    final customController = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(_t('Назначить куратора группе', 'Assign curator')),
+          content: SizedBox(
+            width: 540,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<int>(
+                  value: curatorId,
+                  items: [
+                    for (final teacher in teachers)
+                      DropdownMenuItem(
+                        value: teacher.id,
+                        child: Text(teacher.fullName),
+                      ),
+                  ],
+                  onChanged: (value) =>
+                      setDialogState(() => curatorId = value ?? curatorId),
+                  decoration: InputDecoration(
+                    labelText: _t('Куратор', 'Curator'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                if (groups.isNotEmpty)
+                  DropdownButtonFormField<String>(
+                    value: groupName,
+                    items: [
+                      for (final group in groups)
+                        DropdownMenuItem(value: group, child: Text(group)),
+                    ],
+                    onChanged: (value) =>
+                        setDialogState(() => groupName = value ?? groupName),
+                    decoration: InputDecoration(
+                      labelText: _t('Группа', 'Group'),
+                    ),
+                  ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: customController,
+                  decoration: InputDecoration(
+                    labelText: _t('Или вручную', 'Or manual value'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(_t('Отмена', 'Cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(_t('Назначить', 'Assign')),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    final value = customController.text.trim().isNotEmpty
+        ? customController.text.trim()
+        : groupName;
+    if (value.isEmpty) return;
+    await widget.client.createCuratorGroup(
+      curatorId: curatorId,
+      groupName: value,
+    );
+    _reloadAll();
+  }
+
+  Future<void> _deleteCuratorGroupAssignment(
+    CuratorGroupAssignmentDto item,
+  ) async {
+    await widget.client.deleteCuratorGroup(item.id);
+    _reloadAll();
+  }
+
+  Future<void> _editScheduleUploadDate(ScheduleUpload item) async {
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+      initialDate: item.scheduleDate ?? DateTime.now(),
+      locale: widget.locale,
+    );
+    if (picked == null) return;
+    await widget.client.updateScheduleUpload(id: item.id, scheduleDate: picked);
+    _reloadAll();
+  }
+
+  Future<void> _deleteScheduleUploadEntry(ScheduleUpload item) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          _t('Удалить пакет расписания?', 'Delete schedule package?'),
+        ),
+        content: Text(item.filename),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(_t('Отмена', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(_t('Удалить', 'Delete')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await widget.client.deleteScheduleUpload(item.id);
+    _reloadAll();
+  }
+
+  Future<void> _upsertAttendanceRecord({AttendanceRecord? existing}) async {
+    if (_journalGroup == null) return;
+    final students = await widget.client.listJournalStudents(_journalGroup!);
+    if (students.isEmpty) return;
+    String studentName = existing?.studentName ?? students.first;
+    DateTime classDate = existing?.classDate ?? DateTime.now();
+    bool present = existing?.present ?? true;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(
+            existing == null
+                ? _t('Добавить посещение', 'Add attendance')
+                : _t('Изменить посещение', 'Edit attendance'),
+          ),
+          content: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: studentName,
+                  items: [
+                    for (final student in students)
+                      DropdownMenuItem(value: student, child: Text(student)),
+                  ],
+                  onChanged: (value) =>
+                      setDialogState(() => studentName = value ?? studentName),
+                  decoration: InputDecoration(
+                    labelText: _t('Студент', 'Student'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(_t('Дата', 'Date')),
+                  subtitle: Text(DateFormat('dd.MM.yyyy').format(classDate)),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.event),
+                    onPressed: () async {
+                      final picked = await showDatePicker(
+                        context: context,
+                        firstDate: DateTime(2000),
+                        lastDate: DateTime(2100),
+                        initialDate: classDate,
+                        locale: widget.locale,
+                      );
+                      if (picked == null) return;
+                      setDialogState(() => classDate = picked);
+                    },
+                  ),
+                ),
+                SwitchListTile(
+                  value: present,
+                  onChanged: (value) => setDialogState(() => present = value),
+                  title: Text(_t('Присутствовал', 'Present')),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(_t('Отмена', 'Cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(_t('Сохранить', 'Save')),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    await widget.client.createAttendance(
+      groupName: _journalGroup!,
+      classDate: classDate,
+      studentName: studentName,
+      present: present,
+    );
+    _reloadAll();
+  }
+
+  Future<void> _deleteAttendanceRecord(AttendanceRecord item) async {
+    await widget.client.deleteAttendance(
+      groupName: item.groupName,
+      classDate: item.classDate,
+      studentName: item.studentName,
+    );
+    _reloadAll();
+  }
+
+  Future<void> _upsertGradeRecord({GradeRecord? existing}) async {
+    if (_journalGroup == null) return;
+    final students = await widget.client.listJournalStudents(_journalGroup!);
+    if (students.isEmpty) return;
+    String studentName = existing?.studentName ?? students.first;
+    DateTime classDate = existing?.classDate ?? DateTime.now();
+    final gradeController = TextEditingController(
+      text: (existing?.grade ?? 100).toString(),
+    );
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(
+            existing == null
+                ? _t('Добавить оценку', 'Add grade')
+                : _t('Изменить оценку', 'Edit grade'),
+          ),
+          content: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: studentName,
+                  items: [
+                    for (final student in students)
+                      DropdownMenuItem(value: student, child: Text(student)),
+                  ],
+                  onChanged: (value) =>
+                      setDialogState(() => studentName = value ?? studentName),
+                  decoration: InputDecoration(
+                    labelText: _t('Студент', 'Student'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(_t('Дата', 'Date')),
+                  subtitle: Text(DateFormat('dd.MM.yyyy').format(classDate)),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.event),
+                    onPressed: () async {
+                      final picked = await showDatePicker(
+                        context: context,
+                        firstDate: DateTime(2000),
+                        lastDate: DateTime(2100),
+                        initialDate: classDate,
+                        locale: widget.locale,
+                      );
+                      if (picked == null) return;
+                      setDialogState(() => classDate = picked);
+                    },
+                  ),
+                ),
+                TextField(
+                  controller: gradeController,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: _t('Оценка 1..100', 'Grade 1..100'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(_t('Отмена', 'Cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(_t('Сохранить', 'Save')),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    final grade = int.tryParse(gradeController.text.trim());
+    if (grade == null) return;
+    await widget.client.createGrade(
+      groupName: _journalGroup!,
+      classDate: classDate,
+      studentName: studentName,
+      grade: grade,
+    );
+    _reloadAll();
+  }
+
+  Future<void> _deleteGradeRecord(GradeRecord item) async {
+    await widget.client.deleteGrade(
+      groupName: item.groupName,
+      classDate: item.classDate,
+      studentName: item.studentName,
+    );
+    _reloadAll();
+  }
+
+  void _setJournalGroupSelection(String? groupName) {
+    _journalGroup = groupName;
+    if (groupName != null && groupName.trim().isNotEmpty) {
+      _journalStudentsFuture = widget.client.listJournalStudents(groupName);
+      _journalDatesFuture = widget.client.listJournalDates(groupName);
+      _attendanceCrudFuture = widget.client.listAttendance(groupName);
+      _gradesCrudFuture = widget.client.listGrades(groupName);
+      _analyticsAttendanceFuture = widget.client.listAnalyticsAttendance(
+        groupName: groupName,
+      );
+      _analyticsGradesFuture = widget.client.listAnalyticsGrades(
+        groupName: groupName,
+      );
+      return;
+    }
+    _journalStudentsFuture = null;
+    _journalDatesFuture = null;
+    _attendanceCrudFuture = null;
+    _gradesCrudFuture = null;
+    _analyticsAttendanceFuture = widget.client.listAnalyticsAttendance();
+    _analyticsGradesFuture = widget.client.listAnalyticsGrades();
+  }
+
+  String? _syncJournalGroupFromList(List<String> groups) {
+    final value = (_journalGroup != null && groups.contains(_journalGroup))
+        ? _journalGroup
+        : (groups.isNotEmpty ? groups.first : null);
+    if (value != _journalGroup) {
+      _setJournalGroupSelection(value);
+    }
+    return value;
+  }
+
+  Widget _buildJournalGroupCard({
+    required bool withAttendanceCreate,
+    required bool withGradeCreate,
+  }) {
+    return FutureBuilder<List<String>>(
+      future: _journalGroupsFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return Text(widget.errorText(snapshot.error!));
+        }
+        final groups = snapshot.data ?? [];
+        final value = _syncJournalGroupFromList(groups);
+        if (groups.isEmpty) {
+          return Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                _t(
+                  'Сначала создайте группы в разделе "Журнал".',
+                  'Create journal groups first in "Journal" tab.',
+                ),
+              ),
+            ),
+          );
+        }
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                SizedBox(
+                  width: 260,
+                  child: DropdownButtonFormField<String>(
+                    value: value,
+                    items: [
+                      for (final group in groups)
+                        DropdownMenuItem(value: group, child: Text(group)),
+                    ],
+                    onChanged: (next) {
+                      if (next == null) return;
+                      setState(() => _setJournalGroupSelection(next));
+                    },
+                    decoration: InputDecoration(
+                      labelText: _t('Группа', 'Group'),
+                    ),
+                  ),
+                ),
+                if (withAttendanceCreate)
+                  FilledButton.tonalIcon(
+                    onPressed: _upsertAttendanceRecord,
+                    icon: const Icon(Icons.check_circle_outline),
+                    label: Text(_t('Добавить посещение', 'Add attendance')),
+                  ),
+                if (withGradeCreate)
+                  FilledButton.tonalIcon(
+                    onPressed: _upsertGradeRecord,
+                    icon: const Icon(Icons.grade_outlined),
+                    label: Text(_t('Добавить оценку', 'Add grade')),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: _reloadAll,
+                  icon: const Icon(Icons.refresh),
+                  label: Text(_t('Обновить', 'Refresh')),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildScheduleCrudService() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          _t('Пакеты расписания', 'Schedule packages'),
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        FutureBuilder<List<ScheduleUpload>>(
+          future: _scheduleUploadsFuture,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) {
+              return Text(widget.errorText(snapshot.error!));
+            }
+            final items = snapshot.data ?? [];
+            if (items.isEmpty) {
+              return Text(_t('Пакетов нет.', 'No packages.'));
+            }
+            return Column(
+              children: [
+                for (final item in items)
+                  Card(
+                    child: ListTile(
+                      title: Text(item.filename),
+                      subtitle: Text(
+                        '${_t('Дата', 'Date')}: ${item.scheduleDate == null ? '-' : DateFormat('dd.MM.yyyy').format(item.scheduleDate!)} / ${DateFormat('dd.MM.yyyy HH:mm').format(item.uploadedAt)}',
+                      ),
+                      trailing: PopupMenuButton<String>(
+                        onSelected: (value) {
+                          if (value == 'edit') {
+                            _editScheduleUploadDate(item);
+                          } else if (value == 'delete') {
+                            _deleteScheduleUploadEntry(item);
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          PopupMenuItem(
+                            value: 'edit',
+                            child: Text(_t('Изменить дату', 'Edit date')),
+                          ),
+                          PopupMenuItem(
+                            value: 'delete',
+                            child: Text(_t('Удалить', 'Delete')),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAttendanceCrudService() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildJournalGroupCard(
+          withAttendanceCreate: true,
+          withGradeCreate: false,
+        ),
+        const SizedBox(height: 12),
+        Text(
+          _t('Посещаемость (CRUD)', 'Attendance (CRUD)'),
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        FutureBuilder<List<AttendanceRecord>>(
+          future: _attendanceCrudFuture,
+          builder: (context, snapshot) {
+            if (_journalGroup == null) {
+              return Text(_t('Выберите группу.', 'Select a group.'));
+            }
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) {
+              return Text(widget.errorText(snapshot.error!));
+            }
+            final items = snapshot.data ?? [];
+            if (items.isEmpty) {
+              return Text(_t('Записей нет.', 'No records.'));
+            }
+            return Column(
+              children: [
+                for (final item in items.take(80))
+                  Card(
+                    child: ListTile(
+                      title: Text(item.studentName),
+                      subtitle: Text(
+                        '${DateFormat('dd.MM.yyyy').format(item.classDate)} / ${item.present ? _t('Присутствовал', 'Present') : _t('Отсутствовал', 'Absent')}',
+                      ),
+                      trailing: PopupMenuButton<String>(
+                        onSelected: (value) {
+                          if (value == 'edit') {
+                            _upsertAttendanceRecord(existing: item);
+                          } else if (value == 'delete') {
+                            _deleteAttendanceRecord(item);
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          PopupMenuItem(
+                            value: 'edit',
+                            child: Text(_t('Изменить', 'Edit')),
+                          ),
+                          PopupMenuItem(
+                            value: 'delete',
+                            child: Text(_t('Удалить', 'Delete')),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGradesCrudService() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildJournalGroupCard(
+          withAttendanceCreate: false,
+          withGradeCreate: true,
+        ),
+        const SizedBox(height: 12),
+        Text(
+          _t('Оценки (CRUD)', 'Grades (CRUD)'),
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        FutureBuilder<List<GradeRecord>>(
+          future: _gradesCrudFuture,
+          builder: (context, snapshot) {
+            if (_journalGroup == null) {
+              return Text(_t('Выберите группу.', 'Select a group.'));
+            }
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) {
+              return Text(widget.errorText(snapshot.error!));
+            }
+            final items = snapshot.data ?? [];
+            if (items.isEmpty) {
+              return Text(_t('Записей нет.', 'No records.'));
+            }
+            return Column(
+              children: [
+                for (final item in items.take(80))
+                  Card(
+                    child: ListTile(
+                      title: Text(item.studentName),
+                      subtitle: Text(
+                        '${DateFormat('dd.MM.yyyy').format(item.classDate)} / ${item.grade}',
+                      ),
+                      trailing: PopupMenuButton<String>(
+                        onSelected: (value) {
+                          if (value == 'edit') {
+                            _upsertGradeRecord(existing: item);
+                          } else if (value == 'delete') {
+                            _deleteGradeRecord(item);
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          PopupMenuItem(
+                            value: 'edit',
+                            child: Text(_t('Изменить', 'Edit')),
+                          ),
+                          PopupMenuItem(
+                            value: 'delete',
+                            child: Text(_t('Удалить', 'Delete')),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAnalyticsCrudService() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildJournalGroupCard(
+          withAttendanceCreate: false,
+          withGradeCreate: false,
+        ),
+        const SizedBox(height: 12),
+        Text(
+          _t('Аналитика (срез)', 'Analytics snapshot'),
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        const SizedBox(height: 8),
+        FutureBuilder<List<GroupAnalytics>>(
+          future: _analyticsGroupsFuture,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) {
+              return Text(widget.errorText(snapshot.error!));
+            }
+            final rows = snapshot.data ?? [];
+            if (rows.isEmpty) {
+              return Text(_t('Данных нет.', 'No data.'));
+            }
+            return Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: FutureBuilder<List<AttendanceRecord>>(
+                        future: _analyticsAttendanceFuture,
+                        builder: (context, attendanceSnapshot) {
+                          final count = attendanceSnapshot.data?.length ?? 0;
+                          return Card(
+                            child: ListTile(
+                              title: Text(
+                                _t('Записей посещаемости', 'Attendance rows'),
+                              ),
+                              subtitle: Text(count.toString()),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    Expanded(
+                      child: FutureBuilder<List<GradeRecord>>(
+                        future: _analyticsGradesFuture,
+                        builder: (context, gradesSnapshot) {
+                          final count = gradesSnapshot.data?.length ?? 0;
+                          return Card(
+                            child: ListTile(
+                              title: Text(_t('Записей оценок', 'Grade rows')),
+                              subtitle: Text(count.toString()),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                for (final row in rows.take(30))
+                  Card(
+                    child: ListTile(
+                      title: Text(row.groupName),
+                      subtitle: Text(
+                        '${_t('Предметы', 'Subjects')}: ${row.subjects.join(', ')}\n${_t('Преподаватели', 'Teachers')}: ${row.teachers.join(', ')}',
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.currentUser.role != 'admin') {
@@ -2600,11 +3555,25 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
         child: Text(_t('Доступ запрещен.', 'Access denied.')),
       );
     }
+    final tabs = <String>[
+      _t('Пользователи', 'Users'),
+      _t('Заявки', 'Requests'),
+      _t('Отработки', 'Makeups'),
+      _t('Назначения', 'Assignments'),
+      _t('Журнал', 'Journal'),
+      _t('Новости', 'News'),
+      _t('Экзамены', 'Exams'),
+      _t('Отделения', 'Departments'),
+      _t('Расписание', 'Schedule'),
+      _t('Посещаемость', 'Attendance'),
+      _t('Оценки', 'Grades'),
+      _t('Аналитика', 'Analytics'),
+    ];
     return ModulePanel(
       title: _t('Админ панель', 'Admin panel'),
       subtitle: _t(
-        'Управление пользователями, заявками и отработками.',
-        'Manage users, requests, makeups and journal data.',
+        'Управление пользователями, отделениями, расписанием, посещаемостью, аналитикой и учебными данными.',
+        'Manage users, departments, schedule, attendance, analytics and academic data.',
       ),
       trailing: () {
         if (_tab == 0) {
@@ -2635,6 +3604,20 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
             label: Text(_t('Новость', 'News')),
           );
         }
+        if (_tab == 7) {
+          return FilledButton.icon(
+            onPressed: _createDepartment,
+            icon: const Icon(Icons.account_tree_outlined),
+            label: Text(_t('Отделение', 'Department')),
+          );
+        }
+        if (_tab == 8 || _tab == 9 || _tab == 10 || _tab == 11) {
+          return FilledButton.icon(
+            onPressed: _reloadAll,
+            icon: const Icon(Icons.refresh),
+            label: Text(_t('Обновить', 'Refresh')),
+          );
+        }
         return null;
       }(),
       child: Column(
@@ -2645,8 +3628,8 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
               padding: const EdgeInsets.all(12),
               child: Text(
                 _t(
-                  'CRUD доступ: пользователи, заявки, отработки, назначения преподавателей, группы/студенты/даты журнала.',
-                  'CRUD scope: users, requests, makeups, teacher assignments, journal groups/students/dates.',
+                  'CRUD доступ: пользователи, отделения, кураторство, расписание, посещаемость, аналитика и академические сущности.',
+                  'CRUD scope: users, departments, curator mapping, schedule, attendance, analytics and academic entities.',
                 ),
               ),
             ),
@@ -2656,39 +3639,11 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              for (final entry in [
-                _t('Пользователи', 'Users'),
-                _t('Заявки', 'Requests'),
-                _t('Отработки', 'Makeups'),
-                _t('Назначения', 'Assignments'),
-                _t('Журнал', 'Journal'),
-                _t('Новости', 'News'),
-                _t('Экзамены', 'Exams'),
-              ])
+              for (final entry in tabs)
                 ChoiceChip(
-                  selected:
-                      _tab ==
-                      [
-                        _t('Пользователи', 'Users'),
-                        _t('Заявки', 'Requests'),
-                        _t('Отработки', 'Makeups'),
-                        _t('Назначения', 'Assignments'),
-                        _t('Журнал', 'Journal'),
-                        _t('Новости', 'News'),
-                        _t('Экзамены', 'Exams'),
-                      ].indexOf(entry),
+                  selected: _tab == tabs.indexOf(entry),
                   label: Text(entry),
-                  onSelected: (_) => setState(
-                    () => _tab = [
-                      _t('Пользователи', 'Users'),
-                      _t('Заявки', 'Requests'),
-                      _t('Отработки', 'Makeups'),
-                      _t('Назначения', 'Assignments'),
-                      _t('Журнал', 'Journal'),
-                      _t('Новости', 'News'),
-                      _t('Экзамены', 'Exams'),
-                    ].indexOf(entry),
-                  ),
+                  onSelected: (_) => setState(() => _tab = tabs.indexOf(entry)),
                 ),
             ],
           ),
@@ -3012,6 +3967,12 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                       _journalDatesFuture = widget.client.listJournalDates(
                         _journalGroup!,
                       );
+                      _attendanceCrudFuture = widget.client.listAttendance(
+                        _journalGroup!,
+                      );
+                      _gradesCrudFuture = widget.client.listGrades(
+                        _journalGroup!,
+                      );
                     }
                     return Card(
                       child: Padding(
@@ -3035,11 +3996,8 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                                       if (value == null) return;
                                       setState(() {
                                         _journalGroup = value;
-                                        _journalStudentsFuture = widget.client
-                                            .listJournalStudents(value);
-                                        _journalDatesFuture = widget.client
-                                            .listJournalDates(value);
                                       });
+                                      _reloadAll();
                                     },
                                     decoration: InputDecoration(
                                       labelText: _t('Группа', 'Group'),
@@ -3328,6 +4286,147 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                 );
               },
             ),
+          if (_tab == 7)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                FilledButton.tonalIcon(
+                  onPressed: _createCuratorGroupAssignment,
+                  icon: const Icon(Icons.how_to_reg),
+                  label: Text(_t('Назначить куратора', 'Assign curator')),
+                ),
+                const SizedBox(height: 10),
+                FutureBuilder<List<DepartmentDto>>(
+                  future: _departmentsFuture,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (snapshot.hasError) {
+                      return Text(widget.errorText(snapshot.error!));
+                    }
+                    final items = snapshot.data ?? [];
+                    if (items.isEmpty) {
+                      return Text(
+                        _t('Отделений пока нет.', 'No departments yet.'),
+                      );
+                    }
+                    return Column(
+                      children: [
+                        for (final item in items)
+                          Card(
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  ListTile(
+                                    contentPadding: EdgeInsets.zero,
+                                    title: Text('${item.name} [${item.key}]'),
+                                    subtitle: Text(
+                                      '${_t('Заведующая', 'Head')}: ${item.headName ?? '-'}',
+                                    ),
+                                    trailing: PopupMenuButton<String>(
+                                      onSelected: (action) async {
+                                        if (action == 'edit') {
+                                          await _editDepartment(item);
+                                        } else if (action == 'delete') {
+                                          await _deleteDepartment(item);
+                                        } else if (action == 'add_group') {
+                                          await _addDepartmentGroup(item);
+                                        }
+                                      },
+                                      itemBuilder: (context) => [
+                                        PopupMenuItem(
+                                          value: 'add_group',
+                                          child: Text(
+                                            _t('Добавить группу', 'Add group'),
+                                          ),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 'edit',
+                                          child: Text(_t('Изменить', 'Edit')),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 'delete',
+                                          child: Text(_t('Удалить', 'Delete')),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      for (final group in item.groups)
+                                        Chip(
+                                          label: Text(group),
+                                          onDeleted: () =>
+                                              _removeDepartmentGroup(
+                                                item,
+                                                group,
+                                              ),
+                                        ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    );
+                  },
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _t('Кураторство групп', 'Group curator mapping'),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 8),
+                FutureBuilder<List<CuratorGroupAssignmentDto>>(
+                  future: _curatorGroupsFuture,
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (snapshot.hasError) {
+                      return Text(widget.errorText(snapshot.error!));
+                    }
+                    final items = snapshot.data ?? [];
+                    if (items.isEmpty) {
+                      return Text(
+                        _t(
+                          'Назначений кураторства нет.',
+                          'No curator assignments.',
+                        ),
+                      );
+                    }
+                    return Column(
+                      children: [
+                        for (final item in items)
+                          Card(
+                            child: ListTile(
+                              title: Text(item.groupName),
+                              subtitle: Text(
+                                '${item.curatorName ?? '-'} (ID ${item.curatorId})',
+                              ),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () =>
+                                    _deleteCuratorGroupAssignment(item),
+                              ),
+                            ),
+                          ),
+                      ],
+                    );
+                  },
+                ),
+              ],
+            ),
+          if (_tab == 8) _buildScheduleCrudService(),
+          if (_tab == 9) _buildAttendanceCrudService(),
+          if (_tab == 10) _buildGradesCrudService(),
+          if (_tab == 11) _buildAnalyticsCrudService(),
         ],
       ),
     );

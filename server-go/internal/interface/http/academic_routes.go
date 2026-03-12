@@ -97,6 +97,8 @@ func (h *Handler) RegisterAcademicRoutes(router *gin.Engine, auth *httpMiddlewar
 		secured.GET("/schedule/group/:group", h.scheduleForGroup)
 		secured.GET("/schedule/teacher/:teacher", h.scheduleForTeacher)
 		secured.POST("/schedule/upload", httpMiddleware.RequireRoles("admin", "teacher"), h.uploadSchedule)
+		secured.PATCH("/schedule/:id", httpMiddleware.RequireRoles("admin"), h.updateScheduleUpload)
+		secured.DELETE("/schedule/:id", httpMiddleware.RequireRoles("admin"), h.deleteScheduleUpload)
 
 		secured.GET("/journal/groups", h.listJournalGroups)
 		secured.POST("/journal/groups", httpMiddleware.RequireRoles("teacher", "admin"), h.upsertJournalGroup)
@@ -156,6 +158,17 @@ func (h *Handler) RegisterAcademicRoutes(router *gin.Engine, auth *httpMiddlewar
 		secured.POST("/teacher-assignments", httpMiddleware.RequireRoles("admin"), h.createTeacherAssignment)
 		secured.PATCH("/teacher-assignments/:id", httpMiddleware.RequireRoles("admin"), h.updateTeacherAssignment)
 		secured.DELETE("/teacher-assignments/:id", httpMiddleware.RequireRoles("admin"), h.deleteTeacherAssignment)
+
+		secured.GET("/departments", httpMiddleware.RequireRoles("admin"), h.listDepartments)
+		secured.POST("/departments", httpMiddleware.RequireRoles("admin"), h.createDepartment)
+		secured.PATCH("/departments/:id", httpMiddleware.RequireRoles("admin"), h.patchDepartment)
+		secured.DELETE("/departments/:id", httpMiddleware.RequireRoles("admin"), h.deleteDepartment)
+		secured.GET("/departments/:id/groups", httpMiddleware.RequireRoles("admin"), h.listDepartmentGroups)
+		secured.POST("/departments/:id/groups", httpMiddleware.RequireRoles("admin"), h.addDepartmentGroup)
+		secured.DELETE("/departments/:id/groups", httpMiddleware.RequireRoles("admin"), h.removeDepartmentGroup)
+		secured.GET("/curator-groups", httpMiddleware.RequireRoles("admin"), h.listCuratorGroups)
+		secured.POST("/curator-groups", httpMiddleware.RequireRoles("admin"), h.createCuratorGroup)
+		secured.DELETE("/curator-groups/:id", httpMiddleware.RequireRoles("admin"), h.deleteCuratorGroup)
 
 		secured.GET("/analytics/groups", httpMiddleware.RequireRoles("teacher", "admin"), h.analyticsGroups)
 		secured.GET("/analytics/attendance", httpMiddleware.RequireRoles("teacher", "admin"), h.analyticsAttendance)

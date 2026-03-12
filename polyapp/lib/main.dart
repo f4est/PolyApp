@@ -22,6 +22,7 @@ import 'journal/journal_store.dart';
 import 'journal/attendance_journal_page.dart';
 import 'journal/grades_preset_journal_page.dart';
 import 'makeup/makeup_pages.dart';
+import 'analytics/analytics_workspace_page.dart';
 import 'widgets/brand_logo.dart';
 
 const String apiBaseUrl = String.fromEnvironment(
@@ -376,6 +377,9 @@ class AppLocalizations {
           '\u041d\u0435\u0442 \u0443\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u0439',
       'notifications_mark_read':
           '\u041e\u0442\u043c\u0435\u0442\u0438\u0442\u044c \u043a\u0430\u043a \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u043e\u0435',
+      'notifications_read_action':
+          '\u041f\u0440\u043e\u0447\u0438\u0442\u0430\u0442\u044c',
+      'notifications_delete': '\u0423\u0434\u0430\u043b\u0438\u0442\u044c',
       'notifications_unread': '\u041d\u043e\u0432\u044b\u0435',
       'reset_password_action':
           '\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c \u043f\u0430\u0440\u043e\u043b\u044c',
@@ -438,6 +442,8 @@ class AppLocalizations {
       'notifications_title': 'Notifications',
       'notifications_empty': 'No notifications yet',
       'notifications_mark_read': 'Mark as read',
+      'notifications_read_action': 'Read',
+      'notifications_delete': 'Delete',
       'notifications_unread': 'New',
     },
   };
@@ -1479,6 +1485,18 @@ Widget _buildAdminFeaturePage(BuildContext context) {
   );
 }
 
+Widget _buildAnalyticsFeaturePage(BuildContext context) {
+  final state = AppStateScope.of(context);
+  final user = state.user;
+  if (user == null) return const SizedBox.shrink();
+  return AnalyticsWorkspacePage(
+    client: state.client,
+    currentUser: user,
+    locale: state.locale,
+    errorText: humanizeError,
+  );
+}
+
 final List<RoleDefinition> kRoles = [
   RoleDefinition(
     id: 'smm',
@@ -1592,7 +1610,7 @@ final List<RoleDefinition> kRoles = [
         id: 'analytics',
         title: 'Analytics',
         icon: Icons.analytics_outlined,
-        builder: (context) => const AnalyticsPage(),
+        builder: _buildAnalyticsFeaturePage,
       ),
       FeatureDefinition(
         id: 'news',
@@ -1698,7 +1716,7 @@ final List<RoleDefinition> kRoles = [
         id: 'analytics',
         title: 'Analytics',
         icon: Icons.analytics_outlined,
-        builder: (context) => const AnalyticsPage(),
+        builder: _buildAnalyticsFeaturePage,
       ),
       FeatureDefinition(
         id: 'news',
@@ -1739,6 +1757,18 @@ class RoleHomePage extends StatefulWidget {
 
 class _RoleHomePageState extends State<RoleHomePage> {
   int _index = 0;
+  static const List<String> _navFeatureOrder = <String>[
+    'news',
+    'schedule',
+    'grades',
+    'attendance',
+    'analytics',
+    'exams',
+    'makeup',
+    'requests',
+    'admin_panel',
+    'profile',
+  ];
 
   @override
   void initState() {
@@ -1783,92 +1813,84 @@ class _RoleHomePageState extends State<RoleHomePage> {
         defaultTargetPlatform == TargetPlatform.linux;
   }
 
-  DeviceCanvas _resolveCanvas(BoxConstraints constraints) {
+  DeviceCanvas _resolveCanvas() {
     if (kIsWeb) {
       return DeviceCanvas.web;
     }
-    if (_isNativeDesktop() && constraints.maxWidth >= 980) {
+    if (_isNativeDesktop()) {
       return DeviceCanvas.desktop;
     }
     return DeviceCanvas.mobile;
   }
 
+  String _localizedFeatureTitle(FeatureDefinition feature, bool isRu) {
+    if (!isRu) {
+      return feature.title;
+    }
+    switch (feature.id) {
+      case 'schedule':
+        return 'Расписание';
+      case 'attendance':
+        return 'Посещаемость';
+      case 'grades':
+        return 'Оценки';
+      case 'analytics':
+        return 'Аналитика';
+      case 'news':
+        return 'Новости';
+      case 'requests':
+        return 'Заявки';
+      case 'makeup':
+        return 'Отработки';
+      case 'admin_panel':
+        return 'Админ панель';
+      case 'exams':
+        return 'Экзамены';
+      case 'profile':
+        return 'Профиль';
+      default:
+        return feature.title;
+    }
+  }
+
+  int _featureOrderRank(String id) {
+    final idx = _navFeatureOrder.indexOf(id);
+    if (idx >= 0) {
+      return idx;
+    }
+    return _navFeatureOrder.length + 100;
+  }
+
   List<_NavItem> _buildTabs() {
     final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
     String t(String ru, String en) => isRu ? ru : en;
-    final featureIds = widget.role.features
-        .map((feature) => feature.id)
-        .toSet();
+    final added = <String>{};
+    final sortedFeatures = [...widget.role.features]
+      ..sort((a, b) {
+        final rankA = _featureOrderRank(a.id);
+        final rankB = _featureOrderRank(b.id);
+        if (rankA != rankB) {
+          return rankA.compareTo(rankB);
+        }
+        return a.id.compareTo(b.id);
+      });
     final items = <_NavItem>[
       _NavItem(
         t('Главная', 'Home'),
         Icons.home,
-        (context) => HomePage(role: widget.role),
+        (context) => HomeDashboardPage(role: widget.role),
       ),
     ];
-    if (featureIds.contains('schedule')) {
+    for (final feature in sortedFeatures) {
+      if (!added.add(feature.id)) continue;
       items.add(
         _NavItem(
-          t('Расписание', 'Schedule'),
-          Icons.calendar_today,
-          (context) => const SchedulePage(),
+          _localizedFeatureTitle(feature, isRu),
+          feature.icon,
+          feature.builder,
         ),
       );
     }
-    if (featureIds.contains('grades') || featureIds.contains('attendance')) {
-      items.add(
-        _NavItem(
-          t('Оценки', 'Grades'),
-          Icons.grade,
-          (context) => const GradesPage(),
-        ),
-      );
-    }
-    if (featureIds.contains('analytics')) {
-      items.add(
-        _NavItem(
-          t('Аналитика', 'Analytics'),
-          Icons.analytics_outlined,
-          (context) => const AnalyticsPage(),
-        ),
-      );
-    }
-    if (featureIds.contains('makeup')) {
-      items.add(
-        _NavItem(
-          t('Отработки', 'Makeups'),
-          Icons.assignment_late_outlined,
-          _buildMakeupFeaturePage,
-        ),
-      );
-    }
-    if (featureIds.contains('admin_panel')) {
-      items.add(
-        _NavItem(
-          t('Админ панель', 'Admin panel'),
-          Icons.admin_panel_settings_outlined,
-          _buildAdminFeaturePage,
-        ),
-      );
-    }
-    if (featureIds.contains('requests')) {
-      final canProcess =
-          widget.role.id != 'student' && widget.role.id != 'parent';
-      items.add(
-        _NavItem(
-          t('Заявки', 'Requests'),
-          Icons.receipt_long,
-          (context) => RequestsPage(canProcess: canProcess),
-        ),
-      );
-    }
-    items.add(
-      _NavItem(
-        t('Профиль', 'Profile'),
-        Icons.person,
-        (context) => const ProfilePage(),
-      ),
-    );
     return items;
   }
 
@@ -2145,7 +2167,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
     final title = tabs[_index].title;
     return LayoutBuilder(
       builder: (context, constraints) {
-        switch (_resolveCanvas(constraints)) {
+        switch (_resolveCanvas()) {
           case DeviceCanvas.desktop:
             return _buildDesktopShell(tabs, color, title);
           case DeviceCanvas.web:
@@ -4726,12 +4748,21 @@ class _NotificationsPageState extends State<NotificationsPage> {
     await _future;
   }
 
-  Future<void> _markRead(AppNotification notification) async {
-    if (notification.isRead) return;
+  Future<void> _consumeNotification(AppNotification notification) async {
     try {
       await AppStateScope.of(
         context,
       ).client.markNotificationRead(notification.id);
+      if (!mounted) return;
+      await _refresh();
+    } catch (_) {}
+  }
+
+  Future<void> _deleteNotification(AppNotification notification) async {
+    try {
+      await AppStateScope.of(
+        context,
+      ).client.deleteNotification(notification.id);
       if (!mounted) return;
       await _refresh();
     } catch (_) {}
@@ -4817,7 +4848,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
               itemBuilder: (context, index) {
                 final item = items[index];
                 return GestureDetector(
-                  onTap: () => _markRead(item),
+                  onTap: () => _consumeNotification(item),
                   child: Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
@@ -4866,6 +4897,25 @@ class _NotificationsPageState extends State<NotificationsPage> {
                         Text(
                           dateFormat.format(item.createdAt),
                           style: TextStyle(color: kSecondaryText, fontSize: 12),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            if (!item.isRead)
+                              FilledButton.tonalIcon(
+                                onPressed: () => _consumeNotification(item),
+                                icon: const Icon(Icons.done_all_rounded),
+                                label: Text(
+                                  l10n.t('notifications_read_action'),
+                                ),
+                              ),
+                            if (!item.isRead) const SizedBox(width: 8),
+                            OutlinedButton.icon(
+                              onPressed: () => _deleteNotification(item),
+                              icon: const Icon(Icons.delete_outline_rounded),
+                              label: Text(l10n.t('notifications_delete')),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -4996,6 +5046,441 @@ class FeatureScaffold extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class HomeDashboardPage extends StatefulWidget {
+  const HomeDashboardPage({super.key, required this.role});
+
+  final RoleDefinition role;
+
+  @override
+  State<HomeDashboardPage> createState() => _HomeDashboardPageState();
+}
+
+class _HomeDashboardPageState extends State<HomeDashboardPage> {
+  bool _loading = true;
+  bool _initialized = false;
+  String? _error;
+
+  NewsPost? _latestNews;
+  ScheduleUpload? _latestSchedule;
+  List<ExamGrade> _recentExams = const [];
+  List<MakeupCaseDto> _recentMakeups = const [];
+  List<RequestTicket> _recentRequests = const [];
+  List<AppNotification> _newNotifications = const [];
+
+  bool get _isRu => AppStateScope.of(context).locale.languageCode == 'ru';
+  String _t(String ru, String en) => _isRu ? ru : en;
+
+  bool _hasFeature(String featureId) =>
+      widget.role.features.any((item) => item.id == featureId);
+
+  FeatureDefinition? _findFeature(String featureId) {
+    for (final item in widget.role.features) {
+      if (item.id == featureId) return item;
+    }
+    return null;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
+    _loadDashboard();
+  }
+
+  Future<void> _loadDashboard() async {
+    if (!mounted) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    final client = AppStateScope.of(context).client;
+    final now = DateTime.now().toUtc();
+    final weekAgo = now.subtract(const Duration(days: 7));
+
+    NewsPost? latestNews;
+    ScheduleUpload? latestSchedule;
+    List<ExamGrade> recentExams = const [];
+    List<MakeupCaseDto> recentMakeups = const [];
+    List<RequestTicket> recentRequests = const [];
+    List<AppNotification> notifications = const [];
+
+    Future<void> safeRun(Future<void> Function() block) async {
+      try {
+        await block();
+      } catch (_) {}
+    }
+
+    if (_hasFeature('news')) {
+      await safeRun(() async {
+        final posts = await client.listNews(limit: 1);
+        if (posts.isNotEmpty) {
+          latestNews = posts.first;
+        }
+      });
+    }
+    if (_hasFeature('schedule')) {
+      await safeRun(() async {
+        latestSchedule = await client.latestSchedule();
+      });
+    }
+    if (_hasFeature('exams')) {
+      await safeRun(() async {
+        final rows = await client.listExamGrades();
+        rows.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        recentExams = rows.take(5).toList(growable: false);
+      });
+    }
+    if (_hasFeature('makeup')) {
+      await safeRun(() async {
+        final rows = await client.listMakeups();
+        rows.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        final filtered = rows.where((item) {
+          final status = item.status.trim().toLowerCase();
+          final closed =
+              status == 'closed' ||
+              status == 'graded' ||
+              status == 'completed' ||
+              status == 'cancelled';
+          return !closed || item.updatedAt.toUtc().isAfter(weekAgo);
+        }).toList();
+        recentMakeups = filtered.take(5).toList(growable: false);
+      });
+    }
+    if (_hasFeature('requests')) {
+      await safeRun(() async {
+        final rows = await client.listRequests();
+        rows.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        final filtered = rows.where((item) {
+          final status = item.status.trim().toLowerCase();
+          final closed =
+              status == 'approved' ||
+              status == 'rejected' ||
+              status == 'closed' ||
+              status == 'done' ||
+              status == 'completed';
+          return !closed || item.createdAt.toUtc().isAfter(weekAgo);
+        }).toList();
+        recentRequests = filtered.take(5).toList(growable: false);
+      });
+    }
+    await safeRun(() async {
+      final rows = await client.listNotifications(limit: 20);
+      rows.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      notifications = rows.where((item) => !item.isRead).take(6).toList();
+    });
+
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _latestNews = latestNews;
+      _latestSchedule = latestSchedule;
+      _recentExams = recentExams;
+      _recentMakeups = recentMakeups;
+      _recentRequests = recentRequests;
+      _newNotifications = notifications;
+    });
+  }
+
+  void _openFeature(String featureId) {
+    final feature = _findFeature(featureId);
+    if (feature == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (routeContext) => feature.builder(routeContext),
+      ),
+    );
+  }
+
+  String _requestLabel(String status) {
+    if (!_isRu) return status;
+    final normalized = status.trim().toLowerCase();
+    if (normalized == 'submitted') return 'Отправлена';
+    if (normalized == 'in_progress') return 'В обработке';
+    if (normalized == 'approved') return 'Одобрена';
+    if (normalized == 'rejected') return 'Отклонена';
+    if (normalized == 'closed') return 'Закрыта';
+    return status;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = AppStateScope.of(context).user;
+    final today = DateFormat(
+      _isRu ? 'd MMMM yyyy, EEEE' : 'EEEE, MMMM d, yyyy',
+      _isRu ? 'ru' : 'en',
+    ).format(DateTime.now());
+
+    final summaryRows = <String>[
+      _t(
+        'Новых уведомлений: ${_newNotifications.length}',
+        'New notifications: ${_newNotifications.length}',
+      ),
+      if (_hasFeature('requests'))
+        _t(
+          'Актуальных заявок: ${_recentRequests.length}',
+          'Active requests: ${_recentRequests.length}',
+        ),
+      if (_hasFeature('makeup'))
+        _t(
+          'Актуальных отработок: ${_recentMakeups.length}',
+          'Active makeups: ${_recentMakeups.length}',
+        ),
+    ];
+
+    return FeatureScaffold(
+      title: _t('Главная', 'Home'),
+      subtitle: _t(
+        'Ключевые обновления по сервисам и вашим задачам.',
+        'Key updates across services and your tasks.',
+      ),
+      actionLabel: _t('Обновить', 'Refresh'),
+      onAction: _loadDashboard,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFFDBECE4), Color(0xFFF2FAF6)],
+              ),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: const Color(0xFFC9E2D7)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    'Здравствуйте, ${user?.fullName ?? widget.role.title}',
+                    'Hello, ${user?.fullName ?? widget.role.title}',
+                  ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 6),
+                Text(today, style: const TextStyle(color: kSecondaryText)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (_loading) const Center(child: BrandLoadingIndicator()),
+          if (_error != null) ...[
+            InlineNotice(message: _error!, isError: true),
+            const SizedBox(height: 10),
+          ],
+          if (!_loading) ...[
+            if (_hasFeature('news'))
+              _HomeDashboardCard(
+                title: _t('Последняя новость', 'Latest news'),
+                actionLabel: _t('Открыть', 'Open'),
+                onAction: () => _openFeature('news'),
+                child: _latestNews == null
+                    ? Text(_t('Новостей пока нет.', 'No news yet.'))
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _latestNews!.title,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            _latestNews!.body,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+              ),
+            if (_hasFeature('schedule')) ...[
+              const SizedBox(height: 10),
+              _HomeDashboardCard(
+                title: _t('Последнее расписание', 'Latest schedule upload'),
+                actionLabel: _t('Открыть', 'Open'),
+                onAction: () => _openFeature('schedule'),
+                child: Text(
+                  _latestSchedule?.scheduleDate == null
+                      ? _t(
+                          'Дата расписания отсутствует.',
+                          'Schedule date is not set.',
+                        )
+                      : '${_t('Дата', 'Date')}: ${DateFormat('dd.MM.yyyy').format(_latestSchedule!.scheduleDate!)}',
+                ),
+              ),
+            ],
+            if (_hasFeature('exams') && _recentExams.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _HomeDashboardCard(
+                title: _t('Экзаменационные оценки', 'Exam grades'),
+                actionLabel: _t('Открыть', 'Open'),
+                onAction: () => _openFeature('exams'),
+                child: Column(
+                  children: [
+                    for (final exam in _recentExams)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text('${exam.studentName} • ${exam.grade}'),
+                        subtitle: Text('${exam.examName} • ${exam.groupName}'),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+            if (_hasFeature('makeup') && _recentMakeups.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _HomeDashboardCard(
+                title: _t(
+                  'Отработки (новые/актуальные)',
+                  'Makeups (new/active)',
+                ),
+                actionLabel: _t('Открыть', 'Open'),
+                onAction: () => _openFeature('makeup'),
+                child: Column(
+                  children: [
+                    for (final item in _recentMakeups)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text('${item.groupName} • ${item.studentName}'),
+                        subtitle: Text(
+                          '${DateFormat('dd.MM.yyyy').format(item.classDate)} • ${item.status}',
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+            if (_hasFeature('requests') && _recentRequests.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _HomeDashboardCard(
+                title: _t('Заявки (новые/актуальные)', 'Requests (new/active)'),
+                actionLabel: _t('Открыть', 'Open'),
+                onAction: () => _openFeature('requests'),
+                child: Column(
+                  children: [
+                    for (final item in _recentRequests)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(item.requestType),
+                        subtitle: Text(
+                          '${item.studentName} • ${_requestLabel(item.status)}',
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 10),
+            _HomeDashboardCard(
+              title: _t('Новые уведомления', 'New notifications'),
+              actionLabel: _t('Открыть', 'Open'),
+              onAction: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const NotificationsPage()),
+                );
+              },
+              child: _newNotifications.isEmpty
+                  ? Text(_t('Новых уведомлений нет.', 'No new notifications.'))
+                  : Column(
+                      children: [
+                        for (final item in _newNotifications)
+                          ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(item.title),
+                            subtitle: Text(
+                              DateFormat(
+                                'dd.MM.yyyy HH:mm',
+                              ).format(item.createdAt),
+                            ),
+                          ),
+                      ],
+                    ),
+            ),
+            const SizedBox(height: 10),
+            _HomeDashboardCard(
+              title: _t('Что нового', 'What is new'),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final row in summaryRows) ...[
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.fiber_manual_record,
+                          size: 8,
+                          color: kBrandPrimary,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(row)),
+                      ],
+                    ),
+                    if (row != summaryRows.last) const SizedBox(height: 8),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeDashboardCard extends StatelessWidget {
+  const _HomeDashboardCard({
+    required this.title,
+    required this.child,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  final String title;
+  final Widget child;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+                if (actionLabel != null && onAction != null)
+                  TextButton(onPressed: onAction, child: Text(actionLabel!)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            child,
+          ],
+        ),
+      ),
     );
   }
 }
