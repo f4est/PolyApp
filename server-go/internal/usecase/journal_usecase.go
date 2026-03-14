@@ -208,7 +208,7 @@ func (u *JournalUseCase) UpsertDateCells(ctx context.Context, actor Actor, group
 			return domainErrors.ErrInvalidInput
 		}
 		dateOnly := normalizeDate(item.ClassDate)
-		raw, numeric, status, err := normalizeRawValue(item.RawValue, statusRules)
+		raw, numeric, status, err := normalizeRawValue(item.RawValue, statusRules, true)
 		if err != nil {
 			return err
 		}
@@ -299,7 +299,7 @@ func (u *JournalUseCase) UpsertManualCells(ctx context.Context, actor Actor, gro
 		if _, ok := manualColumns[key]; !ok {
 			return fmt.Errorf("%w: unknown manual column %s", domainErrors.ErrInvalidInput, key)
 		}
-		raw, numeric, _, err := normalizeRawValue(item.RawValue, statusRules)
+		raw, numeric, _, err := normalizeRawValue(item.RawValue, statusRules, false)
 		if err != nil {
 			return err
 		}
@@ -610,12 +610,19 @@ func normalizeDate(value time.Time) time.Time {
 	return time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-func normalizeRawValue(raw string, status map[string]entity.StatusCodeRule) (string, *float64, string, error) {
+func normalizeRawValue(
+	raw string,
+	status map[string]entity.StatusCodeRule,
+	enforceGradeRange bool,
+) (string, *float64, string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return "", nil, "", nil
 	}
 	if number, err := strconvToFloat(trimmed); err == nil {
+		if enforceGradeRange && (number < 0 || number > 100) {
+			return "", nil, "", fmt.Errorf("%w: value must be in range 0..100", domainErrors.ErrInvalidInput)
+		}
 		return trimmed, &number, "", nil
 	}
 	key, rule, ok := resolveStatusCode(status, trimmed)
@@ -633,6 +640,9 @@ func normalizeRawValue(raw string, status map[string]entity.StatusCodeRule) (str
 	}
 	if rule.NumericValue != nil {
 		copyValue := *rule.NumericValue
+		if enforceGradeRange && (copyValue < 0 || copyValue > 100) {
+			return "", nil, "", fmt.Errorf("%w: value must be in range 0..100", domainErrors.ErrInvalidInput)
+		}
 		return trimmed, &copyValue, key, nil
 	}
 	return trimmed, nil, key, nil

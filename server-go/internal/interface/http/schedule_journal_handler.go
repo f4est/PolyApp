@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -153,6 +154,20 @@ func (h *Handler) uploadSchedule(c *gin.Context) {
 	}
 
 	_ = h.cleanupOldSchedules(c.Request.Context(), 30)
+	if recipients, err := h.scheduleNotificationRecipientIDs(c.Request.Context()); err == nil && len(recipients) > 0 {
+		label := scheduleDateLabel(upload.ScheduleDate)
+		_ = h.createNotifications(
+			c.Request.Context(),
+			recipients,
+			"Расписание обновлено",
+			fmt.Sprintf("Загружено новое расписание на %s", label),
+			map[string]any{
+				"type":          "schedule_update",
+				"schedule_date": label,
+				"upload_id":     upload.ID,
+			},
+		)
+	}
 	c.JSON(http.StatusOK, mapScheduleUpload(upload))
 }
 
@@ -228,6 +243,20 @@ func (h *Handler) updateScheduleUpload(c *gin.Context) {
 
 	for _, filename := range filesToRemove {
 		_ = os.Remove(filename)
+	}
+	if recipients, err := h.scheduleNotificationRecipientIDs(c.Request.Context()); err == nil && len(recipients) > 0 {
+		label := scheduleDateLabel(upload.ScheduleDate)
+		_ = h.createNotifications(
+			c.Request.Context(),
+			recipients,
+			"Расписание обновлено",
+			fmt.Sprintf("Обновлена дата пакета расписания: %s", label),
+			map[string]any{
+				"type":          "schedule_update",
+				"schedule_date": label,
+				"upload_id":     upload.ID,
+			},
+		)
 	}
 	c.JSON(http.StatusOK, mapScheduleUpload(upload))
 }
@@ -599,11 +628,38 @@ func (h *Handler) listJournalGroups(c *gin.Context) {
 	}
 	if user.Role == "student" || user.Role == "parent" {
 		group := normalizeGroupName(user.StudentGroup)
+		if user.Role == "parent" && group == "" {
+			child, childErr := h.parentLinkedStudent(c.Request.Context(), user)
+			if childErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load groups"})
+				return
+			}
+			if child != nil {
+				group = normalizeGroupName(child.StudentGroup)
+			}
+		}
 		if group == "" {
 			c.JSON(http.StatusOK, []string{})
 		} else {
 			c.JSON(http.StatusOK, []string{group})
 		}
+		return
+	}
+	var groups []string
+	if err := h.db.WithContext(c.Request.Context()).
+		Model(&persistence.DBJournalGroup{}).
+		Order("name asc").
+		Pluck("name", &groups).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load groups"})
+		return
+	}
+	c.JSON(http.StatusOK, groups)
+}
+
+func (h *Handler) listJournalGroupCatalog(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
 		return
 	}
 	var groups []string
@@ -695,7 +751,18 @@ func (h *Handler) listJournalStudents(c *gin.Context) {
 		}
 	}
 	if user.Role == "student" || user.Role == "parent" {
-		if normalizeGroupName(user.StudentGroup) == "" || normalizeGroupName(user.StudentGroup) != groupName {
+		allowedGroup := normalizeGroupName(user.StudentGroup)
+		if user.Role == "parent" && allowedGroup == "" {
+			child, childErr := h.parentLinkedStudent(c.Request.Context(), user)
+			if childErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load students"})
+				return
+			}
+			if child != nil {
+				allowedGroup = normalizeGroupName(child.StudentGroup)
+			}
+		}
+		if allowedGroup == "" || allowedGroup != groupName {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
@@ -710,6 +777,47 @@ func (h *Handler) listJournalStudents(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, students)
+}
+
+func (h *Handler) listConfirmedStudentsForGroup(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	groupName := strings.TrimSpace(c.Param("group_name"))
+	if groupName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name is required"})
+		return
+	}
+	if user.Role == "teacher" {
+		scope, err := h.groupScopeForUser(c.Request.Context(), user)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load students"})
+			return
+		}
+		if !scope.canView(groupName) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+			return
+		}
+	}
+	var students []persistence.DBUser
+	if err := h.db.WithContext(c.Request.Context()).
+		Where("role = ? AND is_approved = ? AND student_group = ?", "student", true, groupName).
+		Order("full_name asc").
+		Find(&students).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load students"})
+		return
+	}
+	out := make([]gin.H, 0, len(students))
+	for _, student := range students {
+		out = append(out, gin.H{
+			"id":            student.ID,
+			"full_name":     student.FullName,
+			"student_group": nullOrString(student.StudentGroup),
+		})
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 func (h *Handler) upsertJournalStudent(c *gin.Context) {
@@ -740,6 +848,20 @@ func (h *Handler) upsertJournalStudent(c *gin.Context) {
 			return
 		}
 	}
+	var approvedStudent persistence.DBUser
+	if err := h.db.WithContext(c.Request.Context()).
+		Where("role = ? AND is_approved = ? AND student_group = ? AND lower(full_name) = lower(?)", "student", true, group, name).
+		First(&approvedStudent).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"detail": "Only approved students from this group can be added",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to validate student"})
+		return
+	}
+	name = strings.TrimSpace(approvedStudent.FullName)
 	row := persistence.DBJournalStudent{GroupName: group, StudentName: name}
 	if err := h.db.WithContext(c.Request.Context()).
 		Where("group_name = ? AND student_name = ?", group, name).
@@ -809,7 +931,18 @@ func (h *Handler) listJournalDates(c *gin.Context) {
 		}
 	}
 	if user.Role == "student" || user.Role == "parent" {
-		if normalizeGroupName(user.StudentGroup) == "" || normalizeGroupName(user.StudentGroup) != group {
+		allowedGroup := normalizeGroupName(user.StudentGroup)
+		if user.Role == "parent" && allowedGroup == "" {
+			child, childErr := h.parentLinkedStudent(c.Request.Context(), user)
+			if childErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load dates"})
+				return
+			}
+			if child != nil {
+				allowedGroup = normalizeGroupName(child.StudentGroup)
+			}
+		}
+		if allowedGroup == "" || allowedGroup != group {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
@@ -1044,4 +1177,23 @@ func (h *Handler) cleanupOldSchedules(ctx context.Context, keepDays int) error {
 		_ = os.Remove(filename)
 	}
 	return nil
+}
+
+func (h *Handler) scheduleNotificationRecipientIDs(ctx context.Context) ([]uint, error) {
+	var ids []uint
+	if err := h.db.WithContext(ctx).
+		Model(&persistence.DBUser{}).
+		Where("is_approved = ?", true).
+		Where("role IN ?", []string{"admin", "teacher", "student", "parent"}).
+		Pluck("id", &ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func scheduleDateLabel(date *time.Time) string {
+	if date == nil {
+		return time.Now().UTC().Format("2006-01-02")
+	}
+	return dateOnly(*date)
 }

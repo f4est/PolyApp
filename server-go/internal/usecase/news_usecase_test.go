@@ -13,12 +13,14 @@ import (
 type fakeNewsRepo struct {
 	posts      map[uint]entity.NewsPost
 	nextPostID uint
+	shares     map[uint]map[uint]bool
 }
 
 func newFakeNewsRepo() *fakeNewsRepo {
 	return &fakeNewsRepo{
 		posts:      map[uint]entity.NewsPost{},
 		nextPostID: 1,
+		shares:     map[uint]map[uint]bool{},
 	}
 }
 
@@ -94,6 +96,7 @@ func (r *fakeNewsRepo) AddComment(_ context.Context, postID, userID uint, text s
 		ID:        uint(len(post.Comments) + 1),
 		UserID:    userID,
 		UserName:  "User",
+		UserRole:  "student",
 		Text:      text,
 		CreatedAt: time.Now().UTC(),
 	}
@@ -101,6 +104,24 @@ func (r *fakeNewsRepo) AddComment(_ context.Context, postID, userID uint, text s
 	post.CommentsCount = len(post.Comments)
 	r.posts[postID] = post
 	return &comment, nil
+}
+
+func (r *fakeNewsRepo) UpdateComment(_ context.Context, postID, commentID uint, text string) (*entity.NewsComment, error) {
+	post, ok := r.posts[postID]
+	if !ok {
+		return nil, domainErrors.ErrNotFound
+	}
+	for i := range post.Comments {
+		if post.Comments[i].ID == commentID {
+			post.Comments[i].Text = text
+			now := time.Now().UTC()
+			post.Comments[i].UpdatedAt = &now
+			r.posts[postID] = post
+			comment := post.Comments[i]
+			return &comment, nil
+		}
+	}
+	return nil, domainErrors.ErrNotFound
 }
 
 func (r *fakeNewsRepo) DeleteComment(_ context.Context, postID, commentID uint) error {
@@ -157,14 +178,21 @@ func (r *fakeNewsRepo) ToggleReaction(_ context.Context, postID, _ uint, reactio
 	}, nil
 }
 
-func (r *fakeNewsRepo) IncrementShare(_ context.Context, postID uint) (int, error) {
+func (r *fakeNewsRepo) IncrementShare(_ context.Context, postID, userID uint) (int, bool, error) {
 	post, ok := r.posts[postID]
 	if !ok {
-		return 0, domainErrors.ErrNotFound
+		return 0, false, domainErrors.ErrNotFound
 	}
-	post.ShareCount++
+	if r.shares[postID] == nil {
+		r.shares[postID] = map[uint]bool{}
+	}
+	already := r.shares[postID][userID]
+	if !already {
+		post.ShareCount++
+		r.shares[postID][userID] = true
+	}
 	r.posts[postID] = post
-	return post.ShareCount, nil
+	return post.ShareCount, !already, nil
 }
 
 func (r *fakeNewsRepo) AddMedia(_ context.Context, postID uint, media []entity.NewsMedia) error {
@@ -240,6 +268,13 @@ func TestNewsUseCase_CommentsReactionsAndShare(t *testing.T) {
 	if comment.Text != "Cool" {
 		t.Fatalf("unexpected comment text")
 	}
+	updatedComment, err := uc.UpdateComment(ctx, post.ID, comment.ID, "Updated")
+	if err != nil {
+		t.Fatalf("update comment failed: %v", err)
+	}
+	if updatedComment.Text != "Updated" {
+		t.Fatalf("unexpected updated comment text")
+	}
 	if err := uc.DeleteComment(ctx, post.ID, comment.ID); err != nil {
 		t.Fatalf("delete comment failed: %v", err)
 	}
@@ -261,12 +296,22 @@ func TestNewsUseCase_CommentsReactionsAndShare(t *testing.T) {
 		t.Fatalf("expected no likes after toggle off")
 	}
 
-	shareCount, err := uc.Share(ctx, post.ID)
+	shareCount, shared, err := uc.Share(ctx, post.ID, 5)
 	if err != nil {
 		t.Fatalf("share failed: %v", err)
 	}
 	if shareCount != 1 {
 		t.Fatalf("expected share count 1, got %d", shareCount)
+	}
+	if !shared {
+		t.Fatalf("expected first share to be shared=true")
+	}
+	shareCount, shared, err = uc.Share(ctx, post.ID, 5)
+	if err != nil {
+		t.Fatalf("second share failed: %v", err)
+	}
+	if shareCount != 1 || shared {
+		t.Fatalf("expected idempotent share, got count=%d shared=%v", shareCount, shared)
 	}
 }
 

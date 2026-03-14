@@ -21,6 +21,7 @@ var requestTypes = []string{
 	"Приложение №29",
 	"Приложение №31",
 	"Справка в школу",
+	"Запрос на преподавание группы",
 }
 
 var requestStatuses = []string{
@@ -33,6 +34,7 @@ var requestStatuses = []string{
 
 type requestPayload struct {
 	RequestType string `json:"request_type"`
+	GroupName   string `json:"group_name"`
 	Details     string `json:"details"`
 }
 
@@ -101,9 +103,15 @@ func (h *Handler) RegisterAcademicRoutes(router *gin.Engine, auth *httpMiddlewar
 		secured.DELETE("/schedule/:id", httpMiddleware.RequireRoles("admin"), h.deleteScheduleUpload)
 
 		secured.GET("/journal/groups", h.listJournalGroups)
-		secured.POST("/journal/groups", httpMiddleware.RequireRoles("teacher", "admin"), h.upsertJournalGroup)
-		secured.DELETE("/journal/groups", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteJournalGroup)
+		secured.GET("/journal/groups/catalog", httpMiddleware.RequireRoles("teacher", "admin"), h.listJournalGroupCatalog)
+		secured.POST("/journal/groups", httpMiddleware.RequireRoles("admin"), h.upsertJournalGroup)
+		secured.DELETE("/journal/groups", httpMiddleware.RequireRoles("admin"), h.deleteJournalGroup)
 		secured.GET("/journal/students", h.listJournalStudents)
+		secured.GET(
+			"/journal/groups/:group_name/confirmed-students",
+			httpMiddleware.RequireRoles("teacher", "admin"),
+			h.listConfirmedStudentsForGroup,
+		)
 		secured.POST("/journal/students", httpMiddleware.RequireRoles("teacher", "admin"), h.upsertJournalStudent)
 		secured.DELETE("/journal/students", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteJournalStudent)
 		secured.GET("/journal/dates", h.listJournalDates)
@@ -191,8 +199,9 @@ func parseDate(value string) (time.Time, error) {
 }
 
 func contains(items []string, value string) bool {
+	value = normalizeGroupName(value)
 	for _, item := range items {
-		if item == value {
+		if strings.EqualFold(normalizeGroupName(item), value) {
 			return true
 		}
 	}

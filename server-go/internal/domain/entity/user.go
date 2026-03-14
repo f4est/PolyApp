@@ -3,19 +3,26 @@ package entity
 import "time"
 
 type User struct {
-	ID           uint
-	Role         string
-	FullName     string
-	Email        string
-	PasswordHash string
-	Phone        string
-	AvatarURL    string
-	About        string
-	StudentGroup string
-	TeacherName  string
-	BirthDate    *time.Time
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID              uint
+	Role            string
+	FullName        string
+	Email           string
+	PasswordHash    string
+	Phone           string
+	AvatarURL       string
+	About           string
+	NotifySchedule  bool
+	NotifyRequests  bool
+	StudentGroup    string
+	TeacherName     string
+	ChildFullName   string
+	ParentStudentID *uint
+	IsApproved      bool
+	ApprovedAt      *time.Time
+	ApprovedBy      *uint
+	BirthDate       *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type AuthSession struct {

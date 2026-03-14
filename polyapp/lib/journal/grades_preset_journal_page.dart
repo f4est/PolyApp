@@ -108,10 +108,12 @@ class GradesPresetJournalPage extends StatefulWidget {
   const GradesPresetJournalPage({
     super.key,
     required this.canEdit,
+    required this.canManageGroups,
     required this.client,
   });
 
   final bool canEdit;
+  final bool canManageGroups;
   final ApiClient client;
 
   @override
@@ -126,7 +128,6 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
   final ScrollController _gridHorizontalController = ScrollController();
 
   final TextEditingController _newGroupController = TextEditingController();
-  final TextEditingController _newStudentController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
   final JournalService _legacyService = JournalService();
 
@@ -165,7 +166,6 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
   void dispose() {
     _gridHorizontalController.dispose();
     _newGroupController.dispose();
-    _newStudentController.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -293,6 +293,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
   }
 
   Future<void> _addGroup() async {
+    if (!widget.canManageGroups) return;
     final name = _newGroupController.text.trim();
     if (name.isEmpty) return;
     if (_groups.contains(name)) {
@@ -595,7 +596,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
                     },
             ),
           ),
-          if (widget.canEdit)
+          if (widget.canManageGroups)
             SizedBox(
               width: compact ? double.infinity : 260,
               child: TextField(
@@ -610,7 +611,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
                 onTapOutside: (_) {},
               ),
             ),
-          if (widget.canEdit)
+          if (widget.canManageGroups)
             FilledButton.icon(
               onPressed: _saving ? null : _addGroup,
               icon: const Icon(Icons.group_add_rounded),
@@ -692,19 +693,6 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
               runSpacing: 10,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                if (widget.canEdit)
-                  SizedBox(
-                    width: compact ? double.infinity : 360,
-                    child: TextField(
-                      controller: _newStudentController,
-                      onSubmitted: (_) => _addStudent(),
-                      decoration: InputDecoration(
-                        border: const OutlineInputBorder(),
-                        isDense: true,
-                        labelText: _tr('Новый студент', 'New student'),
-                      ),
-                    ),
-                  ),
                 if (widget.canEdit)
                   FilledButton.icon(
                     onPressed: (_saving || _groupName == null)
@@ -967,15 +955,64 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
 
   Future<void> _addStudent() async {
     final groupName = _groupName;
-    final studentName = _newStudentController.text.trim();
-    if (groupName == null || studentName.isEmpty) return;
+    if (groupName == null) return;
+    final candidates = await widget.client.listConfirmedJournalStudents(
+      groupName,
+    );
+    if (!mounted) return;
+    if (candidates.isEmpty) {
+      _showMessage(
+        _tr(
+          'Нет подтвержденных студентов в выбранной группе.',
+          'No approved students in selected group.',
+        ),
+        isError: true,
+      );
+      return;
+    }
+    var selectedName = candidates.first.fullName.trim();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(_tr('Добавить студента', 'Add student')),
+        content: DropdownButtonFormField<String>(
+          initialValue: selectedName,
+          items: candidates
+              .map(
+                (item) => DropdownMenuItem(
+                  value: item.fullName.trim(),
+                  child: Text(item.fullName.trim()),
+                ),
+              )
+              .toList(),
+          onChanged: (value) {
+            selectedName = value?.trim() ?? selectedName;
+          },
+          decoration: InputDecoration(
+            labelText: _tr('Подтвержденный студент', 'Approved student'),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(_tr('Отмена', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(_tr('Добавить', 'Add')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final studentName = selectedName.trim();
+    if (studentName.isEmpty) return;
     setState(() => _saving = true);
     try {
       await widget.client.upsertJournalStudent(
         groupName: groupName,
         studentName: studentName,
       );
-      _newStudentController.clear();
       await _reloadGrid();
       if (!mounted) return;
       _showMessage(_tr('Студент добавлен.', 'Student added.'));
@@ -1472,6 +1509,11 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       hint: _tr('0..100 или спецкод', '0..100 or status code'),
     );
     if (value == null || _groupName == null) return;
+    final validationError = _validateDateCellValue(value);
+    if (validationError != null) {
+      _showMessage(validationError, isError: true);
+      return;
+    }
     setState(() => _saving = true);
     try {
       if (value.isEmpty) {
@@ -1501,6 +1543,22 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
         setState(() => _saving = false);
       }
     }
+  }
+
+  String? _validateDateCellValue(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return null;
+    final numeric = double.tryParse(trimmed.replaceAll(',', '.'));
+    if (numeric == null) {
+      return null;
+    }
+    if (numeric < 0 || numeric > 100) {
+      return _tr(
+        'Оценка должна быть в диапазоне 0..100.',
+        'Grade must be in range 0..100.',
+      );
+    }
+    return null;
   }
 
   Future<void> _editManualValue(

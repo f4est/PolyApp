@@ -2,11 +2,14 @@ package http
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 
 	"polyapp/server-go/internal/domain/entity"
 	"polyapp/server-go/internal/infrastructure/persistence"
+
+	"gorm.io/gorm"
 )
 
 type groupAccessScope struct {
@@ -164,6 +167,28 @@ func (h *Handler) groupScopeForUser(ctx context.Context, user *entity.User) (gro
 	}
 	for _, group := range curated {
 		scope.addCurator(group)
+	}
+
+	teacherNames := map[string]struct{}{}
+	for _, value := range []string{user.TeacherName, user.FullName} {
+		name := strings.TrimSpace(value)
+		if name == "" {
+			continue
+		}
+		teacherNames[strings.ToLower(name)] = struct{}{}
+	}
+	for lowerName := range teacherNames {
+		var scheduled []string
+		if err := h.db.WithContext(ctx).
+			Model(&persistence.DBScheduleLesson{}).
+			Where("lower(teacher_name) = ?", lowerName).
+			Distinct("group_name").
+			Pluck("group_name", &scheduled).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return scope, err
+		}
+		for _, group := range scheduled {
+			scope.addTeaching(group)
+		}
 	}
 
 	return scope, nil

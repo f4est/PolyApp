@@ -233,6 +233,7 @@ func (h *Handler) bulkUpsertDateCellsV2(c *gin.Context) {
 		return
 	}
 	items := make([]usecase.DateCellUpsertInput, 0, len(payload.Items))
+	syncItems := make([]dateCellAttendanceSync, 0, len(payload.Items))
 	for _, item := range payload.Items {
 		classDate, err := parseDate(item.ClassDate)
 		if err != nil {
@@ -244,11 +245,18 @@ func (h *Handler) bulkUpsertDateCellsV2(c *gin.Context) {
 			StudentName: item.StudentName,
 			RawValue:    item.RawValue,
 		})
+		syncItems = append(syncItems, dateCellAttendanceSync{
+			ClassDate:   classDate,
+			StudentName: item.StudentName,
+			RawValue:    item.RawValue,
+		})
 	}
-	if err := h.journalUC.UpsertDateCells(c.Request.Context(), actorFromContext(c), groupName, items); err != nil {
+	actor := actorFromContext(c)
+	if err := h.journalUC.UpsertDateCells(c.Request.Context(), actor, groupName, items); err != nil {
 		writeUseCaseError(c, err, "Failed to save date cells")
 		return
 	}
+	_ = h.syncDateCellsToAttendance(c.Request.Context(), actor, groupName, syncItems)
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 

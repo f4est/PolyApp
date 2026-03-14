@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:intl/intl.dart';
 
 class ApiClient {
@@ -44,23 +45,113 @@ class ApiClient {
     return combined;
   }
 
-  Future<AuthResponse> register({
+  String _sanitizeMultipartFilename(String filename) {
+    final trimmed = filename.trim();
+    final safe = _sanitizeFilename(trimmed);
+    if (safe.trim().isEmpty) {
+      return 'file.bin';
+    }
+    return safe;
+  }
+
+  String? _guessMimeTypeByFilename(String filename) {
+    final lower = filename.toLowerCase();
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+      return 'image/jpeg';
+    }
+    if (lower.endsWith('.png')) {
+      return 'image/png';
+    }
+    if (lower.endsWith('.gif')) {
+      return 'image/gif';
+    }
+    if (lower.endsWith('.webp')) {
+      return 'image/webp';
+    }
+    if (lower.endsWith('.bmp')) {
+      return 'image/bmp';
+    }
+    if (lower.endsWith('.svg')) {
+      return 'image/svg+xml';
+    }
+    if (lower.endsWith('.mp4')) {
+      return 'video/mp4';
+    }
+    if (lower.endsWith('.mov')) {
+      return 'video/quicktime';
+    }
+    if (lower.endsWith('.webm')) {
+      return 'video/webm';
+    }
+    if (lower.endsWith('.avi')) {
+      return 'video/x-msvideo';
+    }
+    if (lower.endsWith('.mkv')) {
+      return 'video/x-matroska';
+    }
+    if (lower.endsWith('.pdf')) {
+      return 'application/pdf';
+    }
+    if (lower.endsWith('.doc')) {
+      return 'application/msword';
+    }
+    if (lower.endsWith('.docx')) {
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    }
+    if (lower.endsWith('.xls')) {
+      return 'application/vnd.ms-excel';
+    }
+    if (lower.endsWith('.xlsx')) {
+      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    }
+    if (lower.endsWith('.txt')) {
+      return 'text/plain';
+    }
+    return null;
+  }
+
+  MediaType? _parseMediaType(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return null;
+    }
+    try {
+      return MediaType.parse(value.trim());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<RegisterResponse> register({
     required String fullName,
     required String email,
     required String password,
+    required String role,
+    bool? notifySchedule,
+    bool? notifyRequests,
+    String? studentGroup,
+    String? teacherName,
+    String? childFullName,
+    int? parentStudentId,
     String? deviceId,
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/auth/register'),
       headers: _headers(jsonBody: true),
       body: jsonEncode({
+        'role': role,
         'full_name': fullName,
         'email': email,
         'password': password,
+        'notify_schedule': notifySchedule,
+        'notify_requests': notifyRequests,
+        'student_group': studentGroup,
+        'teacher_name': teacherName,
+        'child_full_name': childFullName,
+        'parent_student_id': parentStudentId,
         'device_id': deviceId,
       }),
     );
-    return _parseAuthResponse(response);
+    return _parseRegisterResponse(response);
   }
 
   Future<AuthResponse> login({
@@ -78,6 +169,16 @@ class ApiClient {
       }),
     );
     return _parseAuthResponse(response);
+  }
+
+  Future<bool> checkEmailRegistered(String email) async {
+    final uri = Uri.parse(
+      '$baseUrl/auth/check-email',
+    ).replace(queryParameters: {'email': email.trim()});
+    final response = await http.get(uri, headers: _headers());
+    _ensureSuccess(response);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    return (data['exists'] as bool?) ?? false;
   }
 
   Future<UserProfile> me() async {
@@ -106,10 +207,24 @@ class ApiClient {
     );
   }
 
-  Future<List<UserProfile>> listUsers({String? role}) async {
+  Future<List<UserProfile>> listUsers({
+    String? role,
+    bool? approved,
+    String? sort,
+  }) async {
+    final query = <String, String>{};
+    if (role != null && role.trim().isNotEmpty) {
+      query['role'] = role.trim();
+    }
+    if (approved != null) {
+      query['approved'] = approved ? 'true' : 'false';
+    }
+    if (sort != null && sort.trim().isNotEmpty) {
+      query['sort'] = sort.trim();
+    }
     final uri = Uri.parse(
       '$baseUrl/users',
-    ).replace(queryParameters: role == null ? null : {'role': role});
+    ).replace(queryParameters: query.isEmpty ? null : query);
     final response = await http.get(uri, headers: _headers());
     _ensureSuccess(response);
     final data = jsonDecode(response.body) as List<dynamic>;
@@ -118,11 +233,30 @@ class ApiClient {
         .toList();
   }
 
+  Future<List<UserPublicProfile>> listApprovedStudents() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/users/students/approved'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data
+        .map((item) => UserPublicProfile.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
   Future<UserProfile> createUserAsAdmin({
     required String role,
     required String fullName,
     required String email,
     required String password,
+    bool? notifySchedule,
+    bool? notifyRequests,
+    String? studentGroup,
+    String? teacherName,
+    String? childFullName,
+    int? parentStudentId,
+    bool? isApproved,
     String? deviceId,
   }) async {
     final response = await http.post(
@@ -133,6 +267,13 @@ class ApiClient {
         'full_name': fullName,
         'email': email,
         'password': password,
+        'notify_schedule': notifySchedule,
+        'notify_requests': notifyRequests,
+        'student_group': studentGroup,
+        'teacher_name': teacherName,
+        'child_full_name': childFullName,
+        'parent_student_id': parentStudentId,
+        'is_approved': isApproved,
         'device_id': deviceId,
       }),
     );
@@ -148,6 +289,17 @@ class ApiClient {
       headers: _headers(),
     );
     _ensureSuccess(response);
+  }
+
+  Future<UserProfile> approveUserAsAdmin(int userId) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/users/$userId/approve'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    return UserProfile.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
   }
 
   Future<UserPublicProfile> getUserPublic(int userId) async {
@@ -224,7 +376,12 @@ class ApiClient {
     String? category,
   }) async {
     final uri = Uri.parse('$baseUrl/news').replace(
-      queryParameters: {'offset': offset.toString(), 'limit': limit.toString()},
+      queryParameters: {
+        'offset': offset.toString(),
+        'limit': limit.toString(),
+        if (category != null && category.trim().isNotEmpty)
+          'category': category.trim(),
+      },
     );
     final response = await http.get(uri, headers: _headers());
     _ensureSuccess(response);
@@ -267,20 +424,48 @@ class ApiClient {
     }
     request.fields['pinned'] = pinned.toString();
     for (final item in media) {
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'files',
-          item.bytes,
-          filename: item.filename,
-        ),
+      final safeName = _sanitizeMultipartFilename(item.filename);
+      final mediaType = _parseMediaType(
+        item.mimeType ?? _guessMimeTypeByFilename(item.filename),
       );
+      try {
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'files',
+            item.bytes,
+            filename: safeName,
+            contentType: mediaType,
+          ),
+        );
+      } catch (_) {
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'files',
+            item.bytes,
+            filename: 'file_${request.files.length + 1}.bin',
+            contentType: mediaType,
+          ),
+        );
+      }
     }
     final response = await request.send();
     final responseBytes = await response.stream.toBytes();
     final bodyText = utf8.decode(responseBytes, allowMalformed: true);
     final wrapped = http.Response(bodyText, response.statusCode);
     _ensureSuccess(wrapped);
-    return NewsPost.fromJson(_decodeJsonObject(bodyText));
+    try {
+      return NewsPost.fromJson(_decodeJsonObject(bodyText));
+    } catch (_) {
+      final fallback = await listNews(
+        offset: 0,
+        limit: 1,
+        category: category ?? 'news',
+      );
+      if (fallback.isNotEmpty) {
+        return fallback.first;
+      }
+      throw ApiException(response.statusCode, bodyText);
+    }
   }
 
   Future<NewsLikeResult> toggleNewsLike(
@@ -302,6 +487,22 @@ class ApiClient {
   Future<NewsComment> addNewsComment(int postId, String text) async {
     final response = await http.post(
       Uri.parse('$baseUrl/news/$postId/comment'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({'text': text}),
+    );
+    _ensureSuccess(response);
+    return NewsComment.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+  }
+
+  Future<NewsComment> updateNewsComment({
+    required int postId,
+    required int commentId,
+    required String text,
+  }) async {
+    final response = await http.patch(
+      Uri.parse('$baseUrl/news/$postId/comment/$commentId'),
       headers: _headers(jsonBody: true),
       body: jsonEncode({'text': text}),
     );
@@ -333,6 +534,7 @@ class ApiClient {
       body: jsonEncode({
         if (title != null) 'title': title,
         if (body != null) 'body': body,
+        if (category != null) 'category': category,
         if (pinned != null) 'pinned': pinned,
       }),
     );
@@ -359,14 +561,14 @@ class ApiClient {
     _ensureSuccess(response);
   }
 
-  Future<int> shareNews(int postId) async {
+  Future<NewsShareResult> shareNews(int postId) async {
     final response = await http.post(
       Uri.parse('$baseUrl/news/$postId/share'),
       headers: _headers(),
     );
     _ensureSuccess(response);
     final data = jsonDecode(response.body) as Map<String, dynamic>;
-    return data['share_count'] as int;
+    return NewsShareResult.fromJson(data);
   }
 
   Future<ScheduleUpload?> latestSchedule() async {
@@ -540,6 +742,16 @@ class ApiClient {
     return data.map((item) => item.toString()).toList();
   }
 
+  Future<List<String>> listJournalGroupCatalog() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/journal/groups/catalog'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data.map((item) => item.toString()).toList();
+  }
+
   Future<void> upsertJournalGroup(String name) async {
     final response = await http.post(
       Uri.parse('$baseUrl/journal/groups'),
@@ -565,6 +777,22 @@ class ApiClient {
     _ensureSuccess(response);
     final data = jsonDecode(response.body) as List<dynamic>;
     return data.map((item) => item.toString()).toList();
+  }
+
+  Future<List<UserPublicProfile>> listConfirmedJournalStudents(
+    String groupName,
+  ) async {
+    final response = await http.get(
+      Uri.parse(
+        '$baseUrl/journal/groups/${Uri.encodeComponent(groupName)}/confirmed-students',
+      ),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data
+        .map((item) => UserPublicProfile.fromJson(item as Map<String, dynamic>))
+        .toList();
   }
 
   Future<void> upsertJournalStudent({
@@ -1101,12 +1329,17 @@ class ApiClient {
 
   Future<RequestTicket> createRequest({
     required String requestType,
+    String? groupName,
     String? details,
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/requests'),
       headers: _headers(jsonBody: true),
-      body: jsonEncode({'request_type': requestType, 'details': details}),
+      body: jsonEncode({
+        'request_type': requestType,
+        'group_name': groupName,
+        'details': details,
+      }),
     );
     _ensureSuccess(response);
     return RequestTicket.fromJson(
@@ -1585,6 +1818,24 @@ class ApiClient {
     );
   }
 
+  RegisterResponse _parseRegisterResponse(http.Response response) {
+    if (response.statusCode == 202) {
+      final body = _decodeJsonObject(response.body);
+      return RegisterResponse(
+        pendingApproval: (body['pending_approval'] as bool?) ?? true,
+        detail: body['detail'] as String?,
+        user: body['user'] is Map<String, dynamic>
+            ? UserProfile.fromJson(body['user'] as Map<String, dynamic>)
+            : null,
+      );
+    }
+    _ensureSuccess(response);
+    final auth = AuthResponse.fromJson(
+      jsonDecode(response.body) as Map<String, dynamic>,
+    );
+    return RegisterResponse(auth: auth);
+  }
+
   Future<http.Response> _getWithApiFallback(Uri uri) async {
     final primary = await http.get(uri, headers: _headers());
     if (primary.statusCode != 404) {
@@ -1778,6 +2029,20 @@ class AuthResponse {
   }
 }
 
+class RegisterResponse {
+  RegisterResponse({
+    this.auth,
+    this.pendingApproval = false,
+    this.detail,
+    this.user,
+  });
+
+  final AuthResponse? auth;
+  final bool pendingApproval;
+  final String? detail;
+  final UserProfile? user;
+}
+
 class UserProfile {
   UserProfile({
     required this.id,
@@ -1787,8 +2052,17 @@ class UserProfile {
     this.phone,
     this.avatarUrl,
     this.about,
+    this.notifySchedule,
+    this.notifyRequests,
     this.studentGroup,
     this.teacherName,
+    this.childFullName,
+    this.parentStudentId,
+    this.isApproved,
+    this.approvedAt,
+    this.approvedBy,
+    this.createdAt,
+    this.updatedAt,
     this.birthDate,
   });
 
@@ -1799,8 +2073,17 @@ class UserProfile {
   final String? phone;
   final String? avatarUrl;
   final String? about;
+  final bool? notifySchedule;
+  final bool? notifyRequests;
   final String? studentGroup;
   final String? teacherName;
+  final String? childFullName;
+  final int? parentStudentId;
+  final bool? isApproved;
+  final DateTime? approvedAt;
+  final int? approvedBy;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
   final DateTime? birthDate;
 
   factory UserProfile.fromJson(Map<String, dynamic> json) {
@@ -1812,8 +2095,23 @@ class UserProfile {
       phone: json['phone'] as String?,
       avatarUrl: json['avatar_url'] as String?,
       about: json['about'] as String?,
+      notifySchedule: json['notify_schedule'] as bool?,
+      notifyRequests: json['notify_requests'] as bool?,
       studentGroup: json['student_group'] as String?,
       teacherName: json['teacher_name'] as String?,
+      childFullName: json['child_full_name'] as String?,
+      parentStudentId: (json['parent_student_id'] as num?)?.toInt(),
+      isApproved: json['is_approved'] as bool?,
+      approvedAt: json['approved_at'] == null
+          ? null
+          : DateTime.tryParse(json['approved_at'] as String),
+      approvedBy: (json['approved_by'] as num?)?.toInt(),
+      createdAt: json['created_at'] == null
+          ? null
+          : DateTime.tryParse(json['created_at'] as String),
+      updatedAt: json['updated_at'] == null
+          ? null
+          : DateTime.tryParse(json['updated_at'] as String),
       birthDate: json['birth_date'] == null
           ? null
           : DateTime.parse(json['birth_date'] as String),
@@ -1934,23 +2232,48 @@ class NewsComment {
     required this.id,
     required this.userId,
     required this.userName,
+    this.userRole,
+    this.userAvatarUrl,
     required this.text,
     required this.createdAt,
+    this.updatedAt,
   });
 
   final int id;
   final int userId;
   final String userName;
+  final String? userRole;
+  final String? userAvatarUrl;
   final String text;
   final DateTime createdAt;
+  final DateTime? updatedAt;
 
   factory NewsComment.fromJson(Map<String, dynamic> json) {
     return NewsComment(
       id: json['id'] as int,
       userId: json['user_id'] as int,
       userName: json['user_name'] as String,
+      userRole: json['user_role'] as String?,
+      userAvatarUrl: json['user_avatar_url'] as String?,
       text: json['text'] as String,
       createdAt: DateTime.parse(json['created_at'] as String),
+      updatedAt: json['updated_at'] == null
+          ? null
+          : DateTime.parse(json['updated_at'] as String),
+    );
+  }
+}
+
+class NewsShareResult {
+  NewsShareResult({required this.shareCount, required this.shared});
+
+  final int shareCount;
+  final bool shared;
+
+  factory NewsShareResult.fromJson(Map<String, dynamic> json) {
+    return NewsShareResult(
+      shareCount: (json['share_count'] as num?)?.toInt() ?? 0,
+      shared: (json['shared'] as bool?) ?? false,
     );
   }
 }
@@ -1970,6 +2293,7 @@ class NewsPost {
     bool? likedByMe,
     Map<String, int>? reactionCounts,
     String? myReaction,
+    bool clearMyReaction = false,
     List<NewsMedia>? media,
     List<NewsComment>? comments,
     String? category,
@@ -1988,7 +2312,7 @@ class NewsPost {
       commentsCount: commentsCount ?? this.commentsCount,
       likedByMe: likedByMe ?? this.likedByMe,
       reactionCounts: reactionCounts ?? this.reactionCounts,
-      myReaction: myReaction ?? this.myReaction,
+      myReaction: clearMyReaction ? null : (myReaction ?? this.myReaction),
       media: media ?? this.media,
       comments: comments ?? this.comments,
       category: category ?? this.category,
@@ -2209,6 +2533,7 @@ class RequestTicket {
     required this.createdAt,
     required this.updatedAt,
     required this.studentName,
+    this.creatorRole,
   });
 
   final int id;
@@ -2219,6 +2544,7 @@ class RequestTicket {
   final DateTime createdAt;
   final DateTime updatedAt;
   final String studentName;
+  final String? creatorRole;
 
   factory RequestTicket.fromJson(Map<String, dynamic> json) {
     return RequestTicket(
@@ -2232,6 +2558,7 @@ class RequestTicket {
         (json['updated_at'] as String?) ?? (json['created_at'] as String),
       ),
       studentName: (json['student_name'] as String?) ?? '',
+      creatorRole: json['creator_role'] as String?,
     );
   }
 }

@@ -3,19 +3,26 @@ package persistence
 import "time"
 
 type DBUser struct {
-	ID           uint       `gorm:"primaryKey"`
-	Role         string     `gorm:"size:32;not null;index"`
-	FullName     string     `gorm:"size:255;not null"`
-	Email        string     `gorm:"size:255;uniqueIndex;not null"`
-	PasswordHash string     `gorm:"size:255;not null"`
-	Phone        string     `gorm:"size:64"`
-	AvatarURL    string     `gorm:"size:512"`
-	About        string     `gorm:"type:text"`
-	StudentGroup string     `gorm:"size:64;index"`
-	TeacherName  string     `gorm:"size:255;index"`
-	BirthDate    *time.Time `gorm:"type:date"`
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID              uint       `gorm:"primaryKey"`
+	Role            string     `gorm:"size:32;not null;index"`
+	FullName        string     `gorm:"size:255;not null"`
+	Email           string     `gorm:"size:255;uniqueIndex;not null"`
+	PasswordHash    string     `gorm:"size:255;not null"`
+	Phone           string     `gorm:"size:64"`
+	AvatarURL       string     `gorm:"size:512"`
+	About           string     `gorm:"type:text"`
+	NotifySchedule  bool       `gorm:"not null;default:true"`
+	NotifyRequests  bool       `gorm:"not null;default:true"`
+	StudentGroup    string     `gorm:"size:64;index"`
+	TeacherName     string     `gorm:"size:255;index"`
+	ChildFullName   string     `gorm:"size:255;index"`
+	ParentStudentID *uint      `gorm:"index"`
+	IsApproved      bool       `gorm:"not null;default:false;index"`
+	ApprovedAt      *time.Time `gorm:"index"`
+	ApprovedBy      *uint      `gorm:"index"`
+	BirthDate       *time.Time `gorm:"type:date"`
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type DBAuthSession struct {
@@ -84,6 +91,14 @@ type DBNewsComment struct {
 	PostID    uint      `gorm:"index;not null"`
 	UserID    uint      `gorm:"index;not null"`
 	Text      string    `gorm:"type:text;not null"`
+	CreatedAt time.Time `gorm:"index"`
+	UpdatedAt time.Time `gorm:"index"`
+}
+
+type DBNewsShare struct {
+	ID        uint      `gorm:"primaryKey"`
+	PostID    uint      `gorm:"uniqueIndex:idx_news_share;index;not null"`
+	UserID    uint      `gorm:"uniqueIndex:idx_news_share;index;not null"`
 	CreatedAt time.Time `gorm:"index"`
 }
 
@@ -313,6 +328,7 @@ func ModelSet() []any {
 		&DBNewsMedia{},
 		&DBNewsLike{},
 		&DBNewsComment{},
+		&DBNewsShare{},
 		&DBScheduleUpload{},
 		&DBScheduleLesson{},
 		&DBRequestTicket{},

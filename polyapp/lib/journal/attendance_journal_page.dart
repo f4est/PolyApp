@@ -14,10 +14,12 @@ class AttendanceJournalPage extends StatefulWidget {
   const AttendanceJournalPage({
     super.key,
     required this.canEdit,
+    required this.canManageGroups,
     required this.client,
   });
 
   final bool canEdit;
+  final bool canManageGroups;
   final ApiClient client;
 
   @override
@@ -365,7 +367,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
   }
 
   Future<void> _addGroup() async {
-    if (!widget.canEdit) return;
+    if (!widget.canManageGroups) return;
     final name = _newGroupController.text.trim();
     if (name.isEmpty) return;
     setState(() => _busy = true);
@@ -651,7 +653,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
+        color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
@@ -696,7 +698,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
             width: compact ? 44 : 52,
             height: compact ? 44 : 52,
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.16),
+              color: Colors.white.withValues(alpha: 0.16),
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Icon(Icons.fact_check_rounded, color: Colors.white),
@@ -720,7 +722,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
                     'Посещаемость по датам + синхронизация с сервером',
                     'Date attendance + server synchronization',
                   ),
-                  style: TextStyle(color: Colors.white.withOpacity(0.9)),
+                  style: TextStyle(color: Colors.white.withValues(alpha: 0.9)),
                 ),
               ],
             ),
@@ -740,7 +742,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
                   height: 30,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Colors.white.withOpacity(0.2),
+                    color: Colors.white.withValues(alpha: 0.2),
                   ),
                   child: const Icon(
                     Icons.info_outline_rounded,
@@ -765,7 +767,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
                     height: 30,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: Colors.white.withOpacity(0.2),
+                      color: Colors.white.withValues(alpha: 0.2),
                     ),
                     child: const Icon(
                       Icons.tune_rounded,
@@ -823,7 +825,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
               ),
             ),
           ),
-          if (widget.canEdit)
+          if (widget.canManageGroups)
             SizedBox(
               width: compact ? double.infinity : 260,
               child: TextField(
@@ -837,7 +839,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
                 ),
               ),
             ),
-          if (widget.canEdit)
+          if (widget.canManageGroups)
             FilledButton.icon(
               onPressed: _busy ? null : _addGroup,
               icon: const Icon(Icons.group_add_rounded),

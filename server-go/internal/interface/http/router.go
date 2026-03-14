@@ -111,15 +111,28 @@ func corsMiddleware(allowedOrigin string) gin.HandlerFunc {
 
 func toUserPublic(user entity.User) gin.H {
 	out := gin.H{
-		"id":            user.ID,
-		"role":          user.Role,
-		"full_name":     user.FullName,
-		"email":         user.Email,
-		"phone":         nullOrString(user.Phone),
-		"avatar_url":    nullOrString(user.AvatarURL),
-		"about":         nullOrString(user.About),
-		"student_group": nullOrString(user.StudentGroup),
-		"teacher_name":  nullOrString(user.TeacherName),
+		"id":                user.ID,
+		"role":              user.Role,
+		"full_name":         user.FullName,
+		"email":             user.Email,
+		"phone":             nullOrString(user.Phone),
+		"avatar_url":        nullOrString(user.AvatarURL),
+		"about":             nullOrString(user.About),
+		"notify_schedule":   user.NotifySchedule,
+		"notify_requests":   user.NotifyRequests,
+		"student_group":     nullOrString(user.StudentGroup),
+		"teacher_name":      nullOrString(user.TeacherName),
+		"child_full_name":   nullOrString(user.ChildFullName),
+		"parent_student_id": user.ParentStudentID,
+		"is_approved":       user.IsApproved,
+		"approved_by":       user.ApprovedBy,
+		"created_at":        user.CreatedAt.Format(time.RFC3339),
+		"updated_at":        user.UpdatedAt.Format(time.RFC3339),
+	}
+	if user.ApprovedAt != nil {
+		out["approved_at"] = user.ApprovedAt.Format(time.RFC3339)
+	} else {
+		out["approved_at"] = nil
 	}
 	if user.BirthDate != nil {
 		out["birth_date"] = user.BirthDate.Format("2006-01-02")

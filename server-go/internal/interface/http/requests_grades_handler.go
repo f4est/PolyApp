@@ -1,9 +1,11 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,20 +22,43 @@ func (h *Handler) createRequest(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
 		return
 	}
-	if user.Role != "student" && user.Role != "parent" && user.Role != "admin" {
+	if user.Role == "parent" {
+		c.JSON(http.StatusForbidden, gin.H{"detail": "Insufficient role"})
+		return
+	}
+	if user.Role != "student" && user.Role != "teacher" && user.Role != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"detail": "Insufficient role"})
 		return
 	}
 	var payload requestPayload
-	if err := c.ShouldBindJSON(&payload); err != nil || strings.TrimSpace(payload.RequestType) == "" {
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "request_type is required"})
+		return
+	}
+	requestType := strings.TrimSpace(payload.RequestType)
+	details := strings.TrimSpace(payload.Details)
+	if user.Role == "teacher" {
+		groupName := strings.TrimSpace(payload.GroupName)
+		if groupName == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name is required for teacher request"})
+			return
+		}
+		requestType = "Запрос на преподавание группы"
+		if details == "" {
+			details = "Группа: " + groupName
+		} else {
+			details = "Группа: " + groupName + "\n" + details
+		}
+	}
+	if requestType == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "request_type is required"})
 		return
 	}
 	ticket := persistence.DBRequestTicket{
 		StudentID:   user.ID,
-		RequestType: strings.TrimSpace(payload.RequestType),
+		RequestType: requestType,
 		Status:      requestStatuses[0],
-		Details:     strings.TrimSpace(payload.Details),
+		Details:     details,
 		CreatedAt:   time.Now().UTC(),
 		UpdatedAt:   nil,
 	}
@@ -43,7 +68,26 @@ func (h *Handler) createRequest(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to create request"})
 		return
 	}
-	c.JSON(http.StatusOK, h.mapRequestTicket(c, ticket))
+	out := h.mapRequestTicket(c, ticket)
+	if recipients, err := h.requestHandlerRecipientIDs(c.Request.Context()); err == nil && len(recipients) > 0 {
+		title := "Новая заявка"
+		if user.Role == "teacher" {
+			title = "Новая заявка преподавателя"
+		}
+		body := "Поступила новая заявка от " + strings.TrimSpace(user.FullName)
+		_ = h.createNotifications(
+			c.Request.Context(),
+			recipients,
+			title,
+			body,
+			map[string]any{
+				"type":       "request_created",
+				"request_id": ticket.ID,
+				"status":     ticket.Status,
+			},
+		)
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 func (h *Handler) listRequests(c *gin.Context) {
@@ -53,8 +97,17 @@ func (h *Handler) listRequests(c *gin.Context) {
 		return
 	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBRequestTicket{})
-	if user.Role == "student" || user.Role == "parent" {
+	switch user.Role {
+	case "admin", "request_handler":
+		// Full access.
+	case "student", "teacher":
 		query = query.Where("student_id = ?", user.ID)
+	case "parent":
+		c.JSON(http.StatusForbidden, gin.H{"detail": "Insufficient role"})
+		return
+	default:
+		c.JSON(http.StatusForbidden, gin.H{"detail": "Insufficient role"})
+		return
 	}
 	var tickets []persistence.DBRequestTicket
 	if err := query.Order("created_at desc").Find(&tickets).Error; err != nil {
@@ -140,7 +193,39 @@ func (h *Handler) updateRequest(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to update ticket"})
 		return
 	}
-	c.JSON(http.StatusOK, h.mapRequestTicket(c, ticket))
+	out := h.mapRequestTicket(c, ticket)
+	if ticket.StudentID > 0 {
+		title := "Статус заявки изменён"
+		body := "Заявка #" + strconv.FormatUint(uint64(ticket.ID), 10) + ": " + ticket.Status
+		recipients := []uint{ticket.StudentID}
+		if parentIDs, parentErr := h.parentUserIDsForStudents(c.Request.Context(), []uint{ticket.StudentID}); parentErr == nil {
+			recipients = append(recipients, parentIDs...)
+		}
+		seen := map[uint]struct{}{}
+		uniqueRecipients := make([]uint, 0, len(recipients))
+		for _, id := range recipients {
+			if id == 0 {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			uniqueRecipients = append(uniqueRecipients, id)
+		}
+		_ = h.createNotifications(
+			c.Request.Context(),
+			uniqueRecipients,
+			title,
+			body,
+			map[string]any{
+				"type":       "request_updated",
+				"request_id": ticket.ID,
+				"status":     ticket.Status,
+			},
+		)
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 func (h *Handler) upsertAttendance(c *gin.Context) {
@@ -182,6 +267,7 @@ func (h *Handler) upsertAttendance(c *gin.Context) {
 		}
 	}
 	tx := h.db.WithContext(c.Request.Context())
+	actor := actorFromContext(c)
 	var existing persistence.DBAttendanceRecord
 	err = tx.Where("group_name = ? AND class_date = ? AND student_name = ?", row.GroupName, row.ClassDate, row.StudentName).
 		First(&existing).Error
@@ -193,11 +279,17 @@ func (h *Handler) upsertAttendance(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save attendance"})
 			return
 		}
+		if syncErr := h.syncAttendanceToJournalV2(c.Request.Context(), actor, existing); syncErr != nil {
+			// keep attendance write successful even if v2 sync fails
+		}
 		c.JSON(http.StatusOK, mapAttendance(existing))
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		if err := tx.Create(&row).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save attendance"})
 			return
+		}
+		if syncErr := h.syncAttendanceToJournalV2(c.Request.Context(), actor, row); syncErr != nil {
+			// keep attendance write successful even if v2 sync fails
 		}
 		c.JSON(http.StatusOK, mapAttendance(row))
 	default:
@@ -236,11 +328,19 @@ func (h *Handler) listAttendance(c *gin.Context) {
 		}
 	}
 	if user.Role == "parent" {
-		if strings.TrimSpace(user.StudentGroup) == "" {
+		child, childErr := h.parentLinkedStudent(c.Request.Context(), user)
+		if childErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load attendance"})
+			return
+		}
+		if child == nil {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
-		query = query.Where("group_name = ?", strings.TrimSpace(user.StudentGroup))
+		query = query.Where("student_name = ?", strings.TrimSpace(child.FullName))
+		if strings.TrimSpace(child.StudentGroup) != "" {
+			query = query.Where("group_name = ?", strings.TrimSpace(child.StudentGroup))
+		}
 	}
 	var rows []persistence.DBAttendanceRecord
 	if err := query.Order("class_date desc").Find(&rows).Error; err != nil {
@@ -319,11 +419,19 @@ func (h *Handler) attendanceSummary(c *gin.Context) {
 		}
 	}
 	if user.Role == "parent" {
-		if strings.TrimSpace(user.StudentGroup) == "" {
+		child, childErr := h.parentLinkedStudent(c.Request.Context(), user)
+		if childErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load attendance"})
+			return
+		}
+		if child == nil {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
-		query = query.Where("group_name = ?", strings.TrimSpace(user.StudentGroup))
+		query = query.Where("student_name = ?", strings.TrimSpace(child.FullName))
+		if strings.TrimSpace(child.StudentGroup) != "" {
+			query = query.Where("group_name = ?", strings.TrimSpace(child.StudentGroup))
+		}
 	}
 	var rows []persistence.DBAttendanceRecord
 	if err := query.Find(&rows).Error; err != nil {
@@ -364,8 +472,8 @@ func (h *Handler) upsertGrade(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
 		return
 	}
-	if payload.Grade < 1 || payload.Grade > 100 {
-		c.JSON(http.StatusBadRequest, gin.H{"detail": "Grade must be 1..100"})
+	if payload.Grade < 0 || payload.Grade > 100 {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Grade must be 0..100"})
 		return
 	}
 	classDate, err := parseDate(payload.ClassDate)
@@ -407,10 +515,18 @@ func (h *Handler) upsertGrade(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save grade"})
 			return
 		}
+		if syncErr := h.syncGradeToAttendance(c.Request.Context(), user.ID, existing); syncErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to synchronize attendance"})
+			return
+		}
 		c.JSON(http.StatusOK, mapGrade(existing))
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		if err := tx.Create(&row).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save grade"})
+			return
+		}
+		if syncErr := h.syncGradeToAttendance(c.Request.Context(), user.ID, row); syncErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to synchronize attendance"})
 			return
 		}
 		c.JSON(http.StatusOK, mapGrade(row))
@@ -450,11 +566,19 @@ func (h *Handler) listGrades(c *gin.Context) {
 		}
 	}
 	if user.Role == "parent" {
-		if strings.TrimSpace(user.StudentGroup) == "" {
+		child, childErr := h.parentLinkedStudent(c.Request.Context(), user)
+		if childErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load grades"})
+			return
+		}
+		if child == nil {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
-		query = query.Where("group_name = ?", strings.TrimSpace(user.StudentGroup))
+		query = query.Where("student_name = ?", strings.TrimSpace(child.FullName))
+		if strings.TrimSpace(child.StudentGroup) != "" {
+			query = query.Where("group_name = ?", strings.TrimSpace(child.StudentGroup))
+		}
 	}
 	var rows []persistence.DBGradeRecord
 	if err := query.Order("class_date desc").Find(&rows).Error; err != nil {
@@ -533,11 +657,19 @@ func (h *Handler) gradeSummary(c *gin.Context) {
 		}
 	}
 	if user.Role == "parent" {
-		if strings.TrimSpace(user.StudentGroup) == "" {
+		child, childErr := h.parentLinkedStudent(c.Request.Context(), user)
+		if childErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load grades"})
+			return
+		}
+		if child == nil {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
-		query = query.Where("group_name = ?", strings.TrimSpace(user.StudentGroup))
+		query = query.Where("student_name = ?", strings.TrimSpace(child.FullName))
+		if strings.TrimSpace(child.StudentGroup) != "" {
+			query = query.Where("group_name = ?", strings.TrimSpace(child.StudentGroup))
+		}
 	}
 	var rows []persistence.DBGradeRecord
 	if err := query.Find(&rows).Error; err != nil {
@@ -660,10 +792,12 @@ func (h *Handler) analyticsGrades(c *gin.Context) {
 }
 
 func (h *Handler) mapRequestTicket(c *gin.Context, ticket persistence.DBRequestTicket) gin.H {
-	studentName := ""
-	var user persistence.DBUser
-	if err := h.db.WithContext(c.Request.Context()).First(&user, ticket.StudentID).Error; err == nil {
-		studentName = user.FullName
+	creatorName := ""
+	creatorRole := ""
+	var creator persistence.DBUser
+	if err := h.db.WithContext(c.Request.Context()).First(&creator, ticket.StudentID).Error; err == nil {
+		creatorName = creator.FullName
+		creatorRole = creator.Role
 	}
 	updatedAt := ticket.CreatedAt
 	if ticket.UpdatedAt != nil {
@@ -672,10 +806,11 @@ func (h *Handler) mapRequestTicket(c *gin.Context, ticket persistence.DBRequestT
 	return gin.H{
 		"id":           ticket.ID,
 		"student_id":   ticket.StudentID,
-		"student_name": studentName,
+		"student_name": creatorName,
 		"request_type": ticket.RequestType,
 		"status":       ticket.Status,
 		"details":      nullOrString(ticket.Details),
+		"creator_role": creatorRole,
 		"created_at":   ticket.CreatedAt.Format(time.RFC3339),
 		"updated_at":   updatedAt.Format(time.RFC3339),
 	}
@@ -765,10 +900,53 @@ func (h *Handler) allowedGroupsForTeacher(c *gin.Context, teacherID uint) ([]str
 		}
 	}
 
+	var teacher persistence.DBUser
+	if err := h.db.WithContext(c.Request.Context()).
+		Where("id = ? AND role = ?", teacherID, "teacher").
+		First(&teacher).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	teacherNames := map[string]struct{}{}
+	for _, value := range []string{teacher.TeacherName, teacher.FullName} {
+		name := strings.TrimSpace(value)
+		if name == "" {
+			continue
+		}
+		teacherNames[strings.ToLower(name)] = struct{}{}
+	}
+	for lowerName := range teacherNames {
+		var scheduled []string
+		if err := h.db.WithContext(c.Request.Context()).
+			Model(&persistence.DBScheduleLesson{}).
+			Where("lower(teacher_name) = ?", lowerName).
+			Distinct("group_name").
+			Pluck("group_name", &scheduled).Error; err != nil {
+			return nil, err
+		}
+		for _, group := range scheduled {
+			group = normalizeGroupName(group)
+			if group != "" {
+				unique[group] = struct{}{}
+			}
+		}
+	}
+
 	out := make([]string, 0, len(unique))
 	for group := range unique {
 		out = append(out, group)
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+func (h *Handler) requestHandlerRecipientIDs(ctx context.Context) ([]uint, error) {
+	var ids []uint
+	if err := h.db.WithContext(ctx).
+		Model(&persistence.DBUser{}).
+		Where("role IN ?", []string{"admin", "request_handler"}).
+		Where("is_approved = ?", true).
+		Pluck("id", &ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
 }

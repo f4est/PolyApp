@@ -1,4 +1,3 @@
-
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -87,12 +86,21 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
       final attendance = await widget.client.listAnalyticsAttendance();
       final grades = await widget.client.listAnalyticsGrades();
 
-      final exams = await _safe(() => widget.client.listExamGrades()) ?? const <ExamGrade>[];
-      final makeups = await _safe(() => widget.client.listMakeups()) ?? const <MakeupCaseDto>[];
-      final requests = await _safe(() => widget.client.listRequests()) ?? const <RequestTicket>[];
-      final assignments = await _safe(() => widget.client.listTeacherAssignments()) ?? const <TeacherGroupAssignment>[];
+      final exams =
+          await _safe(() => widget.client.listExamGrades()) ??
+          const <ExamGrade>[];
+      final makeups =
+          await _safe(() => widget.client.listMakeups()) ??
+          const <MakeupCaseDto>[];
+      final requests =
+          await _safe(() => widget.client.listRequests()) ??
+          const <RequestTicket>[];
+      final assignments =
+          await _safe(() => widget.client.listTeacherAssignments()) ??
+          const <TeacherGroupAssignment>[];
       final departments = _isAdmin
-          ? (await _safe(() => widget.client.listDepartments()) ?? const <DepartmentDto>[])
+          ? (await _safe(() => widget.client.listDepartments()) ??
+                const <DepartmentDto>[])
           : const <DepartmentDto>[];
 
       final groupNames = _groupNames(
@@ -184,7 +192,8 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
 
   Map<String, _GroupAgg> _aggregate() {
     final map = <String, _GroupAgg>{};
-    _GroupAgg touch(String name) => map.putIfAbsent(name, () => _GroupAgg(name));
+    _GroupAgg touch(String name) =>
+        map.putIfAbsent(name, () => _GroupAgg(name));
 
     for (final row in _groups) {
       final agg = touch(row.groupName);
@@ -221,10 +230,14 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
     }
     _gridByGroup.forEach((group, data) {
       final agg = touch(group);
-      agg.specialTotal = data.statusCodeCounts.values.fold<int>(0, (a, b) => a + b);
+      agg.specialTotal = data.statusCodeCounts.values.fold<int>(
+        0,
+        (a, b) => a + b,
+      );
     });
     return map;
   }
+
   List<_Trend> _gradeTrend({String? group}) {
     final bucket = <DateTime, List<double>>{};
     for (final row in _grades) {
@@ -336,12 +349,7 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
 
   _ExamAgg _examAgg({String? group}) {
     final values = <int>[];
-    final bins = <String, int>{
-      '0-49': 0,
-      '50-69': 0,
-      '70-84': 0,
-      '85-100': 0,
-    };
+    final bins = <String, int>{'0-49': 0, '50-69': 0, '70-84': 0, '85-100': 0};
     final groupValues = <String, List<int>>{};
     for (final row in _exams) {
       if (group != null && row.groupName != group) continue;
@@ -366,7 +374,9 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
       groupValues.forEach((name, rows) {
         if (rows.length < 3) return;
         final rate = rows.where((v) => v >= 50).length / rows.length;
-        if (rate < 0.65) risky.add('$name (${(rate * 100).toStringAsFixed(1)}%)');
+        if (rate < 0.65) {
+          risky.add('$name (${(rate * 100).toStringAsFixed(1)}%)');
+        }
       });
     }
     return _ExamAgg(
@@ -385,14 +395,16 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
     final closeHours = <double>[];
     for (final row in _requests) {
       final status = row.status.toLowerCase();
-      final isClosed = status.contains('close') ||
+      final isClosed =
+          status.contains('close') ||
           status.contains('done') ||
           status.contains('resolved') ||
           status.contains('approved') ||
           status.contains('rejected') ||
           status.contains('закры') ||
           status.contains('выполн');
-      final isProgress = status.contains('progress') ||
+      final isProgress =
+          status.contains('progress') ||
           status.contains('review') ||
           status.contains('process') ||
           status.contains('работ');
@@ -411,16 +423,21 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
         : closeHours.reduce((a, b) => a + b) / closeHours.length;
     return _RequestAgg(fresh, progress, closed, avgClose);
   }
+
   List<_TeacherLoad> _teacherLoad() {
     final teacherGroups = <String, Set<String>>{};
     final groupStudents = <String, Set<String>>{};
     final activeCases = <String, int>{};
 
     for (final row in _attendance) {
-      groupStudents.putIfAbsent(row.groupName, () => <String>{}).add(row.studentName);
+      groupStudents
+          .putIfAbsent(row.groupName, () => <String>{})
+          .add(row.studentName);
     }
     for (final row in _grades) {
-      groupStudents.putIfAbsent(row.groupName, () => <String>{}).add(row.studentName);
+      groupStudents
+          .putIfAbsent(row.groupName, () => <String>{})
+          .add(row.studentName);
     }
     for (final row in _groups) {
       for (final teacher in row.teachers) {
@@ -428,11 +445,15 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
       }
     }
     for (final row in _assignments) {
-      teacherGroups.putIfAbsent(row.teacherName, () => <String>{}).add(row.groupName);
+      teacherGroups
+          .putIfAbsent(row.teacherName, () => <String>{})
+          .add(row.groupName);
     }
     for (final row in _makeups) {
       if (_isClosedMakeup(row.status)) continue;
-      final name = row.teacherName.trim().isEmpty ? 'Unknown' : row.teacherName.trim();
+      final name = row.teacherName.trim().isEmpty
+          ? 'Unknown'
+          : row.teacherName.trim();
       teacherGroups.putIfAbsent(name, () => <String>{}).add(row.groupName);
       activeCases[name] = (activeCases[name] ?? 0) + 1;
     }
@@ -443,7 +464,14 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
       for (final group in groups) {
         students.addAll(groupStudents[group] ?? const <String>{});
       }
-      out.add(_TeacherLoad(teacher, groups.length, students.length, activeCases[teacher] ?? 0));
+      out.add(
+        _TeacherLoad(
+          teacher,
+          groups.length,
+          students.length,
+          activeCases[teacher] ?? 0,
+        ),
+      );
     });
     out.sort((a, b) => b.activeCases.compareTo(a.activeCases));
     return out;
@@ -451,7 +479,8 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
 
   Map<String, _StudentAgg> _studentAgg(String group) {
     final result = <String, _StudentAgg>{};
-    _StudentAgg touch(String name) => result.putIfAbsent(name, () => _StudentAgg(name));
+    _StudentAgg touch(String name) =>
+        result.putIfAbsent(name, () => _StudentAgg(name));
 
     for (final row in _grades.where((g) => g.groupName == group)) {
       touch(row.studentName).grades.add(row);
@@ -485,9 +514,9 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
   }
 
   double _correlation(String group) {
-    final values = _studentAgg(group).values
-        .where((s) => s.attTotal > 0 && s.grades.isNotEmpty)
-        .toList();
+    final values = _studentAgg(
+      group,
+    ).values.where((s) => s.attTotal > 0 && s.grades.isNotEmpty).toList();
     if (values.length < 2) return 0;
     final xs = values.map((v) => v.attRate).toList();
     final ys = values.map((v) => v.avgGrade).toList();
@@ -522,16 +551,20 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
       score += math.min(24, row.makeupsActive * 6).toDouble();
       if (trend < -8) score += 15;
       if (row.examAvg != null && row.examAvg! < 50) score += 25;
-      if (row.examAvg != null && row.examAvg! >= 50 && row.examAvg! < 60) score += 10;
-      out.add(_RiskRow(
-        student: row.student,
-        risk: score.clamp(1, 99).round(),
-        avgGrade: avg,
-        attendanceRate: att,
-        trend: trend,
-        activeMakeups: row.makeupsActive,
-        examAverage: row.examAvg,
-      ));
+      if (row.examAvg != null && row.examAvg! >= 50 && row.examAvg! < 60) {
+        score += 10;
+      }
+      out.add(
+        _RiskRow(
+          student: row.student,
+          risk: score.clamp(1, 99).round(),
+          avgGrade: avg,
+          attendanceRate: att,
+          trend: trend,
+          activeMakeups: row.makeupsActive,
+          examAverage: row.examAvg,
+        ),
+      );
     }
     out.sort((a, b) => b.risk.compareTo(a.risk));
     return out;
@@ -553,8 +586,12 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
     }
     final out = <_ProblemDate>[];
     map.forEach((day, acc) {
-      final absentRate = acc.attTotal == 0 ? 0.0 : 1 - (acc.attPresent / acc.attTotal);
-      final avgGrade = acc.gradeCount == 0 ? 0.0 : acc.gradeTotal / acc.gradeCount;
+      final absentRate = acc.attTotal == 0
+          ? 0.0
+          : 1 - (acc.attPresent / acc.attTotal);
+      final avgGrade = acc.gradeCount == 0
+          ? 0.0
+          : acc.gradeTotal / acc.gradeCount;
       final score = absentRate * 60 + math.max(0, 70 - avgGrade) * 0.7;
       out.add(_ProblemDate(day, absentRate, avgGrade, score));
     });
@@ -570,7 +607,12 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
         .toList();
     final course = _course(group);
     final courseValues = aggregate.values
-        .where((g) => g.gradeCount > 0 && _course(g.group) == course && course.isNotEmpty)
+        .where(
+          (g) =>
+              g.gradeCount > 0 &&
+              _course(g.group) == course &&
+              course.isNotEmpty,
+        )
         .map((g) => g.gradeAvg)
         .toList();
 
@@ -643,24 +685,34 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(title, style: const TextStyle(fontSize: 12, color: _muted)),
-          Text(value, style: TextStyle(fontWeight: FontWeight.w800, color: color)),
+          Text(
+            value,
+            style: TextStyle(fontWeight: FontWeight.w800, color: color),
+          ),
         ],
       ),
     );
   }
+
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
-    final max = width >= 1500 ? 1380.0 : width >= 1100 ? 1200.0 : double.infinity;
+    final max = width >= 1500
+        ? 1380.0
+        : width >= 1100
+        ? 1200.0
+        : double.infinity;
     final horizontal = width >= 1100 ? 28.0 : 16.0;
-    final twoColWidth = width >= 1100 ? (max - horizontal * 2 - 12) / 2 : double.infinity;
+    final twoColWidth = width >= 1100
+        ? (max - horizontal * 2 - 12) / 2
+        : double.infinity;
 
     final groups = _groupNames(
       groups: _groups,
@@ -670,7 +722,8 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
       makeups: _makeups,
     );
     final aggregate = _aggregate();
-    final ranking = aggregate.values.toList()..sort((a, b) => b.rankScore.compareTo(a.rankScore));
+    final ranking = aggregate.values.toList()
+      ..sort((a, b) => b.rankScore.compareTo(a.rankScore));
     final trend = _gradeTrend(group: _globalMode ? null : _selectedGroup);
     final heat = _weekdayAbsences(group: _globalMode ? null : _selectedGroup);
     final special = _specialCounts(group: _globalMode ? null : _selectedGroup);
@@ -683,7 +736,9 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
     final selected = _selectedGroup;
     final risks = selected == null ? const <_RiskRow>[] : _riskRows(selected);
     final corr = selected == null ? 0.0 : _correlation(selected);
-    final problems = selected == null ? const <_ProblemDate>[] : _problemDates(selected);
+    final problems = selected == null
+        ? const <_ProblemDate>[]
+        : _problemDates(selected);
     final compare = selected == null ? null : _compare(selected, aggregate);
     final students = selected == null
         ? <_StudentAgg>[]
@@ -692,21 +747,25 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
     final contributionRows = selected == null
         ? <MapEntry<String, double>>[]
         : ((_gridByGroup[selected]?.contributions.entries.toList() ??
-              <MapEntry<String, double>>[])
-          ..sort((a, b) => b.value.compareTo(a.value)));
+                <MapEntry<String, double>>[])
+            ..sort((a, b) => b.value.compareTo(a.value)));
     final studentSpecialRows = selected == null
         ? <MapEntry<String, Map<String, int>>>[]
         : ((_gridByGroup[selected]?.studentCodeCounts.entries.toList() ??
-              <MapEntry<String, Map<String, int>>>[])
-          ..sort((a, b) {
-            final av = a.value.values.fold<int>(0, (x, y) => x + y);
-            final bv = b.value.values.fold<int>(0, (x, y) => x + y);
-            return bv.compareTo(av);
-          }));
+                <MapEntry<String, Map<String, int>>>[])
+            ..sort((a, b) {
+              final av = a.value.values.fold<int>(0, (x, y) => x + y);
+              final bv = b.value.values.fold<int>(0, (x, y) => x + y);
+              return bv.compareTo(av);
+            }));
 
     return Container(
       decoration: const BoxDecoration(
-        gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [_bgTop, _bgBottom]),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [_bgTop, _bgBottom],
+        ),
       ),
       child: Center(
         child: ConstrainedBox(
@@ -719,24 +778,55 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(18),
-                  gradient: const LinearGradient(colors: [Color(0xFF0F766E), Color(0xFF0B5D57)]),
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF0F766E), Color(0xFF0B5D57)],
+                  ),
                 ),
                 child: Wrap(
                   spacing: 12,
                   runSpacing: 12,
                   children: [
-                    const Icon(Icons.analytics_outlined, color: Colors.white, size: 28),
-                    Text(_t('Аналитика', 'Analytics'), style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w800)),
+                    const Icon(
+                      Icons.analytics_outlined,
+                      color: Colors.white,
+                      size: 28,
+                    ),
+                    Text(
+                      _t('Аналитика', 'Analytics'),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(color: Colors.white.withOpacity(0.16), borderRadius: BorderRadius.circular(999)),
-                      child: Text('${_t('Обновлено', 'Updated')}: ${DateFormat('dd.MM.yyyy HH:mm').format(_loadedAt)}', style: const TextStyle(color: Colors.white)),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        '${_t('Обновлено', 'Updated')}: ${DateFormat('dd.MM.yyyy HH:mm').format(_loadedAt)}',
+                        style: const TextStyle(color: Colors.white),
+                      ),
                     ),
                     if (_gridLoading)
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(color: Colors.white.withOpacity(0.16), borderRadius: BorderRadius.circular(999)),
-                        child: Text('${_t('Спецзначения', 'Special values')} ${(100 * _gridProgress).round()}%', style: const TextStyle(color: Colors.white)),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.16),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          '${_t('Спецзначения', 'Special values')} ${(100 * _gridProgress).round()}%',
+                          style: const TextStyle(color: Colors.white),
+                        ),
                       ),
                   ],
                 ),
@@ -750,7 +840,10 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
               else if (_error != null)
                 Container(
                   padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), color: _err.withOpacity(0.12)),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    color: _err.withValues(alpha: 0.12),
+                  ),
                   child: Text(_error!),
                 )
               else ...[
@@ -760,31 +853,60 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                     spacing: 10,
                     runSpacing: 10,
                     children: [
-                      ChoiceChip(label: Text(_t('По всем группам', 'All groups')), selected: _globalMode, onSelected: (_) => setState(() => _globalMode = true)),
-                      ChoiceChip(label: Text(_t('По выбранной группе', 'Single group')), selected: !_globalMode, onSelected: (_) => setState(() => _globalMode = false)),
+                      ChoiceChip(
+                        label: Text(_t('По всем группам', 'All groups')),
+                        selected: _globalMode,
+                        onSelected: (_) => setState(() => _globalMode = true),
+                      ),
+                      ChoiceChip(
+                        label: Text(_t('По выбранной группе', 'Single group')),
+                        selected: !_globalMode,
+                        onSelected: (_) => setState(() => _globalMode = false),
+                      ),
                       if (!_globalMode)
                         SizedBox(
                           width: 250,
                           child: DropdownButtonFormField<String>(
-                            value: _selectedGroup,
+                            initialValue: _selectedGroup,
                             decoration: InputDecoration(
                               labelText: _t('Группа', 'Group'),
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
                             ),
-                            items: [for (final group in groups) DropdownMenuItem(value: group, child: Text(group))],
-                            onChanged: (value) => setState(() => _selectedGroup = value),
+                            items: [
+                              for (final group in groups)
+                                DropdownMenuItem(
+                                  value: group,
+                                  child: Text(group),
+                                ),
+                            ],
+                            onChanged: (value) =>
+                                setState(() => _selectedGroup = value),
                           ),
                         ),
-                      FilledButton.icon(onPressed: _reload, icon: const Icon(Icons.refresh_rounded), label: Text(_t('Обновить', 'Refresh'))),
+                      FilledButton.icon(
+                        onPressed: _reload,
+                        icon: const Icon(Icons.refresh_rounded),
+                        label: Text(_t('Обновить', 'Refresh')),
+                      ),
                       SegmentedButton<bool>(
                         showSelectedIcon: false,
                         segments: <ButtonSegment<bool>>[
-                          ButtonSegment(value: true, label: Text(_t('Месяцы', 'Months'))),
-                          ButtonSegment(value: false, label: Text(_t('Недели', 'Weeks'))),
+                          ButtonSegment(
+                            value: true,
+                            label: Text(_t('Месяцы', 'Months')),
+                          ),
+                          ButtonSegment(
+                            value: false,
+                            label: Text(_t('Недели', 'Weeks')),
+                          ),
                         ],
                         selected: <bool>{_monthlyTrend},
                         onSelectionChanged: (value) {
-                          if (value.isNotEmpty) setState(() => _monthlyTrend = value.first);
+                          if (value.isNotEmpty) {
+                            setState(() => _monthlyTrend = value.first);
+                          }
                         },
                       ),
                     ],
@@ -800,16 +922,44 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                       child: _panel(
                         _t('Динамика среднего/медианы', 'Average/median trend'),
                         trend.isEmpty
-                            ? Text(_t('Нет данных для динамики.', 'No trend data.'))
+                            ? Text(
+                                _t(
+                                  'Нет данных для динамики.',
+                                  'No trend data.',
+                                ),
+                              )
                             : Column(
                                 children: [
-                                  for (final item in (trend.length > 8 ? trend.sublist(trend.length - 8) : trend)) ...[
-                                    Row(children: [
-                                      SizedBox(width: 84, child: Text(item.label)),
-                                      Expanded(child: LinearProgressIndicator(value: (item.avg / 100).clamp(0.0, 1.0), minHeight: 10, backgroundColor: const Color(0xFFE5E7EB), valueColor: const AlwaysStoppedAnimation<Color>(_brand))),
-                                      const SizedBox(width: 8),
-                                      Text(item.avg.toStringAsFixed(1)),
-                                    ]),
+                                  for (final item
+                                      in (trend.length > 8
+                                          ? trend.sublist(trend.length - 8)
+                                          : trend)) ...[
+                                    Row(
+                                      children: [
+                                        SizedBox(
+                                          width: 84,
+                                          child: Text(item.label),
+                                        ),
+                                        Expanded(
+                                          child: LinearProgressIndicator(
+                                            value: (item.avg / 100).clamp(
+                                              0.0,
+                                              1.0,
+                                            ),
+                                            minHeight: 10,
+                                            backgroundColor: const Color(
+                                              0xFFE5E7EB,
+                                            ),
+                                            valueColor:
+                                                const AlwaysStoppedAnimation<
+                                                  Color
+                                                >(_brand),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(item.avg.toStringAsFixed(1)),
+                                      ],
+                                    ),
                                     const SizedBox(height: 8),
                                   ],
                                 ],
@@ -821,15 +971,36 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                       child: _panel(
                         _t('Рейтинг групп', 'Group ranking'),
                         ranking.isEmpty
-                            ? Text(_t('Нет данных по группам.', 'No groups data.'))
+                            ? Text(
+                                _t('Нет данных по группам.', 'No groups data.'),
+                              )
                             : Column(
                                 children: [
-                                  for (int i = 0; i < math.min(12, ranking.length); i++) ...[
-                                    Row(children: [
-                                      SizedBox(width: 28, child: Text('${i + 1}.')),
-                                      Expanded(child: Text('${ranking[i].group} | ${_t('индекс', 'index')}: ${ranking[i].rankScore.toStringAsFixed(1)}', style: const TextStyle(fontWeight: FontWeight.w700))),
-                                    ]),
-                                    Text('${_t('Оценки', 'Grades')}: ${ranking[i].gradeAvg.toStringAsFixed(1)}; ${_t('Посещ.', 'Att.')}: ${(ranking[i].attRate * 100).toStringAsFixed(1)}%; ${_t('Отработки', 'Makeups')}: ${ranking[i].makeupActive}/${ranking[i].makeupTotal}', style: const TextStyle(color: _muted)),
+                                  for (
+                                    int i = 0;
+                                    i < math.min(12, ranking.length);
+                                    i++
+                                  ) ...[
+                                    Row(
+                                      children: [
+                                        SizedBox(
+                                          width: 28,
+                                          child: Text('${i + 1}.'),
+                                        ),
+                                        Expanded(
+                                          child: Text(
+                                            '${ranking[i].group} | ${_t('индекс', 'index')}: ${ranking[i].rankScore.toStringAsFixed(1)}',
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    Text(
+                                      '${_t('Оценки', 'Grades')}: ${ranking[i].gradeAvg.toStringAsFixed(1)}; ${_t('Посещ.', 'Att.')}: ${(ranking[i].attRate * 100).toStringAsFixed(1)}%; ${_t('Отработки', 'Makeups')}: ${ranking[i].makeupActive}/${ranking[i].makeupTotal}',
+                                      style: const TextStyle(color: _muted),
+                                    ),
                                     const SizedBox(height: 8),
                                   ],
                                 ],
@@ -840,25 +1011,78 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                       width: twoColWidth,
                       child: _panel(
                         _t('Тепловая карта пропусков', 'Absence heatmap'),
-                        subtitle: _t('День недели × все пары (детализация по парам после индексации пар в посещаемости).', 'Weekday × all classes (pair level after attendance period indexing).'),
+                        subtitle: _t(
+                          'День недели × все пары (детализация по парам после индексации пар в посещаемости).',
+                          'Weekday × all classes (pair level after attendance period indexing).',
+                        ),
                         Row(
                           children: [
-                            for (int i = 0; i < 7; i++) Expanded(child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 3),
-                              child: Column(children: [
-                                Container(
-                                  height: 52,
-                                  decoration: BoxDecoration(
-                                    color: Color.lerp(const Color(0xFFE5E7EB), const Color(0xFFDC2626), (heat.fold<int>(0, (a, b) => math.max(a, b)) == 0) ? 0 : heat[i] / heat.fold<int>(0, (a, b) => math.max(a, b))),
-                                    borderRadius: BorderRadius.circular(10),
+                            for (int i = 0; i < 7; i++)
+                              Expanded(
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 3,
                                   ),
-                                  alignment: Alignment.center,
-                                  child: Text('${heat[i]}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                                  child: Column(
+                                    children: [
+                                      Container(
+                                        height: 52,
+                                        decoration: BoxDecoration(
+                                          color: Color.lerp(
+                                            const Color(0xFFE5E7EB),
+                                            const Color(0xFFDC2626),
+                                            (heat.fold<int>(
+                                                      0,
+                                                      (a, b) => math.max(a, b),
+                                                    ) ==
+                                                    0)
+                                                ? 0
+                                                : heat[i] /
+                                                      heat.fold<int>(
+                                                        0,
+                                                        (a, b) =>
+                                                            math.max(a, b),
+                                                      ),
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                        ),
+                                        alignment: Alignment.center,
+                                        child: Text(
+                                          '${heat[i]}',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        (_isRu
+                                            ? const [
+                                                'Пн',
+                                                'Вт',
+                                                'Ср',
+                                                'Чт',
+                                                'Пт',
+                                                'Сб',
+                                                'Вс',
+                                              ]
+                                            : const [
+                                                'Mon',
+                                                'Tue',
+                                                'Wed',
+                                                'Thu',
+                                                'Fri',
+                                                'Sat',
+                                                'Sun',
+                                              ])[i],
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                                const SizedBox(height: 6),
-                                Text((_isRu ? const ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'] : const ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'])[i]),
-                              ]),
-                            )),
+                              ),
                           ],
                         ),
                       ),
@@ -868,75 +1092,192 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                       child: _panel(
                         _t('Доля спецзначений', 'Special value share'),
                         special.isEmpty
-                            ? Text(_t('Нет спецзначений.', 'No special values.'))
+                            ? Text(
+                                _t('Нет спецзначений.', 'No special values.'),
+                              )
                             : Wrap(
                                 spacing: 8,
                                 runSpacing: 8,
-                                children: (special.entries.toList()..sort((a, b) => b.value.compareTo(a.value))).take(12).map((e) => Chip(label: Text('${e.key}: ${e.value}'))).toList(),
+                                children:
+                                    (special.entries.toList()..sort(
+                                          (a, b) => b.value.compareTo(a.value),
+                                        ))
+                                        .take(12)
+                                        .map(
+                                          (e) => Chip(
+                                            label: Text('${e.key}: ${e.value}'),
+                                          ),
+                                        )
+                                        .toList(),
                               ),
                       ),
                     ),
                     SizedBox(
                       width: twoColWidth,
-                      child: _panel(_t('Воронка отработок', 'Makeup funnel'), Column(children: funnel.entries.map((e) {
-                        final total = funnel.values.fold<int>(0, (a, b) => a + b);
-                        final rate = total == 0 ? 0.0 : e.value / total;
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: Row(children: [
-                            SizedBox(width: 150, child: Text(e.key)),
-                            Expanded(child: LinearProgressIndicator(value: rate, minHeight: 10, backgroundColor: const Color(0xFFE5E7EB), valueColor: const AlwaysStoppedAnimation<Color>(_brand))),
-                            const SizedBox(width: 8),
-                            Text('${e.value}'),
-                          ]),
-                        );
-                      }).toList())),
+                      child: _panel(
+                        _t('Воронка отработок', 'Makeup funnel'),
+                        Column(
+                          children: funnel.entries.map((e) {
+                            final total = funnel.values.fold<int>(
+                              0,
+                              (a, b) => a + b,
+                            );
+                            final rate = total == 0 ? 0.0 : e.value / total;
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Row(
+                                children: [
+                                  SizedBox(width: 150, child: Text(e.key)),
+                                  Expanded(
+                                    child: LinearProgressIndicator(
+                                      value: rate,
+                                      minHeight: 10,
+                                      backgroundColor: const Color(0xFFE5E7EB),
+                                      valueColor:
+                                          const AlwaysStoppedAnimation<Color>(
+                                            _brand,
+                                          ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text('${e.value}'),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
                     ),
                     SizedBox(
                       width: twoColWidth,
                       child: _panel(
                         _t('SLA преподавателей', 'Teacher SLA'),
                         sla.isEmpty
-                            ? Text(_t('Недостаточно событий.', 'Not enough events.'))
-                            : Column(children: [for (final row in sla.take(10)) ...[
-                                Row(children: [Expanded(child: Text(row.teacher, style: const TextStyle(fontWeight: FontWeight.w700))), Text('${row.avgHours.toStringAsFixed(1)} h (${row.samples})')]),
-                                const SizedBox(height: 8),
-                              ]]),
+                            ? Text(
+                                _t(
+                                  'Недостаточно событий.',
+                                  'Not enough events.',
+                                ),
+                              )
+                            : Column(
+                                children: [
+                                  for (final row in sla.take(10)) ...[
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            row.teacher,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                        Text(
+                                          '${row.avgHours.toStringAsFixed(1)} h (${row.samples})',
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                  ],
+                                ],
+                              ),
                       ),
                     ),
                     SizedBox(
                       width: twoColWidth,
                       child: _panel(
                         _t('Экзамены', 'Exams'),
-                        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Wrap(spacing: 8, runSpacing: 8, children: [
-                            _pill(_t('Всего', 'Total'), '${exams.total}', _brand),
-                            _pill(_t('Средний', 'Average'), exams.average.toStringAsFixed(2), const Color(0xFF2563EB)),
-                            _pill(_t('Сдали', 'Pass rate'), '${(exams.passRate * 100).toStringAsFixed(1)}%', exams.passRate >= 0.7 ? _ok : _warn),
-                          ]),
-                          const SizedBox(height: 10),
-                          Wrap(spacing: 8, runSpacing: 8, children: exams.bins.entries.map((e) => Chip(label: Text('${e.key}: ${e.value}'))).toList()),
-                          if (exams.riskyGroups.isNotEmpty) ...[
-                            const SizedBox(height: 8),
-                            Text(_t('Группы риска:', 'Risk groups:'), style: const TextStyle(fontWeight: FontWeight.w700)),
-                            for (final row in exams.riskyGroups.take(8)) Text(row),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                _pill(
+                                  _t('Всего', 'Total'),
+                                  '${exams.total}',
+                                  _brand,
+                                ),
+                                _pill(
+                                  _t('Средний', 'Average'),
+                                  exams.average.toStringAsFixed(2),
+                                  const Color(0xFF2563EB),
+                                ),
+                                _pill(
+                                  _t('Сдали', 'Pass rate'),
+                                  '${(exams.passRate * 100).toStringAsFixed(1)}%',
+                                  exams.passRate >= 0.7 ? _ok : _warn,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: exams.bins.entries
+                                  .map(
+                                    (e) => Chip(
+                                      label: Text('${e.key}: ${e.value}'),
+                                    ),
+                                  )
+                                  .toList(),
+                            ),
+                            if (exams.riskyGroups.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                _t('Группы риска:', 'Risk groups:'),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              for (final row in exams.riskyGroups.take(8))
+                                Text(row),
+                            ],
                           ],
-                        ]),
+                        ),
                       ),
                     ),
                     SizedBox(
                       width: twoColWidth,
                       child: _panel(
                         _t('Заявки', 'Requests'),
-                        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Wrap(spacing: 8, runSpacing: 8, children: [
-                            _pill(_t('Новые', 'New'), '${req.fresh}', _brand),
-                            _pill(_t('В работе', 'In progress'), '${req.progress}', _warn),
-                            _pill(_t('Закрытые', 'Closed'), '${req.closed}', _ok),
-                          ]),
-                          const SizedBox(height: 10),
-                          Text(req.avgCloseHours == null ? _t('Среднее время закрытия: нет данных.', 'Average close time: no data.') : '${_t('Среднее время закрытия', 'Average close time')}: ${req.avgCloseHours!.toStringAsFixed(1)} ${_t('ч.', 'h')}', style: const TextStyle(color: _muted)),
-                        ]),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                _pill(
+                                  _t('Новые', 'New'),
+                                  '${req.fresh}',
+                                  _brand,
+                                ),
+                                _pill(
+                                  _t('В работе', 'In progress'),
+                                  '${req.progress}',
+                                  _warn,
+                                ),
+                                _pill(
+                                  _t('Закрытые', 'Closed'),
+                                  '${req.closed}',
+                                  _ok,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              req.avgCloseHours == null
+                                  ? _t(
+                                      'Среднее время закрытия: нет данных.',
+                                      'Average close time: no data.',
+                                    )
+                                  : '${_t('Среднее время закрытия', 'Average close time')}: ${req.avgCloseHours!.toStringAsFixed(1)} ${_t('ч.', 'h')}',
+                              style: const TextStyle(color: _muted),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                     SizedBox(
@@ -945,57 +1286,201 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                         _t('Нагрузка преподавателей', 'Teacher workload'),
                         load.isEmpty
                             ? Text(_t('Нет данных.', 'No data.'))
-                            : Column(children: [for (final row in load.take(15)) ...[
-                                Row(children: [Expanded(child: Text(row.teacher, style: const TextStyle(fontWeight: FontWeight.w700))), Text('${_t('Групп', 'Groups')}: ${row.groupCount} | ${_t('Студентов', 'Students')}: ${row.studentCount} | ${_t('Активные кейсы', 'Active cases')}: ${row.activeCases}')]),
-                                const SizedBox(height: 8),
-                              ]]),
+                            : Column(
+                                children: [
+                                  for (final row in load.take(15)) ...[
+                                    Row(
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            row.teacher,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                        Text(
+                                          '${_t('Групп', 'Groups')}: ${row.groupCount} | ${_t('Студентов', 'Students')}: ${row.studentCount} | ${_t('Активные кейсы', 'Active cases')}: ${row.activeCases}',
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 8),
+                                  ],
+                                ],
+                              ),
                       ),
                     ),
                     if (!_globalMode && selected != null) ...[
-                      SizedBox(width: twoColWidth, child: _panel(_t('Связь посещаемости и оценок', 'Attendance-grade correlation'), Wrap(spacing: 8, runSpacing: 8, children: [
-                        _pill('r', corr.toStringAsFixed(3), corr >= 0 ? _ok : _err),
-                        _pill(_t('Топ риск', 'Top risk'), risks.isEmpty ? '-' : '${risks.first.risk}%', risks.isEmpty ? _warn : risks.first.risk >= 70 ? _err : _warn),
-                      ]))),
                       SizedBox(
                         width: twoColWidth,
                         child: _panel(
-                          _t('Топ-риски и прогноз несдачи', 'Top risks and exam-fail forecast'),
+                          _t(
+                            'Связь посещаемости и оценок',
+                            'Attendance-grade correlation',
+                          ),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              _pill(
+                                'r',
+                                corr.toStringAsFixed(3),
+                                corr >= 0 ? _ok : _err,
+                              ),
+                              _pill(
+                                _t('Топ риск', 'Top risk'),
+                                risks.isEmpty ? '-' : '${risks.first.risk}%',
+                                risks.isEmpty
+                                    ? _warn
+                                    : risks.first.risk >= 70
+                                    ? _err
+                                    : _warn,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        width: twoColWidth,
+                        child: _panel(
+                          _t(
+                            'Топ-риски и прогноз несдачи',
+                            'Top risks and exam-fail forecast',
+                          ),
                           risks.isEmpty
-                              ? Text(_t('Недостаточно данных.', 'Not enough data.'))
-                              : Column(children: [for (final row in risks.take(10)) ...[
-                                  Row(children: [Expanded(child: Text(row.student, style: const TextStyle(fontWeight: FontWeight.w700))), Text('${row.risk}%')]),
-                                  Text('${_t('Оценка', 'Grade')}: ${row.avgGrade.toStringAsFixed(1)} | ${_t('Посещ.', 'Att.')}: ${(row.attendanceRate * 100).toStringAsFixed(1)}% | ${_t('Тренд', 'Trend')}: ${row.trend.toStringAsFixed(1)}', style: const TextStyle(color: _muted)),
-                                  const SizedBox(height: 8),
-                                ]]),
+                              ? Text(
+                                  _t(
+                                    'Недостаточно данных.',
+                                    'Not enough data.',
+                                  ),
+                                )
+                              : Column(
+                                  children: [
+                                    for (final row in risks.take(10)) ...[
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              row.student,
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ),
+                                          Text('${row.risk}%'),
+                                        ],
+                                      ),
+                                      Text(
+                                        '${_t('Оценка', 'Grade')}: ${row.avgGrade.toStringAsFixed(1)} | ${_t('Посещ.', 'Att.')}: ${(row.attendanceRate * 100).toStringAsFixed(1)}% | ${_t('Тренд', 'Trend')}: ${row.trend.toStringAsFixed(1)}',
+                                        style: const TextStyle(color: _muted),
+                                      ),
+                                      const SizedBox(height: 8),
+                                    ],
+                                  ],
+                                ),
                         ),
                       ),
                       SizedBox(
                         width: twoColWidth,
                         child: _panel(
-                          _t('Вклад колонок пресета', 'Preset column contribution'),
-                          (_gridByGroup[selected]?.contributions.isEmpty ?? true)
-                              ? Text(_t('Нет вычисляемых колонок.', 'No computed columns.'))
-                              : Column(children: contributionRows.take(12).map((e) => Padding(
-                                    padding: const EdgeInsets.only(bottom: 8),
-                                    child: Row(children: [
-                                      SizedBox(width: 140, child: Text(e.key, overflow: TextOverflow.ellipsis)),
-                                      Expanded(child: LinearProgressIndicator(value: (e.value / 100).clamp(0.0, 1.0), minHeight: 10)),
-                                      const SizedBox(width: 8),
-                                      Text('${e.value.toStringAsFixed(1)}%'),
-                                    ]),
-                                  )).toList()),
+                          _t(
+                            'Вклад колонок пресета',
+                            'Preset column contribution',
+                          ),
+                          (_gridByGroup[selected]?.contributions.isEmpty ??
+                                  true)
+                              ? Text(
+                                  _t(
+                                    'Нет вычисляемых колонок.',
+                                    'No computed columns.',
+                                  ),
+                                )
+                              : Column(
+                                  children: contributionRows
+                                      .take(12)
+                                      .map(
+                                        (e) => Padding(
+                                          padding: const EdgeInsets.only(
+                                            bottom: 8,
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              SizedBox(
+                                                width: 140,
+                                                child: Text(
+                                                  e.key,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                              Expanded(
+                                                child: LinearProgressIndicator(
+                                                  value: (e.value / 100).clamp(
+                                                    0.0,
+                                                    1.0,
+                                                  ),
+                                                  minHeight: 10,
+                                                ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              Text(
+                                                '${e.value.toStringAsFixed(1)}%',
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
                         ),
                       ),
                       SizedBox(
                         width: twoColWidth,
                         child: _panel(
-                          _t('Структура спецзначений', 'Special values structure'),
-                          (_gridByGroup[selected]?.studentCodeCounts.isEmpty ?? true)
-                              ? Text(_t('Нет спецзначений у студентов.', 'No student special values.'))
-                              : Column(children: studentSpecialRows.take(12).map((e) => Padding(
-                                    padding: const EdgeInsets.only(bottom: 8),
-                                    child: Row(children: [Expanded(child: Text(e.key, style: const TextStyle(fontWeight: FontWeight.w700))), Text(e.value.entries.map((v) => '${v.key}:${v.value}').join('  •  '))]),
-                                  )).toList()),
+                          _t(
+                            'Структура спецзначений',
+                            'Special values structure',
+                          ),
+                          (_gridByGroup[selected]?.studentCodeCounts.isEmpty ??
+                                  true)
+                              ? Text(
+                                  _t(
+                                    'Нет спецзначений у студентов.',
+                                    'No student special values.',
+                                  ),
+                                )
+                              : Column(
+                                  children: studentSpecialRows
+                                      .take(12)
+                                      .map(
+                                        (e) => Padding(
+                                          padding: const EdgeInsets.only(
+                                            bottom: 8,
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              Expanded(
+                                                child: Text(
+                                                  e.key,
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.w700,
+                                                  ),
+                                                ),
+                                              ),
+                                              Text(
+                                                e.value.entries
+                                                    .map(
+                                                      (v) =>
+                                                          '${v.key}:${v.value}',
+                                                    )
+                                                    .join('  •  '),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
                         ),
                       ),
                       SizedBox(
@@ -1003,29 +1488,96 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                         child: _panel(
                           _t('Проблемные даты', 'Problem dates'),
                           problems.isEmpty
-                              ? Text(_t('Проблемные даты не найдены.', 'No problem dates found.'))
-                              : Column(children: problems.take(12).map((item) => Padding(
-                                    padding: const EdgeInsets.only(bottom: 8),
-                                    child: Row(children: [
-                                      SizedBox(width: 100, child: Text(DateFormat('dd.MM').format(item.date))),
-                                      Expanded(child: Text('${_t('Пропуски', 'Absences')}: ${(item.absentRate * 100).toStringAsFixed(1)}% | ${_t('Средняя', 'Average')}: ${item.avgGrade.toStringAsFixed(1)}')),
-                                      Text(item.score.toStringAsFixed(1)),
-                                    ]),
-                                  )).toList()),
+                              ? Text(
+                                  _t(
+                                    'Проблемные даты не найдены.',
+                                    'No problem dates found.',
+                                  ),
+                                )
+                              : Column(
+                                  children: problems
+                                      .take(12)
+                                      .map(
+                                        (item) => Padding(
+                                          padding: const EdgeInsets.only(
+                                            bottom: 8,
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              SizedBox(
+                                                width: 100,
+                                                child: Text(
+                                                  DateFormat(
+                                                    'dd.MM',
+                                                  ).format(item.date),
+                                                ),
+                                              ),
+                                              Expanded(
+                                                child: Text(
+                                                  '${_t('Пропуски', 'Absences')}: ${(item.absentRate * 100).toStringAsFixed(1)}% | ${_t('Средняя', 'Average')}: ${item.avgGrade.toStringAsFixed(1)}',
+                                                ),
+                                              ),
+                                              Text(
+                                                item.score.toStringAsFixed(1),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
                         ),
                       ),
                       SizedBox(
                         width: twoColWidth,
                         child: _panel(
-                          _t('Сравнение с отделением/курсом', 'Department/course comparison'),
+                          _t(
+                            'Сравнение с отделением/курсом',
+                            'Department/course comparison',
+                          ),
                           compare == null
                               ? Text(_t('Нет данных.', 'No data.'))
-                              : Wrap(spacing: 8, runSpacing: 8, children: [
-                                  _pill(_t('Группа', 'Group'), compare.current.toStringAsFixed(2), _brand),
-                                  _pill(compare.depName == null ? _t('Отделение', 'Department') : compare.depName!, compare.depMedian == null ? '-' : compare.depMedian!.toStringAsFixed(2), const Color(0xFF2563EB)),
-                                  _pill(compare.courseKey.isEmpty ? _t('Курс', 'Course') : '${_t('Курс', 'Course')} ${compare.courseKey}', compare.courseMedian == null ? '-' : compare.courseMedian!.toStringAsFixed(2), const Color(0xFF7C3AED)),
-                                  _pill(_t('Общая медиана', 'Overall median'), compare.allMedian == null ? '-' : compare.allMedian!.toStringAsFixed(2), _warn),
-                                ]),
+                              : Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: [
+                                    _pill(
+                                      _t('Группа', 'Group'),
+                                      compare.current.toStringAsFixed(2),
+                                      _brand,
+                                    ),
+                                    _pill(
+                                      compare.depName == null
+                                          ? _t('Отделение', 'Department')
+                                          : compare.depName!,
+                                      compare.depMedian == null
+                                          ? '-'
+                                          : compare.depMedian!.toStringAsFixed(
+                                              2,
+                                            ),
+                                      const Color(0xFF2563EB),
+                                    ),
+                                    _pill(
+                                      compare.courseKey.isEmpty
+                                          ? _t('Курс', 'Course')
+                                          : '${_t('Курс', 'Course')} ${compare.courseKey}',
+                                      compare.courseMedian == null
+                                          ? '-'
+                                          : compare.courseMedian!
+                                                .toStringAsFixed(2),
+                                      const Color(0xFF7C3AED),
+                                    ),
+                                    _pill(
+                                      _t('Общая медиана', 'Overall median'),
+                                      compare.allMedian == null
+                                          ? '-'
+                                          : compare.allMedian!.toStringAsFixed(
+                                              2,
+                                            ),
+                                      _warn,
+                                    ),
+                                  ],
+                                ),
                         ),
                       ),
                       SizedBox(
@@ -1033,23 +1585,72 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                         child: _panel(
                           _t('Индивидуальные карточки', 'Individual cards'),
                           students.isEmpty
-                              ? Text(_t('Нет данных по студентам.', 'No student data.'))
-                              : Wrap(spacing: 10, runSpacing: 10, children: students.take(24).map((s) => ConstrainedBox(
-                                    constraints: const BoxConstraints(minWidth: 240, maxWidth: 320),
-                                    child: Container(
-                                      padding: const EdgeInsets.all(12),
-                                      decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), color: const Color(0xFFF7FBF8), border: Border.all(color: const Color(0xFFD8E3DB))),
-                                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                                        Text(s.student, style: const TextStyle(fontWeight: FontWeight.w800)),
-                                        const SizedBox(height: 6),
-                                        Text('${_t('Оценка', 'Grade')}: ${s.avgGrade.toStringAsFixed(1)}'),
-                                        Text('${_t('Посещаемость', 'Attendance')}: ${(s.attRate * 100).toStringAsFixed(1)}%'),
-                                        Text('${_t('Отработки', 'Makeups')}: ${s.makeupsActive + s.makeupsClosed}'),
-                                        if (s.examAvg != null) Text('${_t('Экзамен', 'Exam')}: ${s.examAvg!.toStringAsFixed(1)}'),
-                                        if (s.specialCodes.isNotEmpty) Text('${_t('Спецзначения', 'Special values')}: ${s.specialCodes.entries.map((e) => '${e.key}:${e.value}').join(', ')}', style: const TextStyle(color: _muted, fontSize: 12)),
-                                      ]),
-                                    ),
-                                  )).toList()),
+                              ? Text(
+                                  _t(
+                                    'Нет данных по студентам.',
+                                    'No student data.',
+                                  ),
+                                )
+                              : Wrap(
+                                  spacing: 10,
+                                  runSpacing: 10,
+                                  children: students
+                                      .take(24)
+                                      .map(
+                                        (s) => ConstrainedBox(
+                                          constraints: const BoxConstraints(
+                                            minWidth: 240,
+                                            maxWidth: 320,
+                                          ),
+                                          child: Container(
+                                            padding: const EdgeInsets.all(12),
+                                            decoration: BoxDecoration(
+                                              borderRadius:
+                                                  BorderRadius.circular(12),
+                                              color: const Color(0xFFF7FBF8),
+                                              border: Border.all(
+                                                color: const Color(0xFFD8E3DB),
+                                              ),
+                                            ),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  s.student,
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.w800,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 6),
+                                                Text(
+                                                  '${_t('Оценка', 'Grade')}: ${s.avgGrade.toStringAsFixed(1)}',
+                                                ),
+                                                Text(
+                                                  '${_t('Посещаемость', 'Attendance')}: ${(s.attRate * 100).toStringAsFixed(1)}%',
+                                                ),
+                                                Text(
+                                                  '${_t('Отработки', 'Makeups')}: ${s.makeupsActive + s.makeupsClosed}',
+                                                ),
+                                                if (s.examAvg != null)
+                                                  Text(
+                                                    '${_t('Экзамен', 'Exam')}: ${s.examAvg!.toStringAsFixed(1)}',
+                                                  ),
+                                                if (s.specialCodes.isNotEmpty)
+                                                  Text(
+                                                    '${_t('Спецзначения', 'Special values')}: ${s.specialCodes.entries.map((e) => '${e.key}:${e.value}').join(', ')}',
+                                                    style: const TextStyle(
+                                                      color: _muted,
+                                                      fontSize: 12,
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
+                                ),
                         ),
                       ),
                     ],
@@ -1091,14 +1692,24 @@ class _GroupAgg {
   int specialTotal = 0;
 
   double get gradeAvg => gradeCount == 0 ? 0 : gradeTotal / gradeCount;
-  double get attRate => attendanceTotal == 0 ? 0 : attendancePresent / attendanceTotal;
+  double get attRate =>
+      attendanceTotal == 0 ? 0 : attendancePresent / attendanceTotal;
   double get examPassRate => examCount == 0 ? 0 : examPassed / examCount;
-  double get makeupCloseRate => makeupTotal == 0 ? 0 : makeupClosed / makeupTotal;
-  double get rankScore => gradeAvg * 0.45 + attRate * 100 * 0.30 + examPassRate * 100 * 0.15 + makeupCloseRate * 100 * 0.10;
+  double get makeupCloseRate =>
+      makeupTotal == 0 ? 0 : makeupClosed / makeupTotal;
+  double get rankScore =>
+      gradeAvg * 0.45 +
+      attRate * 100 * 0.30 +
+      examPassRate * 100 * 0.15 +
+      makeupCloseRate * 100 * 0.10;
 }
 
 class _GridStats {
-  _GridStats({required this.statusCodeCounts, required this.studentCodeCounts, required this.contributions});
+  _GridStats({
+    required this.statusCodeCounts,
+    required this.studentCodeCounts,
+    required this.contributions,
+  });
 
   final Map<String, int> statusCodeCounts;
   final Map<String, Map<String, int>> studentCodeCounts;
@@ -1112,7 +1723,10 @@ class _GridStats {
       final code = (cell.statusCode ?? '').trim();
       if (code.isEmpty) continue;
       status[code] = (status[code] ?? 0) + 1;
-      final bucket = students.putIfAbsent(cell.studentName, () => <String, int>{});
+      final bucket = students.putIfAbsent(
+        cell.studentName,
+        () => <String, int>{},
+      );
       bucket[code] = (bucket[code] ?? 0) + 1;
     }
     for (final row in grid.computedCells) {
@@ -1131,7 +1745,11 @@ class _GridStats {
         contr[key] = value * 100 / sum;
       });
     }
-    return _GridStats(statusCodeCounts: status, studentCodeCounts: students, contributions: contr);
+    return _GridStats(
+      statusCodeCounts: status,
+      studentCodeCounts: students,
+      contributions: contr,
+    );
   }
 }
 
@@ -1143,7 +1761,13 @@ class _TeacherSla {
 }
 
 class _ExamAgg {
-  _ExamAgg(this.total, this.average, this.passRate, this.bins, this.riskyGroups);
+  _ExamAgg(
+    this.total,
+    this.average,
+    this.passRate,
+    this.bins,
+    this.riskyGroups,
+  );
   final int total;
   final double average;
   final double passRate;
@@ -1160,7 +1784,12 @@ class _RequestAgg {
 }
 
 class _TeacherLoad {
-  _TeacherLoad(this.teacher, this.groupCount, this.studentCount, this.activeCases);
+  _TeacherLoad(
+    this.teacher,
+    this.groupCount,
+    this.studentCount,
+    this.activeCases,
+  );
   final String teacher;
   final int groupCount;
   final int studentCount;
@@ -1178,16 +1807,30 @@ class _StudentAgg {
   int makeupsActive = 0;
   int makeupsClosed = 0;
 
-  double get avgGrade => grades.isEmpty ? 0 : grades.fold<int>(0, (a, b) => a + b.grade) / grades.length;
+  double get avgGrade => grades.isEmpty
+      ? 0
+      : grades.fold<int>(0, (a, b) => a + b.grade) / grades.length;
   double get attRate => attTotal == 0 ? 0 : attPresent / attTotal;
-  double? get examAvg => exams.isEmpty ? null : exams.fold<double>(0, (a, b) => a + b) / exams.length;
+  double? get examAvg => exams.isEmpty
+      ? null
+      : exams.fold<double>(0, (a, b) => a + b) / exams.length;
 
   double trend(DateTime now) {
     if (grades.length < 3) return 0;
     final recentFrom = now.subtract(const Duration(days: 30));
     final prevFrom = now.subtract(const Duration(days: 60));
-    final recent = grades.where((g) => !g.classDate.isBefore(recentFrom)).map((g) => g.grade.toDouble()).toList();
-    final prev = grades.where((g) => g.classDate.isBefore(recentFrom) && !g.classDate.isBefore(prevFrom)).map((g) => g.grade.toDouble()).toList();
+    final recent = grades
+        .where((g) => !g.classDate.isBefore(recentFrom))
+        .map((g) => g.grade.toDouble())
+        .toList();
+    final prev = grades
+        .where(
+          (g) =>
+              g.classDate.isBefore(recentFrom) &&
+              !g.classDate.isBefore(prevFrom),
+        )
+        .map((g) => g.grade.toDouble())
+        .toList();
     if (recent.isEmpty || prev.isEmpty) return 0;
     final r = recent.reduce((a, b) => a + b) / recent.length;
     final p = prev.reduce((a, b) => a + b) / prev.length;
@@ -1196,7 +1839,15 @@ class _StudentAgg {
 }
 
 class _RiskRow {
-  _RiskRow({required this.student, required this.risk, required this.avgGrade, required this.attendanceRate, required this.trend, required this.activeMakeups, required this.examAverage});
+  _RiskRow({
+    required this.student,
+    required this.risk,
+    required this.avgGrade,
+    required this.attendanceRate,
+    required this.trend,
+    required this.activeMakeups,
+    required this.examAverage,
+  });
   final String student;
   final int risk;
   final double avgGrade;
@@ -1224,7 +1875,14 @@ class _ProblemDate {
 }
 
 class _Compare {
-  _Compare({required this.current, required this.depName, required this.depMedian, required this.courseMedian, required this.allMedian, required this.courseKey});
+  _Compare({
+    required this.current,
+    required this.depName,
+    required this.depMedian,
+    required this.courseMedian,
+    required this.allMedian,
+    required this.courseKey,
+  });
   final double current;
   final String? depName;
   final double? depMedian;

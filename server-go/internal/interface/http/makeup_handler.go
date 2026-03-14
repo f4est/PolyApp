@@ -90,11 +90,16 @@ func (h *Handler) listMakeupCases(c *gin.Context) {
 	case "student":
 		query = query.Where("student_id = ?", user.ID)
 	case "parent":
-		if strings.TrimSpace(user.StudentGroup) == "" {
+		child, childErr := h.parentLinkedStudent(c.Request.Context(), user)
+		if childErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load makeups"})
+			return
+		}
+		if child == nil {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
-		query = query.Where("group_name = ?", strings.TrimSpace(user.StudentGroup))
+		query = query.Where("student_id = ?", child.ID)
 	default:
 		c.JSON(http.StatusForbidden, gin.H{"detail": "Insufficient role"})
 		return
@@ -215,10 +220,14 @@ func (h *Handler) createMakeupCase(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to create makeup"})
 		return
 	}
+	studentRecipients := []uint{row.StudentID}
+	if parentIDs, parentErr := h.parentUserIDsForStudents(c.Request.Context(), []uint{row.StudentID}); parentErr == nil {
+		studentRecipients = append(studentRecipients, parentIDs...)
+	}
 	h.notifyMakeup(
 		c.Request.Context(),
 		row,
-		[]uint{row.StudentID},
+		studentRecipients,
 		"Новая отработка",
 		fmt.Sprintf("Группа %s, дата %s", row.GroupName, dateOnly(row.ClassDate)),
 	)
@@ -359,6 +368,13 @@ func (h *Handler) patchMakeupCase(c *gin.Context) {
 	}
 	if payload.Grade != nil {
 		nextGrade := strings.TrimSpace(*payload.Grade)
+		if nextGrade != "" {
+			gradeValue, parseErr := strconv.Atoi(nextGrade)
+			if parseErr != nil || gradeValue < 0 || gradeValue > 100 {
+				c.JSON(http.StatusBadRequest, gin.H{"detail": "Grade must be 0..100"})
+				return
+			}
+		}
 		if row.Grade != nextGrade && nextGrade != "" {
 			row.GradeSetAt = &now
 		}
@@ -422,7 +438,11 @@ func (h *Handler) patchMakeupCase(c *gin.Context) {
 		studentBody = strings.TrimSpace(row.TeacherNote)
 	}
 	if studentTitle != "" {
-		h.notifyMakeup(c.Request.Context(), row, []uint{row.StudentID}, studentTitle, studentBody)
+		studentRecipients := []uint{row.StudentID}
+		if parentIDs, parentErr := h.parentUserIDsForStudents(c.Request.Context(), []uint{row.StudentID}); parentErr == nil {
+			studentRecipients = append(studentRecipients, parentIDs...)
+		}
+		h.notifyMakeup(c.Request.Context(), row, studentRecipients, studentTitle, studentBody)
 	}
 
 	out, err := h.mapMakeupCases(c, []persistence.DBMakeupCase{row})
@@ -595,6 +615,9 @@ func (h *Handler) createMakeupMessage(c *gin.Context) {
 		targetIDs = append(targetIDs, row.TeacherID)
 	} else {
 		targetIDs = append(targetIDs, row.StudentID)
+		if parentIDs, parentErr := h.parentUserIDsForStudents(c.Request.Context(), []uint{row.StudentID}); parentErr == nil {
+			targetIDs = append(targetIDs, parentIDs...)
+		}
 	}
 	if len(targetIDs) > 0 {
 		h.notifyMakeup(
@@ -790,7 +813,7 @@ func (h *Handler) listMakeupStudentsForGroup(c *gin.Context) {
 	}
 	var students []persistence.DBUser
 	if err := h.db.WithContext(c.Request.Context()).
-		Where("role = ? AND student_group = ?", "student", groupName).
+		Where("role = ? AND student_group = ? AND is_approved = ?", "student", groupName, true).
 		Order("full_name asc").
 		Find(&students).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load students"})
@@ -825,7 +848,14 @@ func (h *Handler) canAccessMakeupCase(c *gin.Context, user *entity.User, row per
 		return row.StudentID == user.ID, nil
 	}
 	if user.Role == "parent" {
-		return strings.TrimSpace(user.StudentGroup) != "" && strings.TrimSpace(user.StudentGroup) == strings.TrimSpace(row.GroupName), nil
+		child, err := h.parentLinkedStudent(c.Request.Context(), user)
+		if err != nil {
+			return false, err
+		}
+		if child == nil {
+			return false, nil
+		}
+		return row.StudentID == child.ID, nil
 	}
 	return false, nil
 }
@@ -1019,4 +1049,33 @@ func (h *Handler) notifyMakeup(
 			"status":     row.Status,
 		},
 	)
+}
+
+func (h *Handler) parentUserIDsForStudents(ctx context.Context, studentIDs []uint) ([]uint, error) {
+	if len(studentIDs) == 0 {
+		return nil, nil
+	}
+	uniqueStudentIDs := make([]uint, 0, len(studentIDs))
+	seenStudents := map[uint]struct{}{}
+	for _, id := range studentIDs {
+		if id == 0 {
+			continue
+		}
+		if _, ok := seenStudents[id]; ok {
+			continue
+		}
+		seenStudents[id] = struct{}{}
+		uniqueStudentIDs = append(uniqueStudentIDs, id)
+	}
+	if len(uniqueStudentIDs) == 0 {
+		return nil, nil
+	}
+	var parentIDs []uint
+	if err := h.db.WithContext(ctx).
+		Model(&persistence.DBUser{}).
+		Where("role = ? AND is_approved = ? AND parent_student_id IN ?", "parent", true, uniqueStudentIDs).
+		Pluck("id", &parentIDs).Error; err != nil {
+		return nil, err
+	}
+	return parentIDs, nil
 }

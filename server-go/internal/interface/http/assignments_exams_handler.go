@@ -228,8 +228,18 @@ func (h *Handler) listExamGrades(c *gin.Context) {
 			query = query.Where("group_name = ?", user.StudentGroup)
 		}
 	} else if user.Role == "parent" {
-		if strings.TrimSpace(user.StudentGroup) != "" {
-			query = query.Where("group_name = ?", user.StudentGroup)
+		child, childErr := h.parentLinkedStudent(c.Request.Context(), user)
+		if childErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load exam grades"})
+			return
+		}
+		if child == nil {
+			c.JSON(http.StatusOK, []gin.H{})
+			return
+		}
+		query = query.Where("student_name = ?", strings.TrimSpace(child.FullName))
+		if strings.TrimSpace(child.StudentGroup) != "" {
+			query = query.Where("group_name = ?", strings.TrimSpace(child.StudentGroup))
 		}
 	}
 	if group != "" {
@@ -449,15 +459,35 @@ func (h *Handler) uploadExamGrades(c *gin.Context) {
 	if err := h.db.WithContext(c.Request.Context()).
 		Where("role IN ?", []string{"student", "parent"}).
 		Find(&users).Error; err == nil {
-		targetIDs := []uint{}
+		targetSet := map[uint]struct{}{}
+		studentByID := map[uint]persistence.DBUser{}
+		for _, item := range users {
+			if item.Role == "student" {
+				studentByID[item.ID] = item
+			}
+		}
 		for _, item := range users {
 			if item.Role == "student" {
 				if _, ok := studentNames[item.FullName]; ok && (item.StudentGroup == "" || item.StudentGroup == groupName) {
-					targetIDs = append(targetIDs, item.ID)
+					targetSet[item.ID] = struct{}{}
 				}
-			} else if item.Role == "parent" && item.StudentGroup == groupName {
-				targetIDs = append(targetIDs, item.ID)
+			} else if item.Role == "parent" {
+				if item.ParentStudentID == nil {
+					continue
+				}
+				student, ok := studentByID[*item.ParentStudentID]
+				if !ok {
+					continue
+				}
+				if _, ok := studentNames[student.FullName]; ok &&
+					(strings.TrimSpace(student.StudentGroup) == "" || strings.TrimSpace(student.StudentGroup) == groupName) {
+					targetSet[item.ID] = struct{}{}
+				}
 			}
+		}
+		targetIDs := make([]uint, 0, len(targetSet))
+		for id := range targetSet {
+			targetIDs = append(targetIDs, id)
 		}
 		_ = h.createNotifications(
 			c.Request.Context(),

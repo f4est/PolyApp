@@ -290,6 +290,57 @@ func TestJournalUseCase_UpsertDateCellsAcceptsCyrillicStatusCode(t *testing.T) {
 	}
 }
 
+func TestJournalUseCase_UpsertDateCellsRejectsOutOfRangeNumeric(t *testing.T) {
+	presetRepo := newFakePresetRepo()
+	journalRepo := newFakeJournalRepo()
+	journalRepo.teacherGroups[1] = map[string]struct{}{"P22": {}}
+	journalRepo.studentsByGroup["P22"] = []string{"Alice"}
+
+	engine := NewFormulaEngineUseCase()
+	presetUC := NewPresetUseCase(presetRepo, engine)
+	journalUC := NewJournalUseCase(journalRepo, presetRepo, engine)
+
+	preset, version, err := presetUC.Create(context.Background(), Actor{UserID: 1, Role: "admin"}, CreatePresetInput{
+		Name: "Preset",
+		Definition: entity.PresetDefinition{
+			Columns: []entity.PresetColumn{
+				{Key: "final", Kind: entity.PresetColumnTypeComputed, Type: entity.ValueTypeNumber, Formula: "DATE_AVG", Editable: false},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create preset failed: %v", err)
+	}
+	journalRepo.binding = &entity.GroupPresetBinding{
+		GroupName:       "P22",
+		PresetID:        preset.ID,
+		PresetVersionID: version.ID,
+		AutoUpdate:      true,
+	}
+
+	err = journalUC.UpsertDateCells(context.Background(), Actor{UserID: 1, Role: "admin"}, "P22", []DateCellUpsertInput{
+		{
+			ClassDate:   time.Date(2026, 3, 4, 0, 0, 0, 0, time.UTC),
+			StudentName: "Alice",
+			RawValue:    "101",
+		},
+	})
+	if !errors.Is(err, domainErrors.ErrInvalidInput) {
+		t.Fatalf("expected invalid input for value 101, got %v", err)
+	}
+
+	err = journalUC.UpsertDateCells(context.Background(), Actor{UserID: 1, Role: "admin"}, "P22", []DateCellUpsertInput{
+		{
+			ClassDate:   time.Date(2026, 3, 4, 0, 0, 0, 0, time.UTC),
+			StudentName: "Alice",
+			RawValue:    "-1",
+		},
+	})
+	if !errors.Is(err, domainErrors.ErrInvalidInput) {
+		t.Fatalf("expected invalid input for value -1, got %v", err)
+	}
+}
+
 func TestJournalUseCase_RecalculateGroupStatusCodeCounts(t *testing.T) {
 	presetRepo := newFakePresetRepo()
 	journalRepo := newFakeJournalRepo()
