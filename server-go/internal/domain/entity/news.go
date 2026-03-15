@@ -32,11 +32,14 @@ type NewsMedia struct {
 }
 
 type NewsComment struct {
-	ID        uint
-	UserID    uint
-	UserName  string
-	Text      string
-	CreatedAt time.Time
+	ID            uint
+	UserID        uint
+	UserName      string
+	UserRole      string
+	UserAvatarURL string
+	Text          string
+	CreatedAt     time.Time
+	UpdatedAt     *time.Time
 }
 
 type NewsLikeResult struct {

@@ -72,6 +72,16 @@ func (r *fakeUserRepo) Update(_ context.Context, user *entity.User) error {
 	return nil
 }
 
+func (r *fakeUserRepo) Delete(_ context.Context, id uint) error {
+	user, ok := r.byID[id]
+	if !ok {
+		return domainErrors.ErrNotFound
+	}
+	delete(r.byID, id)
+	delete(r.byEmail, user.Email)
+	return nil
+}
+
 type fakeSessionRepo struct {
 	items map[string]entity.AuthSession
 }
@@ -174,11 +184,13 @@ func TestAuthUseCase_RegisterAndLogin(t *testing.T) {
 
 	ctx := context.Background()
 	register, err := uc.Register(ctx, RegisterInput{
-		Role:     "student",
-		FullName: "Alice Demo",
-		Email:    "alice@example.com",
-		Password: "Strong123",
-		DeviceID: "web",
+		Role:         "student",
+		FullName:     "Alice Demo",
+		Email:        "alice@example.com",
+		Password:     "Strong123",
+		DeviceID:     "web",
+		StudentGroup: "P22-3E",
+		AutoApprove:  true,
 	})
 	if err != nil {
 		t.Fatalf("register failed: %v", err)
@@ -191,9 +203,11 @@ func TestAuthUseCase_RegisterAndLogin(t *testing.T) {
 	}
 
 	_, err = uc.Register(ctx, RegisterInput{
-		FullName: "Alice Demo",
-		Email:    "alice@example.com",
-		Password: "Strong123",
+		Role:         "student",
+		FullName:     "Alice Demo",
+		Email:        "alice@example.com",
+		Password:     "Strong123",
+		StudentGroup: "P22-3E",
 	})
 	if !errors.Is(err, domainErrors.ErrConflict) {
 		t.Fatalf("expected conflict, got: %v", err)
@@ -227,9 +241,12 @@ func TestAuthUseCase_GetCurrentUserAndLogout(t *testing.T) {
 
 	ctx := context.Background()
 	result, err := uc.Register(ctx, RegisterInput{
-		FullName: "Bob Demo",
-		Email:    "bob@example.com",
-		Password: "Strong123",
+		Role:         "student",
+		FullName:     "Bob Demo",
+		Email:        "bob@example.com",
+		Password:     "Strong123",
+		StudentGroup: "P22-3E",
+		AutoApprove:  true,
 	})
 	if err != nil {
 		t.Fatalf("register failed: %v", err)

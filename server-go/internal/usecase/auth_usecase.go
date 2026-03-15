@@ -59,11 +59,19 @@ func NewAuthUseCase(
 }
 
 type RegisterInput struct {
-	Role     string
-	FullName string
-	Email    string
-	Password string
-	DeviceID string
+	Role             string
+	FullName         string
+	Email            string
+	Password         string
+	DeviceID         string
+	NotifySchedule   *bool
+	NotifyRequests   *bool
+	StudentGroup     string
+	TeacherName      string
+	ChildFullName    string
+	ParentStudentID  *uint
+	AdminPermissions []string
+	AutoApprove      bool
 }
 
 type LoginInput struct {
@@ -73,9 +81,10 @@ type LoginInput struct {
 }
 
 type AuthResult struct {
-	TokenType   string
-	AccessToken string
-	User        entity.User
+	TokenType       string
+	AccessToken     string
+	User            entity.User
+	PendingApproval bool
 }
 
 func (u *AuthUseCase) Register(ctx context.Context, in RegisterInput) (*AuthResult, error) {
@@ -83,6 +92,9 @@ func (u *AuthUseCase) Register(ctx context.Context, in RegisterInput) (*AuthResu
 	fullName := strings.TrimSpace(in.FullName)
 	password := strings.TrimSpace(in.Password)
 	role := strings.TrimSpace(in.Role)
+	studentGroup := strings.TrimSpace(in.StudentGroup)
+	teacherName := strings.TrimSpace(in.TeacherName)
+	childFullName := strings.TrimSpace(in.ChildFullName)
 
 	if email == "" || fullName == "" || password == "" {
 		return nil, domainErrors.ErrInvalidInput
@@ -95,6 +107,20 @@ func (u *AuthUseCase) Register(ctx context.Context, in RegisterInput) (*AuthResu
 	}
 	if _, ok := AllowedRoles[role]; !ok {
 		return nil, domainErrors.ErrInvalidInput
+	}
+	switch role {
+	case "student":
+		if studentGroup == "" {
+			return nil, domainErrors.ErrInvalidInput
+		}
+	case "teacher":
+		if teacherName == "" {
+			return nil, domainErrors.ErrInvalidInput
+		}
+	case "parent":
+		if childFullName == "" {
+			return nil, domainErrors.ErrInvalidInput
+		}
 	}
 
 	existing, err := u.users.GetByEmail(ctx, email)
@@ -109,14 +135,49 @@ func (u *AuthUseCase) Register(ctx context.Context, in RegisterInput) (*AuthResu
 	if err != nil {
 		return nil, err
 	}
+	isApproved := in.AutoApprove || role == "admin"
+	if role == "parent" {
+		isApproved = false
+	}
+	notifySchedule := true
+	if in.NotifySchedule != nil {
+		notifySchedule = *in.NotifySchedule
+	}
+	notifyRequests := true
+	if in.NotifyRequests != nil {
+		notifyRequests = *in.NotifyRequests
+	}
+	now := u.now().UTC()
 	user := &entity.User{
-		Role:         role,
-		FullName:     fullName,
-		Email:        email,
-		PasswordHash: hash,
+		Role:             role,
+		FullName:         fullName,
+		Email:            email,
+		PasswordHash:     hash,
+		NotifySchedule:   notifySchedule,
+		NotifyRequests:   notifyRequests,
+		StudentGroup:     studentGroup,
+		TeacherName:      teacherName,
+		ChildFullName:    childFullName,
+		ParentStudentID:  in.ParentStudentID,
+		AdminPermissions: in.AdminPermissions,
+		IsApproved:       isApproved,
+		ApprovedAt:       nil,
+		ApprovedBy:       nil,
+	}
+	if teacherName == "" && role == "teacher" {
+		user.TeacherName = fullName
+	}
+	if isApproved {
+		user.ApprovedAt = &now
 	}
 	if err := u.users.Create(ctx, user); err != nil {
 		return nil, err
+	}
+	if !user.IsApproved {
+		return &AuthResult{
+			User:            *user,
+			PendingApproval: true,
+		}, nil
 	}
 	return u.issueToken(ctx, *user, strings.TrimSpace(in.DeviceID))
 }
@@ -133,6 +194,9 @@ func (u *AuthUseCase) Login(ctx context.Context, in LoginInput) (*AuthResult, er
 	}
 	if !u.passwords.Compare(user.PasswordHash, password) {
 		return nil, domainErrors.ErrUnauthorized
+	}
+	if !user.IsApproved {
+		return nil, domainErrors.ErrPendingApproval
 	}
 	return u.issueToken(ctx, *user, strings.TrimSpace(in.DeviceID))
 }
@@ -176,6 +240,14 @@ func (u *AuthUseCase) Logout(ctx context.Context, sessionID string) error {
 		return err
 	}
 	return nil
+}
+
+func (u *AuthUseCase) HashPassword(raw string) (string, error) {
+	password := strings.TrimSpace(raw)
+	if password == "" || len(password) < 8 {
+		return "", domainErrors.ErrInvalidInput
+	}
+	return u.passwords.Hash(password)
 }
 
 func (u *AuthUseCase) issueToken(ctx context.Context, user entity.User, deviceID string) (*AuthResult, error) {

@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -22,16 +23,24 @@ func NewUserRepo(db *gorm.DB) *UserRepo {
 
 func (r *UserRepo) Create(ctx context.Context, user *entity.User) error {
 	model := DBUser{
-		Role:         user.Role,
-		FullName:     user.FullName,
-		Email:        strings.ToLower(user.Email),
-		PasswordHash: user.PasswordHash,
-		Phone:        user.Phone,
-		AvatarURL:    user.AvatarURL,
-		About:        user.About,
-		StudentGroup: user.StudentGroup,
-		TeacherName:  user.TeacherName,
-		BirthDate:    user.BirthDate,
+		Role:                 user.Role,
+		FullName:             user.FullName,
+		Email:                strings.ToLower(user.Email),
+		PasswordHash:         user.PasswordHash,
+		Phone:                user.Phone,
+		AvatarURL:            user.AvatarURL,
+		About:                user.About,
+		NotifySchedule:       user.NotifySchedule,
+		NotifyRequests:       user.NotifyRequests,
+		StudentGroup:         user.StudentGroup,
+		TeacherName:          user.TeacherName,
+		ChildFullName:        user.ChildFullName,
+		ParentStudentID:      user.ParentStudentID,
+		AdminPermissionsJSON: encodeStringSlice(user.AdminPermissions),
+		IsApproved:           user.IsApproved,
+		ApprovedAt:           user.ApprovedAt,
+		ApprovedBy:           user.ApprovedBy,
+		BirthDate:            user.BirthDate,
 	}
 	if err := r.db.WithContext(ctx).Create(&model).Error; err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
@@ -106,14 +115,41 @@ func (r *UserRepo) Update(ctx context.Context, user *entity.User) error {
 	model.Phone = user.Phone
 	model.AvatarURL = user.AvatarURL
 	model.About = user.About
+	model.NotifySchedule = user.NotifySchedule
+	model.NotifyRequests = user.NotifyRequests
 	model.StudentGroup = user.StudentGroup
 	model.TeacherName = user.TeacherName
+	model.ChildFullName = user.ChildFullName
+	model.ParentStudentID = user.ParentStudentID
+	model.AdminPermissionsJSON = encodeStringSlice(user.AdminPermissions)
+	model.IsApproved = user.IsApproved
+	model.ApprovedAt = user.ApprovedAt
+	model.ApprovedBy = user.ApprovedBy
 	model.BirthDate = user.BirthDate
 	if err := r.db.WithContext(ctx).Save(&model).Error; err != nil {
 		return err
 	}
 	*user = toDomainUser(model)
 	return nil
+}
+
+func (r *UserRepo) Delete(ctx context.Context, id uint) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("user_id = ?", id).Delete(&DBAuthSession{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", id).Delete(&DBDeviceToken{}).Error; err != nil {
+			return err
+		}
+		res := tx.Delete(&DBUser{}, id)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return domainErrors.ErrNotFound
+		}
+		return nil
+	})
 }
 
 type SessionRepo struct {
@@ -180,18 +216,49 @@ func (r *SessionRepo) Revoke(ctx context.Context, sessionID string) error {
 
 func toDomainUser(model DBUser) entity.User {
 	return entity.User{
-		ID:           model.ID,
-		Role:         model.Role,
-		FullName:     model.FullName,
-		Email:        model.Email,
-		PasswordHash: model.PasswordHash,
-		Phone:        model.Phone,
-		AvatarURL:    model.AvatarURL,
-		About:        model.About,
-		StudentGroup: model.StudentGroup,
-		TeacherName:  model.TeacherName,
-		BirthDate:    model.BirthDate,
-		CreatedAt:    model.CreatedAt,
-		UpdatedAt:    model.UpdatedAt,
+		ID:               model.ID,
+		Role:             model.Role,
+		FullName:         model.FullName,
+		Email:            model.Email,
+		PasswordHash:     model.PasswordHash,
+		Phone:            model.Phone,
+		AvatarURL:        model.AvatarURL,
+		About:            model.About,
+		NotifySchedule:   model.NotifySchedule,
+		NotifyRequests:   model.NotifyRequests,
+		StudentGroup:     model.StudentGroup,
+		TeacherName:      model.TeacherName,
+		ChildFullName:    model.ChildFullName,
+		ParentStudentID:  model.ParentStudentID,
+		AdminPermissions: decodeStringSlice(model.AdminPermissionsJSON),
+		IsApproved:       model.IsApproved,
+		ApprovedAt:       model.ApprovedAt,
+		ApprovedBy:       model.ApprovedBy,
+		BirthDate:        model.BirthDate,
+		CreatedAt:        model.CreatedAt,
+		UpdatedAt:        model.UpdatedAt,
 	}
+}
+
+func encodeStringSlice(items []string) string {
+	if len(items) == 0 {
+		return "[]"
+	}
+	encoded, err := json.Marshal(items)
+	if err != nil {
+		return "[]"
+	}
+	return string(encoded)
+}
+
+func decodeStringSlice(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil
+	}
+	return out
 }

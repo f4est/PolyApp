@@ -1,6 +1,7 @@
 package http
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ var requestTypes = []string{
 	"Приложение №29",
 	"Приложение №31",
 	"Справка в школу",
+	"Запрос на преподавание группы",
 }
 
 var requestStatuses = []string{
@@ -32,12 +34,14 @@ var requestStatuses = []string{
 
 type requestPayload struct {
 	RequestType string `json:"request_type"`
+	GroupName   string `json:"group_name"`
 	Details     string `json:"details"`
 }
 
 type requestUpdatePayload struct {
 	Status  *string `json:"status"`
 	Details *string `json:"details"`
+	Comment *string `json:"comment"`
 }
 
 type journalGroupPayload struct {
@@ -96,11 +100,19 @@ func (h *Handler) RegisterAcademicRoutes(router *gin.Engine, auth *httpMiddlewar
 		secured.GET("/schedule/group/:group", h.scheduleForGroup)
 		secured.GET("/schedule/teacher/:teacher", h.scheduleForTeacher)
 		secured.POST("/schedule/upload", httpMiddleware.RequireRoles("admin", "teacher"), h.uploadSchedule)
+		secured.PATCH("/schedule/:id", httpMiddleware.RequireRoles("admin"), h.updateScheduleUpload)
+		secured.DELETE("/schedule/:id", httpMiddleware.RequireRoles("admin"), h.deleteScheduleUpload)
 
 		secured.GET("/journal/groups", h.listJournalGroups)
-		secured.POST("/journal/groups", httpMiddleware.RequireRoles("teacher", "admin"), h.upsertJournalGroup)
-		secured.DELETE("/journal/groups", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteJournalGroup)
+		secured.GET("/journal/groups/catalog", httpMiddleware.RequireRoles("teacher", "admin"), h.listJournalGroupCatalog)
+		secured.POST("/journal/groups", httpMiddleware.RequireRoles("admin"), h.upsertJournalGroup)
+		secured.DELETE("/journal/groups", httpMiddleware.RequireRoles("admin"), h.deleteJournalGroup)
 		secured.GET("/journal/students", h.listJournalStudents)
+		secured.GET(
+			"/journal/groups/:group_name/confirmed-students",
+			httpMiddleware.RequireRoles("teacher", "admin"),
+			h.listConfirmedStudentsForGroup,
+		)
 		secured.POST("/journal/students", httpMiddleware.RequireRoles("teacher", "admin"), h.upsertJournalStudent)
 		secured.DELETE("/journal/students", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteJournalStudent)
 		secured.GET("/journal/dates", h.listJournalDates)
@@ -122,10 +134,50 @@ func (h *Handler) RegisterAcademicRoutes(router *gin.Engine, auth *httpMiddlewar
 		secured.DELETE("/grades", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteGrade)
 		secured.GET("/grades/summary", httpMiddleware.RequireRoles("teacher", "admin", "parent"), h.gradeSummary)
 
+		secured.GET("/grading-presets", h.listGradingPresetsV2)
+		secured.POST("/grading-presets", httpMiddleware.RequireRoles("teacher", "admin"), h.createGradingPresetV2)
+		secured.GET("/grading-presets/:id", h.getGradingPresetV2)
+		secured.PATCH("/grading-presets/:id", httpMiddleware.RequireRoles("teacher", "admin"), h.updateGradingPresetV2)
+		secured.POST("/grading-presets/:id/publish", httpMiddleware.RequireRoles("teacher", "admin"), h.publishGradingPresetV2)
+		secured.POST("/grading-presets/:id/unpublish", httpMiddleware.RequireRoles("teacher", "admin"), h.unpublishGradingPresetV2)
+
+		secured.GET("/journal/v2/groups/:group_name/preset", h.getGroupPresetBindingV2)
+		secured.PUT("/journal/v2/groups/:group_name/preset", httpMiddleware.RequireRoles("teacher", "admin"), h.applyGroupPresetBindingV2)
+		secured.DELETE("/journal/v2/groups/:group_name/preset", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteGroupPresetBindingV2)
+
+		secured.GET("/journal/v2/groups/:group_name/grid", h.getJournalGridV2)
+		secured.POST("/journal/v2/groups/:group_name/date-cells/bulk-upsert", httpMiddleware.RequireRoles("teacher", "admin"), h.bulkUpsertDateCellsV2)
+		secured.POST("/journal/v2/groups/:group_name/date-cells/bulk-delete", httpMiddleware.RequireRoles("teacher", "admin"), h.bulkDeleteDateCellsV2)
+		secured.POST("/journal/v2/groups/:group_name/manual-cells/bulk-upsert", httpMiddleware.RequireRoles("teacher", "admin"), h.bulkUpsertManualCellsV2)
+		secured.POST("/journal/v2/groups/:group_name/recalculate", httpMiddleware.RequireRoles("teacher", "admin"), h.recalculateJournalV2)
+
+		secured.GET("/makeups", h.listMakeupCases)
+		secured.POST("/makeups", httpMiddleware.RequireRoles("teacher", "admin"), h.createMakeupCase)
+		secured.GET("/makeups/:id", h.getMakeupCase)
+		secured.PATCH("/makeups/:id", h.patchMakeupCase)
+		secured.DELETE("/makeups/:id", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteMakeupCase)
+		secured.GET("/makeups/:id/messages", h.listMakeupMessages)
+		secured.POST("/makeups/:id/messages", h.createMakeupMessage)
+		secured.POST("/makeups/:id/proof", httpMiddleware.RequireRoles("student", "admin"), h.uploadMakeupProof)
+		secured.POST("/makeups/:id/submission", httpMiddleware.RequireRoles("student", "admin"), h.uploadMakeupSubmission)
+		secured.GET("/makeups/groups", httpMiddleware.RequireRoles("teacher", "admin"), h.listMakeupGroupsForActor)
+		secured.GET("/makeups/groups/:group_name/students", httpMiddleware.RequireRoles("teacher", "admin"), h.listMakeupStudentsForGroup)
+
 		secured.GET("/teacher-assignments", httpMiddleware.RequireRoles("teacher", "admin"), h.listTeacherAssignments)
 		secured.POST("/teacher-assignments", httpMiddleware.RequireRoles("admin"), h.createTeacherAssignment)
 		secured.PATCH("/teacher-assignments/:id", httpMiddleware.RequireRoles("admin"), h.updateTeacherAssignment)
 		secured.DELETE("/teacher-assignments/:id", httpMiddleware.RequireRoles("admin"), h.deleteTeacherAssignment)
+
+		secured.GET("/departments", httpMiddleware.RequireRoles("admin"), h.listDepartments)
+		secured.POST("/departments", httpMiddleware.RequireRoles("admin"), h.createDepartment)
+		secured.PATCH("/departments/:id", httpMiddleware.RequireRoles("admin"), h.patchDepartment)
+		secured.DELETE("/departments/:id", httpMiddleware.RequireRoles("admin"), h.deleteDepartment)
+		secured.GET("/departments/:id/groups", httpMiddleware.RequireRoles("admin"), h.listDepartmentGroups)
+		secured.POST("/departments/:id/groups", httpMiddleware.RequireRoles("admin"), h.addDepartmentGroup)
+		secured.DELETE("/departments/:id/groups", httpMiddleware.RequireRoles("admin"), h.removeDepartmentGroup)
+		secured.GET("/curator-groups", httpMiddleware.RequireRoles("admin"), h.listCuratorGroups)
+		secured.POST("/curator-groups", httpMiddleware.RequireRoles("admin"), h.createCuratorGroup)
+		secured.DELETE("/curator-groups/:id", httpMiddleware.RequireRoles("admin"), h.deleteCuratorGroup)
 
 		secured.GET("/analytics/groups", httpMiddleware.RequireRoles("teacher", "admin"), h.analyticsGroups)
 		secured.GET("/analytics/attendance", httpMiddleware.RequireRoles("teacher", "admin"), h.analyticsAttendance)
@@ -148,8 +200,9 @@ func parseDate(value string) (time.Time, error) {
 }
 
 func contains(items []string, value string) bool {
+	value = normalizeGroupName(value)
 	for _, item := range items {
-		if item == value {
+		if strings.EqualFold(normalizeGroupName(item), value) {
 			return true
 		}
 	}
@@ -180,7 +233,22 @@ func mapScheduleUpload(item persistence.DBScheduleUpload) gin.H {
 
 func mapScheduleLessons(lessons []persistence.DBScheduleLesson) []gin.H {
 	out := make([]gin.H, 0, len(lessons))
+	seen := make(map[string]struct{}, len(lessons))
 	for _, row := range lessons {
+		key := strings.ToLower(strings.TrimSpace(strings.Join([]string{
+			strconv.Itoa(row.Shift),
+			strconv.Itoa(row.Period),
+			strings.TrimSpace(row.TimeText),
+			strings.TrimSpace(row.GroupName),
+			strings.TrimSpace(row.Lesson),
+			strings.TrimSpace(row.TeacherName),
+		}, "|")))
+		if key != "" {
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+		}
 		out = append(out, gin.H{
 			"shift":      row.Shift,
 			"period":     row.Period,

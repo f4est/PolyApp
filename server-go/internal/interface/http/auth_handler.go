@@ -5,25 +5,38 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"polyapp/server-go/internal/domain/entity"
 	domainErrors "polyapp/server-go/internal/domain/errors"
 	"polyapp/server-go/internal/infrastructure/persistence"
 	httpMiddleware "polyapp/server-go/internal/interface/http/middleware"
 	"polyapp/server-go/internal/usecase"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 type authRegisterPayload struct {
-	Role     string `json:"role"`
-	FullName string `json:"full_name"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	DeviceID string `json:"device_id"`
+	Role             string   `json:"role"`
+	FullName         string   `json:"full_name"`
+	Email            string   `json:"email"`
+	Password         string   `json:"password"`
+	DeviceID         string   `json:"device_id"`
+	NotifySchedule   *bool    `json:"notify_schedule"`
+	NotifyRequests   *bool    `json:"notify_requests"`
+	StudentGroup     string   `json:"student_group"`
+	TeacherName      string   `json:"teacher_name"`
+	ChildFullName    string   `json:"child_full_name"`
+	ParentStudentID  *uint    `json:"parent_student_id"`
+	AdminPermissions []string `json:"admin_permissions"`
+	IsApproved       *bool    `json:"is_approved"`
 }
 
 type authLoginPayload struct {
@@ -33,15 +46,22 @@ type authLoginPayload struct {
 }
 
 type userUpdatePayload struct {
-	Role         *string `json:"role"`
-	FullName     *string `json:"full_name"`
-	Email        *string `json:"email"`
-	Phone        *string `json:"phone"`
-	AvatarURL    *string `json:"avatar_url"`
-	About        *string `json:"about"`
-	StudentGroup *string `json:"student_group"`
-	TeacherName  *string `json:"teacher_name"`
-	BirthDate    *string `json:"birth_date"`
+	Role             *string   `json:"role"`
+	FullName         *string   `json:"full_name"`
+	Email            *string   `json:"email"`
+	Phone            *string   `json:"phone"`
+	AvatarURL        *string   `json:"avatar_url"`
+	About            *string   `json:"about"`
+	NotifySchedule   *bool     `json:"notify_schedule"`
+	NotifyRequests   *bool     `json:"notify_requests"`
+	StudentGroup     *string   `json:"student_group"`
+	TeacherName      *string   `json:"teacher_name"`
+	ChildFullName    *string   `json:"child_full_name"`
+	ParentStudentID  *uint     `json:"parent_student_id"`
+	AdminPermissions *[]string `json:"admin_permissions"`
+	IsApproved       *bool     `json:"is_approved"`
+	Password         *string   `json:"password"`
+	BirthDate        *string   `json:"birth_date"`
 }
 
 type deviceTokenPayload struct {
@@ -52,15 +72,20 @@ type deviceTokenPayload struct {
 func (h *Handler) RegisterAuthRoutes(router *gin.Engine, auth *httpMiddleware.AuthMiddleware) {
 	router.POST("/auth/register", h.register)
 	router.POST("/auth/login", h.login)
+	router.GET("/auth/check-email", h.checkEmailExists)
 
 	secured := router.Group("/")
 	secured.Use(auth.RequireAuth())
 	{
 		secured.GET("/auth/me", h.me)
 		secured.POST("/auth/logout", h.logout)
+		secured.POST("/users/me/avatar", h.uploadMyAvatar)
+		// Compatibility alias for clients using auth-prefixed self routes.
+		secured.POST("/auth/me/avatar", h.uploadMyAvatar)
 		secured.POST("/devices/register", h.registerDeviceToken)
 		secured.GET("/notifications", h.listNotifications)
 		secured.POST("/notifications/:id/read", h.markNotificationRead)
+		secured.DELETE("/notifications/:id", h.deleteNotification)
 	}
 
 	admin := router.Group("/")
@@ -68,10 +93,14 @@ func (h *Handler) RegisterAuthRoutes(router *gin.Engine, auth *httpMiddleware.Au
 	{
 		admin.POST("/users", h.createUser)
 		admin.GET("/users", h.listUsers)
+		admin.GET("/users/students/approved", h.listApprovedStudents)
+		admin.POST("/users/:id/approve", h.approveUser)
+		admin.DELETE("/users/:id", h.deleteUser)
 	}
 	userRoutes := router.Group("/")
 	userRoutes.Use(auth.RequireAuth())
 	{
+		userRoutes.GET("/users/:id/public", h.getUserPublic)
 		userRoutes.GET("/users/:id", h.getUser)
 		userRoutes.PATCH("/users/:id", h.updateUser)
 	}
@@ -83,12 +112,23 @@ func (h *Handler) register(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
 		return
 	}
+	role := strings.ToLower(strings.TrimSpace(payload.Role))
+	if role != "" && role != "student" && role != "teacher" && role != "parent" {
+		c.JSON(http.StatusForbidden, gin.H{"detail": "Role is not allowed for self registration"})
+		return
+	}
 	result, err := h.authUC.Register(c.Request.Context(), usecase.RegisterInput{
-		Role:     payload.Role,
-		FullName: payload.FullName,
-		Email:    payload.Email,
-		Password: payload.Password,
-		DeviceID: payload.DeviceID,
+		Role:            payload.Role,
+		FullName:        payload.FullName,
+		Email:           payload.Email,
+		Password:        payload.Password,
+		DeviceID:        payload.DeviceID,
+		NotifySchedule:  payload.NotifySchedule,
+		NotifyRequests:  payload.NotifyRequests,
+		StudentGroup:    payload.StudentGroup,
+		TeacherName:     payload.TeacherName,
+		ChildFullName:   payload.ChildFullName,
+		ParentStudentID: payload.ParentStudentID,
 	})
 	if err != nil {
 		switch {
@@ -99,6 +139,14 @@ func (h *Handler) register(c *gin.Context) {
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Internal error"})
 		}
+		return
+	}
+	if result.PendingApproval {
+		c.JSON(http.StatusAccepted, gin.H{
+			"pending_approval": true,
+			"detail":           "Account created and pending admin approval",
+			"user":             toUserPublic(result.User),
+		})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -124,6 +172,10 @@ func (h *Handler) login(c *gin.Context) {
 			c.JSON(http.StatusUnauthorized, gin.H{"detail": "Invalid credentials"})
 			return
 		}
+		if errors.Is(err, domainErrors.ErrPendingApproval) {
+			c.JSON(http.StatusForbidden, gin.H{"detail": "Account pending admin approval"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Internal error"})
 		return
 	}
@@ -143,6 +195,52 @@ func (h *Handler) me(c *gin.Context) {
 	c.JSON(http.StatusOK, toUserPublic(*user))
 }
 
+func (h *Handler) uploadMyAvatar(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Missing file"})
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".webp", ".gif":
+		// allowed
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Only image files are allowed"})
+		return
+	}
+	dir := filepath.Join(h.cfg.MediaDir, "avatars")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to prepare media dir"})
+		return
+	}
+	stored := uuid.NewString() + ext
+	dst := filepath.Join(dir, stored)
+	if err := c.SaveUploadedFile(file, dst); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save file"})
+		return
+	}
+	publicURL := "/media/avatars/" + stored
+	if err := h.db.WithContext(c.Request.Context()).
+		Model(&persistence.DBUser{}).
+		Where("id = ?", user.ID).
+		Update("avatar_url", publicURL).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to update avatar"})
+		return
+	}
+	updated, err := h.userRepo.GetByID(c.Request.Context(), user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load user"})
+		return
+	}
+	c.JSON(http.StatusOK, toUserPublic(*updated))
+}
+
 func (h *Handler) logout(c *gin.Context) {
 	claims := httpMiddleware.CurrentClaims(c)
 	if claims == nil {
@@ -157,17 +255,66 @@ func (h *Handler) logout(c *gin.Context) {
 }
 
 func (h *Handler) createUser(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermUsersManage) {
+		return
+	}
 	var payload authRegisterPayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
 		return
 	}
+	role := strings.ToLower(strings.TrimSpace(payload.Role))
+	adminPermissions := normalizeAdminPermissions(payload.AdminPermissions)
+	if role != "admin" {
+		adminPermissions = nil
+	}
+	autoApprove := payload.IsApproved == nil || *payload.IsApproved
+	if role == "parent" {
+		if payload.IsApproved == nil {
+			autoApprove = false
+		}
+		if autoApprove {
+			if payload.ParentStudentID == nil || *payload.ParentStudentID == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"detail": "parent_student_id is required to approve parent account",
+				})
+				return
+			}
+			linkedStudent, linkErr := h.validateParentLinkedStudent(
+				c.Request.Context(),
+				payload.ParentStudentID,
+				payload.ChildFullName,
+				payload.StudentGroup,
+			)
+			if linkErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to validate parent link"})
+				return
+			}
+			if linkedStudent == nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"detail": "Parent can be approved only after linking to an approved student",
+				})
+				return
+			}
+			payload.ParentStudentID = &linkedStudent.ID
+			payload.ChildFullName = linkedStudent.FullName
+			payload.StudentGroup = linkedStudent.StudentGroup
+		}
+	}
 	result, err := h.authUC.Register(c.Request.Context(), usecase.RegisterInput{
-		Role:     payload.Role,
-		FullName: payload.FullName,
-		Email:    payload.Email,
-		Password: payload.Password,
-		DeviceID: payload.DeviceID,
+		Role:             payload.Role,
+		FullName:         payload.FullName,
+		Email:            payload.Email,
+		Password:         payload.Password,
+		DeviceID:         payload.DeviceID,
+		NotifySchedule:   payload.NotifySchedule,
+		NotifyRequests:   payload.NotifyRequests,
+		StudentGroup:     payload.StudentGroup,
+		TeacherName:      payload.TeacherName,
+		ChildFullName:    payload.ChildFullName,
+		ParentStudentID:  payload.ParentStudentID,
+		AdminPermissions: adminPermissions,
+		AutoApprove:      autoApprove,
 	})
 	if err != nil {
 		switch {
@@ -183,16 +330,113 @@ func (h *Handler) createUser(c *gin.Context) {
 	c.JSON(http.StatusOK, toUserPublic(result.User))
 }
 
+func (h *Handler) checkEmailExists(c *gin.Context) {
+	email := strings.ToLower(strings.TrimSpace(c.Query("email")))
+	if email == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "email is required"})
+		return
+	}
+	_, err := h.userRepo.GetByEmail(c.Request.Context(), email)
+	if err == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"email":   email,
+			"exists":  true,
+			"matched": true,
+		})
+		return
+	}
+	if errors.Is(err, domainErrors.ErrNotFound) {
+		c.JSON(http.StatusOK, gin.H{
+			"email":   email,
+			"exists":  false,
+			"matched": false,
+		})
+		return
+	}
+	c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to check email"})
+}
+
 func (h *Handler) listUsers(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermUsersManage) {
+		return
+	}
 	role := strings.TrimSpace(c.Query("role"))
+	approvedRaw := strings.TrimSpace(c.Query("approved"))
+	sortBy := strings.TrimSpace(c.DefaultQuery("sort", "id_asc"))
+	var approvedFilter *bool
+	if approvedRaw != "" {
+		switch strings.ToLower(approvedRaw) {
+		case "true", "1", "yes":
+			value := true
+			approvedFilter = &value
+		case "false", "0", "no":
+			value := false
+			approvedFilter = &value
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"detail": "approved should be true or false"})
+			return
+		}
+	}
 	users, err := h.userRepo.List(c.Request.Context(), role)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to list users"})
 		return
 	}
-	out := make([]gin.H, 0, len(users))
+	filtered := make([]entity.User, 0, len(users))
 	for _, user := range users {
+		if approvedFilter != nil && user.IsApproved != *approvedFilter {
+			continue
+		}
+		filtered = append(filtered, user)
+	}
+	switch sortBy {
+	case "name_asc":
+		sort.Slice(filtered, func(i, j int) bool {
+			return strings.ToLower(filtered[i].FullName) < strings.ToLower(filtered[j].FullName)
+		})
+	case "name_desc":
+		sort.Slice(filtered, func(i, j int) bool {
+			return strings.ToLower(filtered[i].FullName) > strings.ToLower(filtered[j].FullName)
+		})
+	case "created_desc":
+		sort.Slice(filtered, func(i, j int) bool {
+			return filtered[i].CreatedAt.After(filtered[j].CreatedAt)
+		})
+	case "created_asc":
+		sort.Slice(filtered, func(i, j int) bool {
+			return filtered[i].CreatedAt.Before(filtered[j].CreatedAt)
+		})
+	default:
+		sort.Slice(filtered, func(i, j int) bool {
+			return filtered[i].ID < filtered[j].ID
+		})
+	}
+	out := make([]gin.H, 0, len(users))
+	for _, user := range filtered {
 		out = append(out, toUserPublic(user))
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h *Handler) listApprovedStudents(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermUsersManage) {
+		return
+	}
+	var students []persistence.DBUser
+	if err := h.db.WithContext(c.Request.Context()).
+		Where("role = ? AND is_approved = ?", "student", true).
+		Order("full_name asc").
+		Find(&students).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to list students"})
+		return
+	}
+	out := make([]gin.H, 0, len(students))
+	for _, student := range students {
+		out = append(out, gin.H{
+			"id":            student.ID,
+			"full_name":     student.FullName,
+			"student_group": nullOrString(student.StudentGroup),
+		})
 	}
 	c.JSON(http.StatusOK, out)
 }
@@ -224,6 +468,148 @@ func (h *Handler) getUser(c *gin.Context) {
 	c.JSON(http.StatusOK, toUserPublic(*user))
 }
 
+func (h *Handler) approveUser(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermUsersManage) {
+		return
+	}
+	var payload struct {
+		Approved *bool `json:"approved"`
+	}
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&payload); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
+			return
+		}
+	}
+	currentUser := httpMiddleware.CurrentUser(c)
+	if currentUser == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid user id"})
+		return
+	}
+	user, err := h.userRepo.GetByID(c.Request.Context(), uint(id))
+	if err != nil {
+		if errors.Is(err, domainErrors.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"detail": "User not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load user"})
+		return
+	}
+	approved := true
+	if payload.Approved != nil {
+		approved = *payload.Approved
+	}
+	if approved && user.Role == "parent" {
+		if user.ParentStudentID == nil || *user.ParentStudentID == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"detail": "parent_student_id is required to approve parent account",
+			})
+			return
+		}
+		linkedStudent, linkErr := h.validateParentLinkedStudent(
+			c.Request.Context(),
+			user.ParentStudentID,
+			user.ChildFullName,
+			user.StudentGroup,
+		)
+		if linkErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to validate parent link"})
+			return
+		}
+		if linkedStudent == nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"detail": "Parent must be linked to an approved student before approval",
+			})
+			return
+		}
+		user.ParentStudentID = &linkedStudent.ID
+		user.ChildFullName = linkedStudent.FullName
+		user.StudentGroup = linkedStudent.StudentGroup
+	}
+	if approved {
+		now := time.Now().UTC()
+		user.IsApproved = true
+		user.ApprovedAt = &now
+		user.ApprovedBy = &currentUser.ID
+	} else {
+		user.IsApproved = false
+		user.ApprovedAt = nil
+		user.ApprovedBy = nil
+	}
+	if err := h.userRepo.Update(c.Request.Context(), user); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to approve user"})
+		return
+	}
+	c.JSON(http.StatusOK, toUserPublic(*user))
+}
+
+func (h *Handler) getUserPublic(c *gin.Context) {
+	currentUser := httpMiddleware.CurrentUser(c)
+	if currentUser == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid user id"})
+		return
+	}
+	user, err := h.userRepo.GetByID(c.Request.Context(), uint(id))
+	if err != nil {
+		if errors.Is(err, domainErrors.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"detail": "User not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load user"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"id":              user.ID,
+		"role":            user.Role,
+		"full_name":       user.FullName,
+		"avatar_url":      nullOrString(user.AvatarURL),
+		"about":           nullOrString(user.About),
+		"student_group":   nullOrString(user.StudentGroup),
+		"teacher_name":    nullOrString(user.TeacherName),
+		"child_full_name": nullOrString(user.ChildFullName),
+	})
+}
+
+func (h *Handler) deleteUser(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermUsersManage) {
+		return
+	}
+	currentUser := httpMiddleware.CurrentUser(c)
+	if currentUser == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid user id"})
+		return
+	}
+	userID := uint(id)
+	if currentUser.ID == userID {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Admin cannot delete self"})
+		return
+	}
+	if err := h.userRepo.Delete(c.Request.Context(), userID); err != nil {
+		if errors.Is(err, domainErrors.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"detail": "User not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete user"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
 func (h *Handler) updateUser(c *gin.Context) {
 	currentUser := httpMiddleware.CurrentUser(c)
 	if currentUser == nil {
@@ -239,6 +625,11 @@ func (h *Handler) updateUser(c *gin.Context) {
 	if currentUser.Role != "admin" && currentUser.ID != userID {
 		c.JSON(http.StatusForbidden, gin.H{"detail": "Insufficient role"})
 		return
+	}
+	if currentUser.Role == "admin" && currentUser.ID != userID {
+		if !h.requireAdminPermission(c, AdminPermUsersManage) {
+			return
+		}
 	}
 	var payload userUpdatePayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
@@ -272,11 +663,104 @@ func (h *Handler) updateUser(c *gin.Context) {
 	if payload.About != nil {
 		user.About = strings.TrimSpace(*payload.About)
 	}
-	if payload.StudentGroup != nil {
+	if payload.NotifySchedule != nil {
+		user.NotifySchedule = *payload.NotifySchedule
+	}
+	if payload.NotifyRequests != nil {
+		user.NotifyRequests = *payload.NotifyRequests
+	}
+	if payload.StudentGroup != nil && currentUser.Role == "admin" {
 		user.StudentGroup = strings.TrimSpace(*payload.StudentGroup)
 	}
-	if payload.TeacherName != nil {
+	if payload.TeacherName != nil && (currentUser.Role == "admin" || (currentUser.ID == user.ID && user.Role == "teacher")) {
 		user.TeacherName = strings.TrimSpace(*payload.TeacherName)
+	}
+	if payload.ChildFullName != nil && currentUser.Role == "admin" {
+		user.ChildFullName = strings.TrimSpace(*payload.ChildFullName)
+	}
+	if payload.AdminPermissions != nil && currentUser.Role == "admin" {
+		if strings.EqualFold(strings.TrimSpace(user.Role), "admin") {
+			user.AdminPermissions = normalizeAdminPermissions(*payload.AdminPermissions)
+		} else {
+			user.AdminPermissions = nil
+		}
+	}
+	if payload.ParentStudentID != nil && currentUser.Role == "admin" {
+		if *payload.ParentStudentID == 0 {
+			user.ParentStudentID = nil
+		} else {
+			studentID := *payload.ParentStudentID
+			var linkedStudent persistence.DBUser
+			if err := h.db.WithContext(c.Request.Context()).
+				Where("id = ? AND role = ? AND is_approved = ?", studentID, "student", true).
+				First(&linkedStudent).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					c.JSON(http.StatusBadRequest, gin.H{
+						"detail": "parent_student_id must reference an approved student",
+					})
+					return
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to validate parent_student_id"})
+				return
+			}
+			user.ParentStudentID = &studentID
+			if strings.TrimSpace(linkedStudent.FullName) != "" {
+				user.ChildFullName = linkedStudent.FullName
+			}
+			user.StudentGroup = strings.TrimSpace(linkedStudent.StudentGroup)
+		}
+	}
+	if currentUser.Role == "admin" && user.Role == "parent" && payload.ChildFullName != nil {
+		user.ChildFullName = strings.TrimSpace(*payload.ChildFullName)
+	}
+	if payload.IsApproved != nil && currentUser.Role == "admin" {
+		if *payload.IsApproved && user.Role == "parent" {
+			if user.ParentStudentID == nil || *user.ParentStudentID == 0 {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"detail": "parent_student_id is required to approve parent account",
+				})
+				return
+			}
+			linkedStudent, linkErr := h.validateParentLinkedStudent(
+				c.Request.Context(),
+				user.ParentStudentID,
+				user.ChildFullName,
+				user.StudentGroup,
+			)
+			if linkErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to validate parent link"})
+				return
+			}
+			if linkedStudent == nil {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"detail": "Parent must be linked to an approved student before approval",
+				})
+				return
+			}
+			user.ParentStudentID = &linkedStudent.ID
+			user.ChildFullName = linkedStudent.FullName
+			user.StudentGroup = linkedStudent.StudentGroup
+		}
+		user.IsApproved = *payload.IsApproved
+		if *payload.IsApproved {
+			now := time.Now().UTC()
+			user.ApprovedAt = &now
+			user.ApprovedBy = &currentUser.ID
+		} else {
+			user.ApprovedAt = nil
+			user.ApprovedBy = nil
+		}
+	}
+	if payload.Password != nil && currentUser.Role == "admin" {
+		nextPassword := strings.TrimSpace(*payload.Password)
+		if nextPassword != "" {
+			hash, hashErr := h.authUC.HashPassword(nextPassword)
+			if hashErr != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid password"})
+				return
+			}
+			user.PasswordHash = hash
+		}
 	}
 	if payload.BirthDate != nil {
 		value := strings.TrimSpace(*payload.BirthDate)
@@ -296,6 +780,21 @@ func (h *Handler) updateUser(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, toUserPublic(*user))
+}
+
+func (h *Handler) validateParentLinkedStudent(
+	ctx context.Context,
+	parentStudentID *uint,
+	childFullName string,
+	studentGroup string,
+) (*persistence.DBUser, error) {
+	candidate := &entity.User{
+		Role:            "parent",
+		ParentStudentID: parentStudentID,
+		ChildFullName:   strings.TrimSpace(childFullName),
+		StudentGroup:    strings.TrimSpace(studentGroup),
+	}
+	return h.parentLinkedStudent(ctx, candidate)
 }
 
 func (h *Handler) registerDeviceToken(c *gin.Context) {
@@ -390,17 +889,10 @@ func (h *Handler) markNotificationRead(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid notification id"})
 		return
 	}
-	now := time.Now().UTC()
-	result := h.db.WithContext(c.Request.Context()).Model(&persistence.DBNotification{}).
-		Where("id = ? AND user_id = ?", id, currentUser.ID).
-		Where("read_at IS NULL").
-		Update("read_at", now)
-	if result.Error != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to update notification"})
-		return
-	}
 	var notification persistence.DBNotification
-	if err := h.db.WithContext(c.Request.Context()).First(&notification, id).Error; err != nil {
+	if err := h.db.WithContext(c.Request.Context()).
+		Where("id = ? AND user_id = ?", id, currentUser.ID).
+		First(&notification).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"detail": "Notification not found"})
 			return
@@ -408,18 +900,77 @@ func (h *Handler) markNotificationRead(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load notification"})
 		return
 	}
+	now := time.Now().UTC()
+	if err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		readAt := now
+		if notification.ReadAt != nil {
+			readAt = *notification.ReadAt
+		}
+		notification.ReadAt = &readAt
+		return tx.Where("id = ? AND user_id = ?", id, currentUser.ID).
+			Delete(&persistence.DBNotification{}).Error
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to update notification"})
+		return
+	}
 	_ = h.invalidateNotificationCache(c.Request.Context(), currentUser.ID)
-	c.JSON(http.StatusOK, mapNotification(notification))
+	out := mapNotification(notification)
+	out["deleted"] = true
+	out["is_deleted"] = true
+	out["is_unread"] = false
+	out["is_read"] = true
+	out["status"] = "deleted"
+	out["can_mark_read"] = false
+	out["can_delete"] = false
+	c.JSON(http.StatusOK, out)
+}
+
+func (h *Handler) deleteNotification(c *gin.Context) {
+	currentUser := httpMiddleware.CurrentUser(c)
+	if currentUser == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid notification id"})
+		return
+	}
+	result := h.db.WithContext(c.Request.Context()).
+		Where("id = ? AND user_id = ?", id, currentUser.ID).
+		Delete(&persistence.DBNotification{})
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete notification"})
+		return
+	}
+	if result.RowsAffected == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"detail": "Notification not found"})
+		return
+	}
+	_ = h.invalidateNotificationCache(c.Request.Context(), currentUser.ID)
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
 func mapNotification(item persistence.DBNotification) gin.H {
+	isRead := item.ReadAt != nil
+	status := "unread"
+	if isRead {
+		status = "read"
+	}
 	out := gin.H{
-		"id":         item.ID,
-		"title":      item.Title,
-		"body":       item.Body,
-		"created_at": item.CreatedAt.Format(time.RFC3339),
-		"read_at":    nil,
-		"data":       nil,
+		"id":            item.ID,
+		"title":         item.Title,
+		"body":          item.Body,
+		"created_at":    item.CreatedAt.Format(time.RFC3339),
+		"read_at":       nil,
+		"data":          nil,
+		"is_read":       isRead,
+		"is_unread":     !isRead,
+		"is_deleted":    false,
+		"status":        status,
+		"can_mark_read": !isRead,
+		"can_delete":    true,
+		"deleted":       false,
 	}
 	if item.ReadAt != nil {
 		out["read_at"] = item.ReadAt.Format(time.RFC3339)
@@ -437,10 +988,17 @@ func (h *Handler) createNotifications(ctx context.Context, userIDs []uint, title
 	if len(userIDs) == 0 {
 		return nil
 	}
+	filteredIDs, err := h.filterNotificationRecipients(ctx, userIDs, data)
+	if err != nil {
+		return err
+	}
+	if len(filteredIDs) == 0 {
+		return nil
+	}
 	payload, _ := json.Marshal(data)
 	now := time.Now().UTC()
-	models := make([]persistence.DBNotification, 0, len(userIDs))
-	for _, id := range userIDs {
+	models := make([]persistence.DBNotification, 0, len(filteredIDs))
+	for _, id := range filteredIDs {
 		models = append(models, persistence.DBNotification{
 			UserID:    id,
 			Title:     title,
@@ -453,7 +1011,7 @@ func (h *Handler) createNotifications(ctx context.Context, userIDs []uint, title
 		return err
 	}
 	seen := map[uint]struct{}{}
-	for _, id := range userIDs {
+	for _, id := range filteredIDs {
 		if _, ok := seen[id]; ok {
 			continue
 		}
@@ -461,6 +1019,60 @@ func (h *Handler) createNotifications(ctx context.Context, userIDs []uint, title
 		_ = h.invalidateNotificationCache(ctx, id)
 	}
 	return nil
+}
+
+func (h *Handler) filterNotificationRecipients(
+	ctx context.Context,
+	userIDs []uint,
+	data map[string]any,
+) ([]uint, error) {
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+	unique := make([]uint, 0, len(userIDs))
+	seen := make(map[uint]struct{}, len(userIDs))
+	for _, id := range userIDs {
+		if id == 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return nil, nil
+	}
+
+	notificationType := strings.ToLower(strings.TrimSpace(anyToString(data["type"])))
+	query := h.db.WithContext(ctx).
+		Model(&persistence.DBUser{}).
+		Where("id IN ?", unique).
+		Where("is_approved = ?", true)
+	switch notificationType {
+	case "schedule_update":
+		query = query.Where("notify_schedule = ?", true)
+	case "request_created", "request_updated", "request_update":
+		query = query.Where("notify_requests = ?", true)
+	}
+
+	var filtered []uint
+	if err := query.Pluck("id", &filtered).Error; err != nil {
+		return nil, err
+	}
+	return filtered, nil
+}
+
+func anyToString(value any) string {
+	switch item := value.(type) {
+	case string:
+		return item
+	case []byte:
+		return string(item)
+	default:
+		return ""
+	}
 }
 
 func (h *Handler) invalidateNotificationCache(ctx context.Context, userID uint) error {

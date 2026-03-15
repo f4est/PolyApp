@@ -1,0 +1,7 @@
+{
+  "dart.flutterRunAdditionalArgs": [
+    "--web-port",
+    "5050"
+  ],
+  "cmake.ignoreCMakeListsMissing": true
+}

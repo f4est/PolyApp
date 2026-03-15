@@ -68,10 +68,7 @@ class Student extends HiveObject {
   @HiveField(9)
   double digitalEq = 0;
 
-  Student({
-    required this.name,
-    required this.groupId,
-  });
+  Student({required this.name, required this.groupId});
 }
 
 @HiveType(typeId: 2)

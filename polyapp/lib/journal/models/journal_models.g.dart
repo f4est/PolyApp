@@ -65,10 +65,7 @@ class StudentAdapter extends TypeAdapter<Student> {
     final fields = <int, dynamic>{
       for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
-    return Student(
-      name: fields[0] as String,
-      groupId: fields[1] as String,
-    )
+    return Student(name: fields[0] as String, groupId: fields[1] as String)
       ..otrabotka = fields[2] as double
       ..exam = fields[3] as double
       ..letterCount = fields[4] as int

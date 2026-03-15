@@ -77,6 +77,13 @@ func (u *NewsUseCase) AddComment(ctx context.Context, postID, userID uint, text 
 	return u.repo.AddComment(ctx, postID, userID, strings.TrimSpace(text))
 }
 
+func (u *NewsUseCase) UpdateComment(ctx context.Context, postID, commentID uint, text string) (*entity.NewsComment, error) {
+	if postID == 0 || commentID == 0 || strings.TrimSpace(text) == "" {
+		return nil, domainErrors.ErrInvalidInput
+	}
+	return u.repo.UpdateComment(ctx, postID, commentID, strings.TrimSpace(text))
+}
+
 func (u *NewsUseCase) DeleteComment(ctx context.Context, postID, commentID uint) error {
 	if postID == 0 || commentID == 0 {
 		return domainErrors.ErrInvalidInput
@@ -98,11 +105,11 @@ func (u *NewsUseCase) ToggleReaction(ctx context.Context, postID, userID uint, l
 	return u.repo.ToggleReaction(ctx, postID, userID, normalized)
 }
 
-func (u *NewsUseCase) Share(ctx context.Context, postID uint) (int, error) {
-	if postID == 0 {
-		return 0, domainErrors.ErrInvalidInput
+func (u *NewsUseCase) Share(ctx context.Context, postID, userID uint) (int, bool, error) {
+	if postID == 0 || userID == 0 {
+		return 0, false, domainErrors.ErrInvalidInput
 	}
-	return u.repo.IncrementShare(ctx, postID)
+	return u.repo.IncrementShare(ctx, postID, userID)
 }
 
 func (u *NewsUseCase) AddMedia(ctx context.Context, postID uint, media []entity.NewsMedia) error {

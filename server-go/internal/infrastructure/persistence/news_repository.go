@@ -103,6 +103,9 @@ func (r *NewsRepo) Delete(ctx context.Context, postID uint) error {
 		if err := tx.Where("post_id = ?", postID).Delete(&DBNewsLike{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("post_id = ?", postID).Delete(&DBNewsShare{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("post_id = ?", postID).Delete(&DBNewsComment{}).Error; err != nil {
 			return err
 		}
@@ -134,11 +137,52 @@ func (r *NewsRepo) AddComment(ctx context.Context, postID, userID uint, text str
 		return nil, err
 	}
 	return &entity.NewsComment{
-		ID:        comment.ID,
-		UserID:    userID,
-		UserName:  user.FullName,
-		Text:      comment.Text,
-		CreatedAt: comment.CreatedAt,
+		ID:            comment.ID,
+		UserID:        userID,
+		UserName:      user.FullName,
+		UserRole:      user.Role,
+		UserAvatarURL: strings.TrimSpace(user.AvatarURL),
+		Text:          comment.Text,
+		CreatedAt:     comment.CreatedAt,
+	}, nil
+}
+
+func (r *NewsRepo) UpdateComment(ctx context.Context, postID, commentID uint, text string) (*entity.NewsComment, error) {
+	now := time.Now().UTC()
+	result := r.db.WithContext(ctx).
+		Model(&DBNewsComment{}).
+		Where("id = ? AND post_id = ?", commentID, postID).
+		Updates(map[string]any{
+			"text":       strings.TrimSpace(text),
+			"updated_at": now,
+		})
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil, domainErrors.ErrNotFound
+	}
+	var row DBNewsComment
+	if err := r.db.WithContext(ctx).First(&row, commentID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domainErrors.ErrNotFound
+		}
+		return nil, err
+	}
+	var user DBUser
+	if err := r.db.WithContext(ctx).First(&user, row.UserID).Error; err != nil {
+		return nil, err
+	}
+	updatedAt := row.UpdatedAt.UTC()
+	return &entity.NewsComment{
+		ID:            row.ID,
+		UserID:        row.UserID,
+		UserName:      user.FullName,
+		UserRole:      user.Role,
+		UserAvatarURL: strings.TrimSpace(user.AvatarURL),
+		Text:          row.Text,
+		CreatedAt:     row.CreatedAt,
+		UpdatedAt:     &updatedAt,
 	}, nil
 }
 
@@ -199,21 +243,43 @@ func (r *NewsRepo) ToggleReaction(ctx context.Context, postID, userID uint, reac
 	}, nil
 }
 
-func (r *NewsRepo) IncrementShare(ctx context.Context, postID uint) (int, error) {
-	result := r.db.WithContext(ctx).Model(&DBNewsPost{}).
-		Where("id = ?", postID).
-		UpdateColumn("share_count", gorm.Expr("share_count + 1"))
-	if result.Error != nil {
-		return 0, result.Error
-	}
-	if result.RowsAffected == 0 {
-		return 0, domainErrors.ErrNotFound
+func (r *NewsRepo) IncrementShare(ctx context.Context, postID, userID uint) (int, bool, error) {
+	shared := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existing DBNewsShare
+		findErr := tx.Where("post_id = ? AND user_id = ?", postID, userID).First(&existing).Error
+		if findErr == nil {
+			return nil
+		}
+		if !errors.Is(findErr, gorm.ErrRecordNotFound) {
+			return findErr
+		}
+		if err := tx.Create(&DBNewsShare{PostID: postID, UserID: userID}).Error; err != nil {
+			return err
+		}
+		update := tx.Model(&DBNewsPost{}).
+			Where("id = ?", postID).
+			UpdateColumn("share_count", gorm.Expr("share_count + 1"))
+		if update.Error != nil {
+			return update.Error
+		}
+		if update.RowsAffected == 0 {
+			return domainErrors.ErrNotFound
+		}
+		shared = true
+		return nil
+	})
+	if err != nil {
+		return 0, false, err
 	}
 	var post DBNewsPost
 	if err := r.db.WithContext(ctx).First(&post, postID).Error; err != nil {
-		return 0, err
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, false, domainErrors.ErrNotFound
+		}
+		return 0, false, err
 	}
-	return post.ShareCount, nil
+	return post.ShareCount, shared, nil
 }
 
 func (r *NewsRepo) AddMedia(ctx context.Context, postID uint, media []entity.NewsMedia) error {
@@ -279,8 +345,12 @@ func (r *NewsRepo) mapPosts(ctx context.Context, posts []DBNewsPost, currentUser
 		return nil, err
 	}
 	userNameMap := map[uint]string{}
+	userRoleMap := map[uint]string{}
+	userAvatarMap := map[uint]string{}
 	for _, user := range users {
 		userNameMap[user.ID] = user.FullName
+		userRoleMap[user.ID] = strings.TrimSpace(user.Role)
+		userAvatarMap[user.ID] = strings.TrimSpace(user.AvatarURL)
 	}
 
 	var mediaRows []DBNewsMedia
@@ -314,16 +384,26 @@ func (r *NewsRepo) mapPosts(ctx context.Context, posts []DBNewsPost, currentUser
 		}
 		for _, user := range commenters {
 			userNameMap[user.ID] = user.FullName
+			userRoleMap[user.ID] = strings.TrimSpace(user.Role)
+			userAvatarMap[user.ID] = strings.TrimSpace(user.AvatarURL)
 		}
 	}
 	commentsByPost := map[uint][]entity.NewsComment{}
 	for _, row := range commentRows {
+		var updatedAt *time.Time
+		if !row.UpdatedAt.IsZero() && !row.UpdatedAt.Equal(row.CreatedAt) {
+			clone := row.UpdatedAt.UTC()
+			updatedAt = &clone
+		}
 		commentsByPost[row.PostID] = append(commentsByPost[row.PostID], entity.NewsComment{
-			ID:        row.ID,
-			UserID:    row.UserID,
-			UserName:  userNameMap[row.UserID],
-			Text:      row.Text,
-			CreatedAt: row.CreatedAt,
+			ID:            row.ID,
+			UserID:        row.UserID,
+			UserName:      userNameMap[row.UserID],
+			UserRole:      userRoleMap[row.UserID],
+			UserAvatarURL: userAvatarMap[row.UserID],
+			Text:          row.Text,
+			CreatedAt:     row.CreatedAt,
+			UpdatedAt:     updatedAt,
 		})
 	}
 

@@ -35,6 +35,9 @@ func Bootstrap(ctx context.Context) (*Runtime, error) {
 	if err := os.MkdirAll(filepath.Join(cfg.MediaDir, "schedule"), 0o755); err != nil {
 		return nil, fmt.Errorf("create media/schedule dir: %w", err)
 	}
+	if err := os.MkdirAll(filepath.Join(cfg.MediaDir, "makeup"), 0o755); err != nil {
+		return nil, fmt.Errorf("create media/makeup dir: %w", err)
+	}
 
 	db, err := persistence.OpenPostgres(cfg.DatabaseURL)
 	if err != nil {
@@ -42,6 +45,9 @@ func Bootstrap(ctx context.Context) (*Runtime, error) {
 	}
 	if err := persistence.AutoMigrate(db); err != nil {
 		return nil, fmt.Errorf("migrate database: %w", err)
+	}
+	if err := persistence.CleanupLegacyLabs(ctx, db); err != nil {
+		return nil, fmt.Errorf("cleanup legacy labs: %w", err)
 	}
 
 	redisClient := cache.NewRedisClient(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
@@ -52,15 +58,19 @@ func Bootstrap(ctx context.Context) (*Runtime, error) {
 	userRepo := persistence.NewUserRepo(db)
 	sessionRepo := persistence.NewSessionRepo(db)
 	newsRepo := persistence.NewNewsRepo(db)
+	gradingRepo := persistence.NewGradingRepo(db)
 
 	passwordService := security.BcryptPasswordService{}
 	tokenService := security.NewJWTService(cfg.JWTSecret)
 	sessionCache := cache.NewRedisSessionCache(redisClient, cfg.SessionTTL)
+	formulaEngine := usecase.NewFormulaEngineUseCase()
 
 	authUC := usecase.NewAuthUseCase(userRepo, sessionRepo, sessionCache, passwordService, tokenService)
 	newsUC := usecase.NewNewsUseCase(newsRepo)
+	presetUC := usecase.NewPresetUseCase(gradingRepo, formulaEngine)
+	journalUC := usecase.NewJournalUseCase(gradingRepo, gradingRepo, formulaEngine)
 
-	handler := httpapi.NewHandler(cfg, db, redisClient, authUC, newsUC, userRepo, newsRepo)
+	handler := httpapi.NewHandler(cfg, db, redisClient, authUC, newsUC, presetUC, journalUC, userRepo, newsRepo)
 	authMiddleware := httpMiddleware.NewAuthMiddleware(tokenService, authUC)
 	router := httpapi.NewRouter(handler, authMiddleware)
 

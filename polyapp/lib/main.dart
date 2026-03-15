@@ -9,9 +9,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -21,12 +21,14 @@ import 'firebase_options.dart';
 import 'api/api_client.dart';
 import 'journal/journal_store.dart';
 import 'journal/attendance_journal_page.dart';
-import 'journal/grades_journal_page.dart';
-import 'journal/grades_pluto_page.dart';
+import 'journal/grades_preset_journal_page.dart';
+import 'makeup/makeup_pages.dart';
+import 'analytics/analytics_workspace_page.dart';
+import 'widgets/brand_logo.dart';
 
 const String apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
-  defaultValue: 'http://localhost:8000',
+  defaultValue: 'http://192.168.0.150:8000',
 );
 
 const Color kBrandPrimary = Color(0xFF0F766E);
@@ -40,8 +42,50 @@ const Color kMutedText = Color(0xFF9CA3AF);
 const Color kError = Color(0xFFEF4444);
 const Color kWarning = Color(0xFFF59E0B);
 const Color kInfo = Color(0xFF0EA5E9);
+const double kNewsMediaMaxWidth = 680;
+const double kNewsMediaMaxHeight = 320;
 
 enum DeviceCanvas { mobile, desktop, web }
+
+bool _isDesktopLikeCanvas() {
+  if (kIsWeb) return true;
+  return defaultTargetPlatform == TargetPlatform.windows ||
+      defaultTargetPlatform == TargetPlatform.macOS ||
+      defaultTargetPlatform == TargetPlatform.linux;
+}
+
+Future<T?> pushAdaptivePage<T>(
+  BuildContext context,
+  Widget child, {
+  double width = 1100,
+  double height = 780,
+  bool barrierDismissible = false,
+}) {
+  if (!_isDesktopLikeCanvas()) {
+    return Navigator.of(
+      context,
+    ).push<T>(MaterialPageRoute(builder: (_) => child));
+  }
+  return showDialog<T>(
+    context: context,
+    barrierDismissible: barrierDismissible,
+    builder: (_) => Dialog(
+      insetPadding: const EdgeInsets.all(20),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: SizedBox(width: width, height: height, child: child),
+      ),
+    ),
+  );
+}
+
+String publicNewsShareLink(BuildContext context, int postId) {
+  final rawBase = AppStateScope.of(context).baseUrl.trim();
+  final normalized = rawBase.endsWith('/api')
+      ? rawBase.substring(0, rawBase.length - 4)
+      : rawBase;
+  return '$normalized/news/public/$postId';
+}
 
 const List<Map<String, String>> kNewsCategories = [
   {'id': 'news', 'label': '\u041d\u043e\u0432\u043e\u0441\u0442\u0438'},
@@ -58,11 +102,10 @@ const List<Map<String, String>> kNewsCategories = [
 ];
 
 const Map<String, String> kReactionLabels = {
-  'like': '\ud83d\udc4d \u041d\u0440\u0430\u0432\u0438\u0442\u0441\u044f',
-  'cool': '\ud83d\udd25 \u041a\u0440\u0443\u0442\u043e',
-  'useful': '\ud83d\udc4f \u041f\u043e\u043b\u0435\u0437\u043d\u043e',
-  'discuss':
-      '\ud83d\udcac \u041e\u0431\u0441\u0443\u0436\u0434\u0435\u043d\u0438\u0435',
+  'like': '\u041d\u0440\u0430\u0432\u0438\u0442\u0441\u044f',
+  'cool': '\u041a\u0440\u0443\u0442\u043e',
+  'useful': '\u041f\u043e\u043b\u0435\u0437\u043d\u043e',
+  'discuss': '\u041e\u0431\u0441\u0443\u0436\u0434\u0435\u043d\u0438\u0435',
 };
 
 const Map<String, String> kReactionEmoji = {
@@ -71,6 +114,84 @@ const Map<String, String> kReactionEmoji = {
   'useful': '\ud83d\udc4f',
   'discuss': '\ud83d\udcac',
 };
+
+final RegExp _newsInlineMediaTokenPattern = RegExp(
+  r'\{\{media:(\d+)\}\}',
+  caseSensitive: false,
+);
+final RegExp _newsMarkdownImagePattern = RegExp(r'!\[[^\]]*\]\(([^)]+)\)');
+
+Set<int> _newsReferencedMediaIndices(String body, int mediaCount) {
+  final used = <int>{};
+  for (final match in _newsInlineMediaTokenPattern.allMatches(body)) {
+    final token = int.tryParse(match.group(1) ?? '');
+    if (token == null) continue;
+    final index = token - 1;
+    if (index >= 0 && index < mediaCount) {
+      used.add(index);
+    }
+  }
+  return used;
+}
+
+List<int> _newsRemainingMediaIndices(String body, List<NewsMedia> media) {
+  if (media.isEmpty) return const [];
+  final used = _newsReferencedMediaIndices(body, media.length);
+  final markdownUrls = _newsMarkdownImagePattern
+      .allMatches(body)
+      .map((m) => (m.group(1) ?? '').trim())
+      .where((url) => url.isNotEmpty)
+      .toSet();
+  if (markdownUrls.isNotEmpty) {
+    for (int i = 0; i < media.length; i++) {
+      final mediaUrl = media[i].url.trim();
+      if (mediaUrl.isEmpty) continue;
+      final resolvedMediaUrl = _resolveMediaUrl(mediaUrl);
+      final matchesMarkdown = markdownUrls.any((rawUrl) {
+        final resolvedRawUrl = _resolveMediaUrl(rawUrl);
+        return rawUrl == mediaUrl ||
+            rawUrl == resolvedMediaUrl ||
+            resolvedRawUrl == mediaUrl ||
+            resolvedRawUrl == resolvedMediaUrl;
+      });
+      if (matchesMarkdown) {
+        used.add(i);
+      }
+    }
+  }
+  final remaining = <int>[];
+  for (int i = 0; i < media.length; i++) {
+    if (!used.contains(i)) {
+      remaining.add(i);
+    }
+  }
+  return remaining;
+}
+
+String _newsPreviewText(String body) {
+  var text = body.replaceAll(_newsInlineMediaTokenPattern, '');
+  text = text.replaceAll(_newsMarkdownImagePattern, '');
+  text = text.replaceAll(RegExp(r'[ \t]+'), ' ');
+  text = text.replaceAll(RegExp(r'\n{2,}'), '\n');
+  return text.trim();
+}
+
+NewsMedia? _firstImageMedia(List<NewsMedia> media) {
+  for (final item in media) {
+    if (_isImage(item)) return item;
+  }
+  return null;
+}
+
+String? _firstMarkdownImageUrl(String body) {
+  for (final match in _newsMarkdownImagePattern.allMatches(body)) {
+    final url = (match.group(1) ?? '').trim();
+    if (url.isNotEmpty) {
+      return _resolveMediaUrl(url);
+    }
+  }
+  return null;
+}
 
 final FlutterLocalNotificationsPlugin _localNotifications =
     FlutterLocalNotificationsPlugin();
@@ -146,6 +267,11 @@ String humanizeError(Object error) {
   if (raw.startsWith('{') && raw.endsWith('}')) {
     raw = _extractApiDetail(raw) ?? raw;
   }
+  if (raw.contains('Invalid argument (string): Contains invalid characters')) {
+    return isRu
+        ? 'Некорректная ссылка на файл. Обновите страницу и попробуйте снова.'
+        : 'Invalid file link. Refresh and try again.';
+  }
   if (raw.contains('Invalid credentials')) {
     return isRu
         ? '\u041d\u0435\u0432\u0435\u0440\u043d\u0430\u044f \u043f\u043e\u0447\u0442\u0430 \u0438\u043b\u0438 \u043f\u0430\u0440\u043e\u043b\u044c.'
@@ -186,6 +312,12 @@ String humanizeError(Object error) {
         ? '\u041d\u0435\u0434\u043e\u0441\u0442\u0430\u0442\u043e\u0447\u043d\u043e \u043f\u0440\u0430\u0432 \u0434\u043b\u044f \u044d\u0442\u043e\u0433\u043e \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044f.'
         : 'Your role does not allow this action.';
   }
+  if (raw.contains('pending admin approval') ||
+      raw.contains('pending approval')) {
+    return isRu
+        ? 'Аккаунт создан и ожидает подтверждения администратором.'
+        : 'Account created and waiting for admin approval.';
+  }
   if (raw.isEmpty) {
     return isRu
         ? '\u041f\u0440\u043e\u0438\u0437\u043e\u0448\u043b\u0430 \u043e\u0448\u0438\u0431\u043a\u0430. \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439\u0442\u0435 \u0435\u0449\u0435 \u0440\u0430\u0437.'
@@ -201,6 +333,11 @@ String humanizeError(Object error) {
           raw.contains('notifications'))) {
     return 'Failed to load notifications.';
   }
+  if (raw.contains('Failed to fetch') || raw.contains('ClientException')) {
+    return isRu
+        ? 'Сервер недоступен. Проверьте API_BASE_URL и CORS (пример: http://<IP_компьютера>:8000 для телефона).'
+        : 'Server is unavailable. Check API_BASE_URL and CORS (example: http://<your-pc-ip>:8000 for phone).';
+  }
   return raw;
 }
 
@@ -209,8 +346,20 @@ String? _extractApiDetail(String input) {
   if (text.isEmpty) return null;
   final jsonStart = text.indexOf('{');
   final jsonText = jsonStart >= 0 ? text.substring(jsonStart) : text;
+  String normalized = jsonText;
+  if (normalized.contains(r'\"') || normalized.contains(r'\/')) {
+    normalized = normalized
+        .replaceAll(r'\"', '"')
+        .replaceAll(r'\/', '/')
+        .replaceAll(r'\\n', '\n')
+        .replaceAll(r'\\t', '\t')
+        .replaceAll(r'\\r', '\r');
+  }
   try {
-    final decoded = jsonDecode(jsonText);
+    dynamic decoded = jsonDecode(normalized);
+    if (decoded is String) {
+      decoded = jsonDecode(decoded);
+    }
     if (decoded is Map<String, dynamic>) {
       final detail = decoded['detail'];
       if (detail is String && detail.trim().isNotEmpty) return detail.trim();
@@ -235,7 +384,7 @@ class InlineNotice extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
@@ -359,6 +508,9 @@ class AppLocalizations {
           '\u041d\u0435\u0442 \u0443\u0432\u0435\u0434\u043e\u043c\u043b\u0435\u043d\u0438\u0439',
       'notifications_mark_read':
           '\u041e\u0442\u043c\u0435\u0442\u0438\u0442\u044c \u043a\u0430\u043a \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043d\u043d\u043e\u0435',
+      'notifications_read_action':
+          '\u041f\u0440\u043e\u0447\u0438\u0442\u0430\u0442\u044c',
+      'notifications_delete': '\u0423\u0434\u0430\u043b\u0438\u0442\u044c',
       'notifications_unread': '\u041d\u043e\u0432\u044b\u0435',
       'reset_password_action':
           '\u0421\u0431\u0440\u043e\u0441\u0438\u0442\u044c \u043f\u0430\u0440\u043e\u043b\u044c',
@@ -421,6 +573,8 @@ class AppLocalizations {
       'notifications_title': 'Notifications',
       'notifications_empty': 'No notifications yet',
       'notifications_mark_read': 'Mark as read',
+      'notifications_read_action': 'Read',
+      'notifications_delete': 'Delete',
       'notifications_unread': 'New',
     },
   };
@@ -463,6 +617,9 @@ const List<String> kRequestTypes = [
   '\u0421\u043f\u0440\u0430\u0432\u043a\u0430 \u0432 \u0448\u043a\u043e\u043b\u0443',
 ];
 
+const String kTeacherGroupRequestType =
+    '\u0417\u0430\u043f\u0440\u043e\u0441 \u043d\u0430 \u043f\u0440\u0435\u043f\u043e\u0434\u0430\u0432\u0430\u043d\u0438\u0435 \u0433\u0440\u0443\u043f\u043f\u044b';
+
 const List<String> kRequestStatuses = [
   '\u041e\u0442\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0430',
   '\u041d\u0430 \u0440\u0430\u0441\u0441\u043c\u043e\u0442\u0440\u0435\u043d\u0438\u0438',
@@ -470,6 +627,20 @@ const List<String> kRequestStatuses = [
   '\u0412 \u0440\u0430\u0431\u043e\u0442\u0435',
   '\u0413\u043e\u0442\u043e\u0432\u0430',
 ];
+
+String _resolvedApiBaseUrl() {
+  final trimmed = apiBaseUrl.trim();
+  final uri = Uri.tryParse(trimmed);
+  if (uri == null) {
+    return trimmed;
+  }
+  final isLocalhost = uri.host == 'localhost' || uri.host == '127.0.0.1';
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android && isLocalhost) {
+    final mapped = uri.replace(host: '10.0.2.2');
+    return mapped.toString().replaceFirst(RegExp(r'/+$'), '');
+  }
+  return trimmed.replaceFirst(RegExp(r'/+$'), '');
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -480,7 +651,7 @@ Future<void> main() async {
   } catch (_) {}
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   await _initLocalNotifications();
-  final state = AppState(apiBaseUrl);
+  final state = AppState(_resolvedApiBaseUrl());
   await state.init();
   await JournalStore.init();
   runApp(PolyApp(state: state));
@@ -499,8 +670,18 @@ class AppState extends ChangeNotifier {
       'phone': user.phone,
       'avatar_url': user.avatarUrl,
       'about': user.about,
+      'notify_schedule': user.notifySchedule,
+      'notify_requests': user.notifyRequests,
       'student_group': user.studentGroup,
       'teacher_name': user.teacherName,
+      'child_full_name': user.childFullName,
+      'parent_student_id': user.parentStudentId,
+      'admin_permissions': user.adminPermissions,
+      'is_approved': user.isApproved,
+      'approved_at': user.approvedAt?.toIso8601String(),
+      'approved_by': user.approvedBy,
+      'created_at': user.createdAt?.toIso8601String(),
+      'updated_at': user.updatedAt?.toIso8601String(),
       'birth_date': user.birthDate?.toIso8601String(),
     };
   }
@@ -527,6 +708,7 @@ class AppState extends ChangeNotifier {
   bool _isReady = false;
   Locale _locale = const Locale('ru');
   bool _pushReady = false;
+  int? _clockDriftSeconds;
 
   ApiClient get client => _client;
   String? get token => _token;
@@ -535,6 +717,17 @@ class AppState extends ChangeNotifier {
   bool get isReady => _isReady;
   String? get deviceId => _deviceId;
   Locale get locale => _locale;
+  int? get clockDriftSeconds => _clockDriftSeconds;
+
+  Future<void> _syncDeviceClock() async {
+    try {
+      final data = await _client.syncDeviceTime();
+      final drift = data['drift_seconds'];
+      if (drift is num) {
+        _clockDriftSeconds = drift.toInt();
+      }
+    } catch (_) {}
+  }
 
   String _platformLabel() {
     if (kIsWeb) return 'web';
@@ -636,6 +829,7 @@ class AppState extends ChangeNotifier {
     }
 
     if (isAuthenticated) {
+      await _syncDeviceClock();
       await _setupPush();
     }
     _isReady = true;
@@ -651,18 +845,32 @@ class AppState extends ChangeNotifier {
     _setAuth(response);
   }
 
-  Future<void> register({
+  Future<bool> register({
     required String fullName,
     required String email,
     required String password,
+    required String role,
+    String? studentGroup,
+    String? teacherName,
+    String? childFullName,
+    int? parentStudentId,
   }) async {
     final response = await _client.register(
       fullName: fullName,
       email: email,
       password: password,
+      role: role,
+      studentGroup: studentGroup,
+      teacherName: teacherName,
+      childFullName: childFullName,
+      parentStudentId: parentStudentId,
       deviceId: _deviceId,
     );
-    _setAuth(response);
+    if (response.auth != null) {
+      _setAuth(response.auth!);
+      return true;
+    }
+    return false;
   }
 
   Future<void> setLocale(String code) async {
@@ -689,6 +897,10 @@ class AppState extends ChangeNotifier {
     if (current == null) return null;
     final updated = await _client.updateUser(current.id, payload);
     _user = updated;
+    if (_token != null) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_userKey, jsonEncode(_userToJson(updated)));
+    }
     notifyListeners();
     return updated;
   }
@@ -699,6 +911,7 @@ class AppState extends ChangeNotifier {
     _client = ApiClient(baseUrl: baseUrl, token: response.accessToken);
     _persistAuth(response);
     notifyListeners();
+    unawaited(_syncDeviceClock());
     unawaited(_setupPush());
   }
 }
@@ -706,9 +919,9 @@ class AppState extends ChangeNotifier {
 class AppStateScope extends InheritedNotifier<AppState> {
   const AppStateScope({
     super.key,
-    required AppState notifier,
-    required Widget child,
-  }) : super(notifier: notifier, child: child);
+    required AppState super.notifier,
+    required super.child,
+  });
 
   static AppState of(BuildContext context) {
     final scope = context.dependOnInheritedWidgetOfExactType<AppStateScope>();
@@ -768,7 +981,6 @@ class PolyApp extends StatelessWidget {
               primary: kBrandPrimary,
               secondary: const Color(0xFFB45309),
               surface: kCardSurface,
-              background: kAppBackground,
               error: kError,
             ),
             useMaterial3: true,
@@ -776,7 +988,7 @@ class PolyApp extends StatelessWidget {
             cardTheme: CardThemeData(
               color: kCardSurface,
               elevation: 0.8,
-              shadowColor: Colors.black.withOpacity(0.05),
+              shadowColor: Colors.black.withValues(alpha: 0.05),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(20),
               ),
@@ -859,9 +1071,9 @@ class SplashPage extends StatelessWidget {
         child: Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            children: const [
-              Icon(Icons.school, size: 72, color: Colors.white),
-              SizedBox(height: 16),
+            children: [
+              const BrandLogo(size: 96, animated: true),
+              const SizedBox(height: 16),
               Text(
                 'PolyApp',
                 style: TextStyle(
@@ -870,8 +1082,20 @@ class SplashPage extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                 ),
               ),
-              SizedBox(height: 16),
-              CircularProgressIndicator(color: Colors.white),
+              const SizedBox(height: 16),
+              Text(
+                l10n.t('loading'),
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+              ),
+              const SizedBox(height: 10),
+              const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  color: Colors.white,
+                  strokeWidth: 2.2,
+                ),
+              ),
             ],
           ),
         ),
@@ -893,22 +1117,16 @@ class _AuthPageState extends State<AuthPage> {
   final _passwordController = TextEditingController();
   final _confirmController = TextEditingController();
   final _nameController = TextEditingController();
+  final _groupController = TextEditingController();
+  final _teacherNameController = TextEditingController();
+  final _childNameController = TextEditingController();
   bool _isRegister = false;
   bool _isLoading = false;
   bool _showPassword = false;
   bool _showConfirm = false;
   String? _errorMessage;
-
-  String _formatAuthError(Object error) {
-    final message = error.toString().replaceFirst('Exception: ', '').trim();
-    if (message.contains('Invalid credentials'))
-      return 'Invalid email or password.';
-    if (message.contains('Email already registered'))
-      return 'Email already registered.';
-    if (message.contains('Password must be at least'))
-      return 'Password too short.';
-    return message;
-  }
+  String? _noticeMessage;
+  String _registerRole = 'student';
 
   @override
   void dispose() {
@@ -916,6 +1134,9 @@ class _AuthPageState extends State<AuthPage> {
     _passwordController.dispose();
     _confirmController.dispose();
     _nameController.dispose();
+    _groupController.dispose();
+    _teacherNameController.dispose();
+    _childNameController.dispose();
     super.dispose();
   }
 
@@ -944,34 +1165,59 @@ class _AuthPageState extends State<AuthPage> {
     if (text.isEmpty) return l10n.t('password_required');
     if (text.length < 8) return l10n.t('password_hint');
     final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
-    if (!RegExp(r'[A-Z]').hasMatch(text))
+    if (!RegExp(r'[A-Z]').hasMatch(text)) {
       return isRu
           ? '\u0414\u043e\u0431\u0430\u0432\u044c\u0442\u0435 \u0437\u0430\u0433\u043b\u0430\u0432\u043d\u0443\u044e \u0431\u0443\u043a\u0432\u0443.'
           : 'Add an uppercase letter.';
-    if (!RegExp(r'[a-z]').hasMatch(text))
+    }
+    if (!RegExp(r'[a-z]').hasMatch(text)) {
       return isRu
           ? '\u0414\u043e\u0431\u0430\u0432\u044c\u0442\u0435 \u0441\u0442\u0440\u043e\u0447\u043d\u0443\u044e \u0431\u0443\u043a\u0432\u0443.'
           : 'Add a lowercase letter.';
-    if (!RegExp(r'[0-9]').hasMatch(text))
+    }
+    if (!RegExp(r'[0-9]').hasMatch(text)) {
       return isRu
           ? '\u0414\u043e\u0431\u0430\u0432\u044c\u0442\u0435 \u0446\u0438\u0444\u0440\u0443.'
           : 'Add a number.';
+    }
     return null;
   }
 
   Future<void> _submit() async {
     FocusScope.of(context).unfocus();
-    setState(() => _errorMessage = null);
+    setState(() {
+      _errorMessage = null;
+      _noticeMessage = null;
+    });
     if (!(_formKey.currentState?.validate() ?? false)) return;
     final state = AppStateScope.of(context);
     setState(() => _isLoading = true);
     try {
       if (_isRegister) {
-        await state.register(
+        final authed = await state.register(
           fullName: _nameController.text.trim(),
           email: _emailController.text.trim(),
           password: _passwordController.text,
+          role: _registerRole,
+          studentGroup: _registerRole == 'student'
+              ? _groupController.text.trim()
+              : null,
+          teacherName: _registerRole == 'teacher'
+              ? _teacherNameController.text.trim()
+              : null,
+          childFullName: _registerRole == 'parent'
+              ? _childNameController.text.trim()
+              : null,
         );
+        if (!authed && mounted) {
+          setState(() {
+            _noticeMessage =
+                AppStateScope.of(context).locale.languageCode == 'ru'
+                ? 'Аккаунт создан. Ожидайте подтверждения администратора.'
+                : 'Account created. Wait for admin approval.';
+            _isRegister = false;
+          });
+        }
       } else {
         await state.login(
           email: _emailController.text.trim(),
@@ -989,9 +1235,10 @@ class _AuthPageState extends State<AuthPage> {
   }
 
   void _openReset() {
-    Navigator.of(
+    pushAdaptivePage<void>(
       context,
-    ).push(MaterialPageRoute(builder: (_) => const ResetPasswordPage()));
+      ResetPasswordPage(initialEmail: _emailController.text.trim()),
+    );
   }
 
   @override
@@ -1028,10 +1275,19 @@ class _AuthPageState extends State<AuthPage> {
                         children: [
                           Row(
                             children: [
-                              const CircleAvatar(
-                                radius: 24,
-                                backgroundColor: kSecondaryBackground,
-                                child: Icon(Icons.school, color: kBrandPrimary),
+                              Container(
+                                width: 58,
+                                height: 58,
+                                decoration: BoxDecoration(
+                                  color: kSecondaryBackground,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: kBrandPrimary.withValues(
+                                      alpha: 0.15,
+                                    ),
+                                  ),
+                                ),
+                                child: const Center(child: BrandLogo(size: 42)),
                               ),
                               const SizedBox(width: 12),
                               Expanded(
@@ -1068,14 +1324,166 @@ class _AuthPageState extends State<AuthPage> {
                               ),
                               validator: (value) {
                                 if (!_isRegister) return null;
-                                if (value == null || value.trim().isEmpty)
+                                if (value == null || value.trim().isEmpty) {
                                   return l10n.t('name_required');
+                                }
                                 return null;
                               },
                               onFieldSubmitted: (_) =>
                                   FocusScope.of(context).nextFocus(),
                             ),
                           if (_isRegister) const SizedBox(height: 12),
+                          if (_isRegister)
+                            DropdownButtonFormField<String>(
+                              initialValue: _registerRole,
+                              decoration: InputDecoration(
+                                labelText:
+                                    AppStateScope.of(
+                                          context,
+                                        ).locale.languageCode ==
+                                        'ru'
+                                    ? 'Роль'
+                                    : 'Role',
+                              ),
+                              items: [
+                                DropdownMenuItem(
+                                  value: 'student',
+                                  child: Text(
+                                    AppStateScope.of(
+                                              context,
+                                            ).locale.languageCode ==
+                                            'ru'
+                                        ? 'Студент'
+                                        : 'Student',
+                                  ),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'teacher',
+                                  child: Text(
+                                    AppStateScope.of(
+                                              context,
+                                            ).locale.languageCode ==
+                                            'ru'
+                                        ? 'Преподаватель'
+                                        : 'Teacher',
+                                  ),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'parent',
+                                  child: Text(
+                                    AppStateScope.of(
+                                              context,
+                                            ).locale.languageCode ==
+                                            'ru'
+                                        ? 'Родитель'
+                                        : 'Parent',
+                                  ),
+                                ),
+                              ],
+                              onChanged: (value) {
+                                if (value == null) return;
+                                setState(() => _registerRole = value);
+                              },
+                            ),
+                          if (_isRegister) const SizedBox(height: 12),
+                          if (_isRegister && _registerRole == 'student')
+                            TextFormField(
+                              controller: _groupController,
+                              textInputAction: TextInputAction.next,
+                              decoration: InputDecoration(
+                                labelText:
+                                    AppStateScope.of(
+                                          context,
+                                        ).locale.languageCode ==
+                                        'ru'
+                                    ? 'Группа'
+                                    : 'Group',
+                              ),
+                              validator: (value) {
+                                if (!_isRegister ||
+                                    _registerRole != 'student') {
+                                  return null;
+                                }
+                                if (value == null || value.trim().isEmpty) {
+                                  return AppStateScope.of(
+                                            context,
+                                          ).locale.languageCode ==
+                                          'ru'
+                                      ? 'Укажите группу.'
+                                      : 'Group is required.';
+                                }
+                                return null;
+                              },
+                              onFieldSubmitted: (_) =>
+                                  FocusScope.of(context).nextFocus(),
+                            ),
+                          if (_isRegister && _registerRole == 'student')
+                            const SizedBox(height: 12),
+                          if (_isRegister && _registerRole == 'teacher')
+                            TextFormField(
+                              controller: _teacherNameController,
+                              textInputAction: TextInputAction.next,
+                              decoration: InputDecoration(
+                                labelText:
+                                    AppStateScope.of(
+                                          context,
+                                        ).locale.languageCode ==
+                                        'ru'
+                                    ? 'ФИО преподавателя (для журнала)'
+                                    : 'Teacher name (for journal)',
+                              ),
+                              validator: (value) {
+                                if (!_isRegister ||
+                                    _registerRole != 'teacher') {
+                                  return null;
+                                }
+                                if (value == null || value.trim().isEmpty) {
+                                  return AppStateScope.of(
+                                            context,
+                                          ).locale.languageCode ==
+                                          'ru'
+                                      ? 'Укажите ФИО преподавателя.'
+                                      : 'Teacher name is required.';
+                                }
+                                return null;
+                              },
+                              onFieldSubmitted: (_) =>
+                                  FocusScope.of(context).nextFocus(),
+                            ),
+                          if (_isRegister && _registerRole == 'teacher')
+                            const SizedBox(height: 12),
+                          if (_isRegister && _registerRole == 'parent')
+                            TextFormField(
+                              controller: _childNameController,
+                              textInputAction: TextInputAction.next,
+                              decoration: InputDecoration(
+                                labelText:
+                                    AppStateScope.of(
+                                          context,
+                                        ).locale.languageCode ==
+                                        'ru'
+                                    ? 'ФИО ребёнка'
+                                    : 'Child full name',
+                              ),
+                              validator: (value) {
+                                if (!_isRegister || _registerRole != 'parent') {
+                                  return null;
+                                }
+                                if (value == null || value.trim().isEmpty) {
+                                  return AppStateScope.of(
+                                            context,
+                                          ).locale.languageCode ==
+                                          'ru'
+                                      ? 'Укажите ФИО ребёнка.'
+                                      : 'Child full name is required.';
+                                }
+                                return null;
+                              },
+                              onFieldSubmitted: (_) =>
+                                  FocusScope.of(context).nextFocus(),
+                            ),
+                          if (_isRegister && _registerRole == 'parent')
+                            const SizedBox(height: 12),
                           TextFormField(
                             controller: _emailController,
                             keyboardType: TextInputType.emailAddress,
@@ -1084,10 +1492,12 @@ class _AuthPageState extends State<AuthPage> {
                               labelText: l10n.t('email'),
                             ),
                             validator: (value) {
-                              if (value == null || value.trim().isEmpty)
+                              if (value == null || value.trim().isEmpty) {
                                 return l10n.t('email_required');
-                              if (!value.contains('@'))
+                              }
+                              if (!value.contains('@')) {
                                 return l10n.t('email_required');
+                              }
                               return null;
                             },
                             onFieldSubmitted: (_) =>
@@ -1115,6 +1525,13 @@ class _AuthPageState extends State<AuthPage> {
                             ),
                             validator: _validatePassword,
                             onChanged: (_) => setState(() {}),
+                            onFieldSubmitted: (_) {
+                              if (_isRegister) {
+                                FocusScope.of(context).nextFocus();
+                                return;
+                              }
+                              _submit();
+                            },
                           ),
                           if (_isRegister) ...[
                             const SizedBox(height: 8),
@@ -1165,21 +1582,50 @@ class _AuthPageState extends State<AuthPage> {
                               ),
                               validator: (value) {
                                 if (!_isRegister) return null;
-                                if (value == null || value.isEmpty)
+                                if (value == null || value.isEmpty) {
                                   return 'Confirm your password';
-                                if (value != _passwordController.text)
+                                }
+                                if (value != _passwordController.text) {
                                   return l10n.t('passwords_mismatch');
+                                }
                                 return null;
                               },
                               onFieldSubmitted: (_) => _submit(),
                             ),
                           ],
                           const SizedBox(height: 16),
+                          if (_noticeMessage != null)
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: kAccentSuccess.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(
+                                    Icons.check_circle_outline,
+                                    color: kAccentSuccess,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      _noticeMessage!,
+                                      style: const TextStyle(
+                                        color: kAccentSuccess,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if (_noticeMessage != null)
+                            const SizedBox(height: 12),
                           if (_errorMessage != null)
                             Container(
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
-                                color: kError.withOpacity(0.12),
+                                color: kError.withValues(alpha: 0.12),
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Row(
@@ -1249,7 +1695,9 @@ class _AuthPageState extends State<AuthPage> {
 }
 
 class ResetPasswordPage extends StatefulWidget {
-  const ResetPasswordPage({super.key});
+  const ResetPasswordPage({super.key, this.initialEmail});
+
+  final String? initialEmail;
 
   @override
   State<ResetPasswordPage> createState() => _ResetPasswordPageState();
@@ -1261,6 +1709,15 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
   bool _sending = false;
   String? _message;
   bool _success = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initialEmail?.trim() ?? '';
+    if (initial.isNotEmpty) {
+      _emailController.text = initial;
+    }
+  }
 
   @override
   void dispose() {
@@ -1277,10 +1734,22 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     setState(() => _sending = true);
     final l10n = AppLocalizations.of(context);
+    final email = _emailController.text.trim();
     try {
-      await FirebaseAuth.instance.sendPasswordResetEmail(
-        email: _emailController.text.trim(),
-      );
+      final exists = await AppStateScope.of(
+        context,
+      ).client.checkEmailRegistered(email);
+      if (!exists) {
+        if (!mounted) return;
+        setState(() {
+          _success = false;
+          _message = AppStateScope.of(context).locale.languageCode == 'ru'
+              ? 'Аккаунт с такой почтой не найден.'
+              : 'No account is registered with this email.';
+        });
+        return;
+      }
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
       if (!mounted) return;
       setState(() {
         _success = true;
@@ -1313,6 +1782,13 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
         padding: const EdgeInsets.all(24),
         children: [
           Text(l10n.t('reset_desc'), style: TextStyle(color: kSecondaryText)),
+          const SizedBox(height: 8),
+          Text(
+            AppStateScope.of(context).locale.languageCode == 'ru'
+                ? 'Введите почту, привязанную к вашему аккаунту.'
+                : 'Enter the email linked to your account.',
+            style: TextStyle(color: kSecondaryText, fontSize: 12),
+          ),
           const SizedBox(height: 16),
           Form(
             key: _formKey,
@@ -1321,8 +1797,9 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
               keyboardType: TextInputType.emailAddress,
               decoration: InputDecoration(labelText: l10n.t('email')),
               validator: (value) {
-                if (value == null || value.trim().isEmpty)
+                if (value == null || value.trim().isEmpty) {
                   return l10n.t('email_required');
+                }
                 if (!value.contains('@')) return l10n.t('email_required');
                 return null;
               },
@@ -1333,7 +1810,9 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: (_success ? kAccentSuccess : kError).withOpacity(0.12),
+                color: (_success ? kAccentSuccess : kError).withValues(
+                  alpha: 0.12,
+                ),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Row(
@@ -1379,14 +1858,7 @@ class LoadingOverlay extends StatelessWidget {
     return Container(
       color: Colors.black54,
       child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: const [
-            Icon(Icons.school, size: 64, color: Colors.white),
-            SizedBox(height: 16),
-            CircularProgressIndicator(color: Colors.white),
-          ],
-        ),
+        child: const BrandLoadingIndicator(dark: true, logoSize: 88),
       ),
     );
   }
@@ -1420,6 +1892,44 @@ class FeatureDefinition {
   final String title;
   final IconData icon;
   final WidgetBuilder builder;
+}
+
+Widget _buildMakeupFeaturePage(BuildContext context) {
+  final state = AppStateScope.of(context);
+  final user = state.user;
+  if (user == null) return const SizedBox.shrink();
+  return MakeupWorkspacePage(
+    client: state.client,
+    currentUser: user,
+    locale: state.locale,
+    baseUrl: state.baseUrl,
+    errorText: humanizeError,
+  );
+}
+
+Widget _buildAdminFeaturePage(BuildContext context) {
+  final state = AppStateScope.of(context);
+  final user = state.user;
+  if (user == null) return const SizedBox.shrink();
+  return AdminWorkspacePage(
+    client: state.client,
+    currentUser: user,
+    locale: state.locale,
+    baseUrl: state.baseUrl,
+    errorText: humanizeError,
+  );
+}
+
+Widget _buildAnalyticsFeaturePage(BuildContext context) {
+  final state = AppStateScope.of(context);
+  final user = state.user;
+  if (user == null) return const SizedBox.shrink();
+  return AnalyticsWorkspacePage(
+    client: state.client,
+    currentUser: user,
+    locale: state.locale,
+    errorText: humanizeError,
+  );
 }
 
 final List<RoleDefinition> kRoles = [
@@ -1502,6 +2012,12 @@ final List<RoleDefinition> kRoles = [
     color: const Color(0xFF1C3F60),
     features: [
       FeatureDefinition(
+        id: 'admin_panel',
+        title: 'Admin panel',
+        icon: Icons.admin_panel_settings_outlined,
+        builder: _buildAdminFeaturePage,
+      ),
+      FeatureDefinition(
         id: 'schedule',
         title: 'Schedule',
         icon: Icons.calendar_month,
@@ -1520,22 +2036,22 @@ final List<RoleDefinition> kRoles = [
         builder: (context) => const GradesPage(),
       ),
       FeatureDefinition(
-        id: 'exams',
-        title: 'Exam grades',
-        icon: Icons.assignment_turned_in,
-        builder: (context) => const ExamGradesPage(),
-      ),
-      FeatureDefinition(
         id: 'analytics',
         title: 'Analytics',
         icon: Icons.analytics_outlined,
-        builder: (context) => const AnalyticsPage(),
+        builder: _buildAnalyticsFeaturePage,
       ),
       FeatureDefinition(
         id: 'news',
         title: 'News feed',
         icon: Icons.dynamic_feed,
         builder: (context) => const NewsFeedPage(canEdit: true),
+      ),
+      FeatureDefinition(
+        id: 'makeup',
+        title: 'Makeups',
+        icon: Icons.assignment_late_outlined,
+        builder: _buildMakeupFeaturePage,
       ),
       FeatureDefinition(
         id: 'requests',
@@ -1576,6 +2092,12 @@ final List<RoleDefinition> kRoles = [
         builder: (context) => const RequestsPage(canProcess: false),
       ),
       FeatureDefinition(
+        id: 'makeup',
+        title: 'Makeups',
+        icon: Icons.assignment_late_outlined,
+        builder: _buildMakeupFeaturePage,
+      ),
+      FeatureDefinition(
         id: 'news',
         title: 'News feed',
         icon: Icons.dynamic_feed,
@@ -1614,22 +2136,22 @@ final List<RoleDefinition> kRoles = [
         builder: (context) => const GradesPage(),
       ),
       FeatureDefinition(
-        id: 'exams',
-        title: 'Exam grades',
-        icon: Icons.assignment_turned_in,
-        builder: (context) => const ExamGradesPage(),
-      ),
-      FeatureDefinition(
         id: 'analytics',
         title: 'Analytics',
         icon: Icons.analytics_outlined,
-        builder: (context) => const AnalyticsPage(),
+        builder: _buildAnalyticsFeaturePage,
       ),
       FeatureDefinition(
         id: 'news',
         title: 'News feed',
         icon: Icons.dynamic_feed,
         builder: (context) => const NewsFeedPage(canEdit: false),
+      ),
+      FeatureDefinition(
+        id: 'makeup',
+        title: 'Makeups',
+        icon: Icons.assignment_late_outlined,
+        builder: _buildMakeupFeaturePage,
       ),
       FeatureDefinition(
         id: 'profile',
@@ -1652,11 +2174,129 @@ class RoleHomePage extends StatefulWidget {
 
 class _RoleHomePageState extends State<RoleHomePage> {
   int _index = 0;
+  int _unreadNotifications = 0;
+  int _totalNotifications = 0;
+  Timer? _notificationsTimer;
+  static const List<String> _navFeatureOrder = <String>[
+    'news',
+    'schedule',
+    'grades',
+    'attendance',
+    'analytics',
+    'exams',
+    'makeup',
+    'requests',
+    'admin_panel',
+    'profile',
+  ];
 
-  void _openNotifications() {
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const NotificationsPage()));
+  @override
+  void initState() {
+    super.initState();
+    _restoreTab();
+    _refreshUnreadNotifications();
+    _notificationsTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!mounted) return;
+      _refreshUnreadNotifications();
+    });
+  }
+
+  @override
+  void dispose() {
+    _notificationsTimer?.cancel();
+    super.dispose();
+  }
+
+  String _tabKey() => 'home_tab_${widget.role.id}';
+
+  Future<void> _restoreTab() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getInt(_tabKey());
+    if (!mounted) return;
+    setState(() {
+      if (saved != null && saved >= 0) {
+        _index = saved;
+      }
+    });
+  }
+
+  Future<void> _saveTab(int value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_tabKey(), value);
+  }
+
+  void _setIndex(int value) {
+    if (_index == value) return;
+    setState(() => _index = value);
+    _saveTab(value);
+  }
+
+  void _openFeatureById(String featureId) {
+    final tabs = _buildTabs();
+    final target = tabs.indexWhere((item) => item.id == featureId);
+    if (target >= 0) {
+      _setIndex(target);
+    }
+  }
+
+  Future<void> _openNotifications() async {
+    await pushAdaptivePage<void>(context, const NotificationsPage());
+    if (!mounted) return;
+    await _refreshUnreadNotifications();
+  }
+
+  Future<void> _refreshUnreadNotifications() async {
+    try {
+      final rows = await AppStateScope.of(context).client.listNotifications(
+        limit: 50,
+      );
+      if (!mounted) return;
+      setState(() {
+        _totalNotifications = rows.length;
+        _unreadNotifications = rows.where((item) => !item.isRead).length;
+      });
+    } catch (_) {}
+  }
+
+  Widget _buildNotificationButton() {
+    final visibleCount = _unreadNotifications > 0
+        ? _unreadNotifications
+        : _totalNotifications;
+    final icon = IconButton(
+      onPressed: _openNotifications,
+      icon: const Icon(Icons.notifications_none),
+      tooltip: 'Notifications',
+    );
+    if (visibleCount <= 0) {
+      return icon;
+    }
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        icon,
+        Positioned(
+          right: 6,
+          top: 6,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+            decoration: BoxDecoration(
+              color: Colors.red,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              visibleCount > 99 ? '99+' : '$visibleCount',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   bool _isNativeDesktop() {
@@ -1666,63 +2306,129 @@ class _RoleHomePageState extends State<RoleHomePage> {
         defaultTargetPlatform == TargetPlatform.linux;
   }
 
-  DeviceCanvas _resolveCanvas(BoxConstraints constraints) {
+  DeviceCanvas _resolveCanvas() {
     if (kIsWeb) {
       return DeviceCanvas.web;
     }
-    if (_isNativeDesktop() && constraints.maxWidth >= 980) {
+    if (_isNativeDesktop()) {
       return DeviceCanvas.desktop;
     }
     return DeviceCanvas.mobile;
   }
 
+  String _localizedFeatureTitle(FeatureDefinition feature, bool isRu) {
+    if (!isRu) {
+      return feature.title;
+    }
+    switch (feature.id) {
+      case 'schedule':
+        return 'Расписание';
+      case 'attendance':
+        return 'Посещаемость';
+      case 'grades':
+        return 'Оценки';
+      case 'analytics':
+        return 'Аналитика';
+      case 'news':
+        return 'Новости';
+      case 'requests':
+        return 'Заявки';
+      case 'makeup':
+        return 'Отработки';
+      case 'admin_panel':
+        return 'Админ панель';
+      case 'exams':
+        return 'Экзамены';
+      case 'profile':
+        return 'Профиль';
+      default:
+        return feature.title;
+    }
+  }
+
+  int _featureOrderRank(String id) {
+    final idx = _navFeatureOrder.indexOf(id);
+    if (idx >= 0) {
+      return idx;
+    }
+    return _navFeatureOrder.length + 100;
+  }
+
+  bool _adminCanAccessFeature(UserProfile? user, String featureId) {
+    if ((user?.role ?? '') != 'admin') {
+      return true;
+    }
+    final permissions = user?.adminPermissions ?? const <String>[];
+    if (permissions.isEmpty || permissions.contains('all')) {
+      return true;
+    }
+    final permissionSet = permissions.map((item) => item.trim()).toSet();
+    bool has(String code) => permissionSet.contains(code);
+    switch (featureId) {
+      case 'admin_panel':
+        return has('users_manage') ||
+            has('departments_manage') ||
+            has('academic_manage') ||
+            has('schedule_manage') ||
+            has('analytics_view');
+      case 'schedule':
+        return has('schedule_manage');
+      case 'attendance':
+      case 'grades':
+      case 'exams':
+      case 'makeup':
+      case 'requests':
+      case 'news':
+        return has('academic_manage');
+      case 'analytics':
+        return has('analytics_view');
+      case 'profile':
+      case 'home':
+        return true;
+      default:
+        return true;
+    }
+  }
+
   List<_NavItem> _buildTabs() {
     final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    final currentUser = AppStateScope.of(context).user;
     String t(String ru, String en) => isRu ? ru : en;
-    final featureIds = widget.role.features
-        .map((feature) => feature.id)
-        .toSet();
+    final added = <String>{};
+    final sortedFeatures = [...widget.role.features]
+      ..sort((a, b) {
+        final rankA = _featureOrderRank(a.id);
+        final rankB = _featureOrderRank(b.id);
+        if (rankA != rankB) {
+          return rankA.compareTo(rankB);
+        }
+        return a.id.compareTo(b.id);
+      });
     final items = <_NavItem>[
       _NavItem(
+        id: 'home',
         t('Главная', 'Home'),
         Icons.home,
-        (context) => HomePage(role: widget.role),
+        (context) => HomeDashboardPage(
+          role: widget.role,
+          onOpenFeature: _openFeatureById,
+        ),
       ),
     ];
-    if (featureIds.contains('schedule')) {
+    for (final feature in sortedFeatures) {
+      if (!added.add(feature.id)) continue;
+      if (!_adminCanAccessFeature(currentUser, feature.id)) {
+        continue;
+      }
       items.add(
         _NavItem(
-          t('Расписание', 'Schedule'),
-          Icons.calendar_today,
-          (context) => const SchedulePage(),
+          id: feature.id,
+          _localizedFeatureTitle(feature, isRu),
+          feature.icon,
+          feature.builder,
         ),
       );
     }
-    if (featureIds.contains('grades') || featureIds.contains('attendance')) {
-      items.add(
-        _NavItem(
-          t('Оценки', 'Grades'),
-          Icons.grade,
-          (context) => const GradesPage(),
-        ),
-      );
-    }
-    if (featureIds.contains('analytics')) {
-      items.add(
-        _NavItem(
-          t('Аналитика', 'Analytics'),
-          Icons.analytics_outlined,
-          (context) => const AnalyticsPage(),
-        ),
-      );
-    }
-    items.add(
-      _NavItem(
-        t('Профиль', 'Profile'),
-        Icons.person,
-        (context) => const ProfilePage(),
-      ),
-    );
     return items;
   }
 
@@ -1758,7 +2464,10 @@ class _RoleHomePageState extends State<RoleHomePage> {
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
-                colors: [color.withOpacity(0.24), const Color(0xFFD9E9D2)],
+                colors: [
+                  color.withValues(alpha: 0.24),
+                  const Color(0xFFD9E9D2),
+                ],
               ),
             ),
             child: SafeArea(
@@ -1796,7 +2505,9 @@ class _RoleHomePageState extends State<RoleHomePage> {
                           ),
                           child: ListTile(
                             selected: selected,
-                            selectedTileColor: Colors.white.withOpacity(0.75),
+                            selectedTileColor: Colors.white.withValues(
+                              alpha: 0.75,
+                            ),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(14),
                             ),
@@ -1813,7 +2524,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
                                 color: selected ? kPrimaryText : kSecondaryText,
                               ),
                             ),
-                            onTap: () => setState(() => _index = i),
+                            onTap: () => _setIndex(i),
                           ),
                         );
                       },
@@ -1827,11 +2538,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
                     ),
                     child: Row(
                       children: [
-                        IconButton(
-                          onPressed: _openNotifications,
-                          icon: const Icon(Icons.notifications_none),
-                          tooltip: 'Notifications',
-                        ),
+                        _buildNotificationButton(),
                         const Spacer(),
                         IconButton(
                           onPressed: () => AppStateScope.of(context).logout(),
@@ -1871,7 +2578,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [color.withOpacity(0.22), kAppBackground],
+            colors: [color.withValues(alpha: 0.22), kAppBackground],
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
           ),
@@ -1899,18 +2606,14 @@ class _RoleHomePageState extends State<RoleHomePage> {
                                 child: ChoiceChip(
                                   selected: _index == i,
                                   label: Text(tabs[i].title),
-                                  onSelected: (_) => setState(() => _index = i),
+                                  onSelected: (_) => _setIndex(i),
                                 ),
                               ),
                           ],
                         ),
                       ),
                     ),
-                    IconButton(
-                      onPressed: _openNotifications,
-                      icon: const Icon(Icons.notifications_none),
-                      tooltip: 'Notifications',
-                    ),
+                    _buildNotificationButton(),
                     IconButton(
                       onPressed: () => AppStateScope.of(context).logout(),
                       icon: const Icon(Icons.logout),
@@ -1922,7 +2625,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
               Expanded(
                 child: Center(
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 1280),
+                    constraints: const BoxConstraints(maxWidth: 1560),
                     child: Card(
                       margin: const EdgeInsets.fromLTRB(20, 8, 20, 20),
                       clipBehavior: Clip.antiAlias,
@@ -1930,7 +2633,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
                         children: [
                           Container(
                             width: double.infinity,
-                            color: color.withOpacity(0.1),
+                            color: color.withValues(alpha: 0.1),
                             padding: const EdgeInsets.symmetric(
                               horizontal: 20,
                               vertical: 14,
@@ -1958,13 +2661,9 @@ class _RoleHomePageState extends State<RoleHomePage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(title),
-        backgroundColor: color.withOpacity(0.16),
+        backgroundColor: color.withValues(alpha: 0.16),
         actions: [
-          IconButton(
-            onPressed: _openNotifications,
-            icon: const Icon(Icons.notifications_none),
-            tooltip: 'Notifications',
-          ),
+          _buildNotificationButton(),
           IconButton(
             onPressed: () => AppStateScope.of(context).logout(),
             icon: const Icon(Icons.logout),
@@ -1983,7 +2682,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
             ),
         ],
         onDestinationSelected: (value) {
-          setState(() => _index = value);
+          _setIndex(value);
         },
       ),
     );
@@ -1992,11 +2691,14 @@ class _RoleHomePageState extends State<RoleHomePage> {
   @override
   Widget build(BuildContext context) {
     final tabs = _buildTabs();
+    if (_index < 0 || _index >= tabs.length) {
+      _index = 0;
+    }
     final color = widget.role.color;
     final title = tabs[_index].title;
     return LayoutBuilder(
       builder: (context, constraints) {
-        switch (_resolveCanvas(constraints)) {
+        switch (_resolveCanvas()) {
           case DeviceCanvas.desktop:
             return _buildDesktopShell(tabs, color, title);
           case DeviceCanvas.web:
@@ -2010,32 +2712,11 @@ class _RoleHomePageState extends State<RoleHomePage> {
 }
 
 class _NavItem {
-  _NavItem(this.title, this.icon, this.builder);
+  _NavItem(this.title, this.icon, this.builder, {required this.id});
+  final String id;
   final String title;
   final IconData icon;
   final WidgetBuilder builder;
-}
-
-class _AccessGuard extends StatelessWidget {
-  const _AccessGuard({
-    required this.allowed,
-    required this.role,
-    required this.child,
-    required this.pageName,
-  });
-
-  final Set<String> allowed;
-  final String role;
-  final Widget child;
-  final String pageName;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!allowed.contains(role)) {
-      return AccessDeniedPage(pageName: pageName);
-    }
-    return child;
-  }
 }
 
 class SectionHeader extends StatelessWidget {
@@ -2080,6 +2761,7 @@ class _SchedulePageState extends State<SchedulePage> {
   bool _loading = false;
   bool _uploading = false;
   bool _initialized = false;
+  Timer? _autoRefreshTimer;
   late final List<DateTime> _dateRange;
   late DateTime _selectedDate;
 
@@ -2099,27 +2781,41 @@ class _SchedulePageState extends State<SchedulePage> {
     super.didChangeDependencies();
     if (_initialized) return;
     _loadLatest();
-    _loadGroups();
-    _loadTeachers();
-    _loadCachedSchedule();
+    _loadAdminFiltersForSelectedDate();
+    _loadCachedSchedule(forDate: _selectedDate);
     final user = AppStateScope.of(context).user;
     if (user != null && (user.role == 'student' || user.role == 'teacher')) {
       final hasValue =
           (user.role == 'student' &&
               (user.studentGroup ?? '').trim().isNotEmpty) ||
           (user.role == 'teacher' &&
-              (user.teacherName ?? '').trim().isNotEmpty);
+              ((user.teacherName ?? '').trim().isNotEmpty ||
+                  user.fullName.trim().isNotEmpty));
       if (hasValue) {
         _loadScheduleForMe();
       }
     }
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+      if (!mounted) return;
+      _loadLatest();
+      _loadAdminFiltersForSelectedDate(silent: true);
+      _reloadForSelectedDate(silent: true);
+    });
     _initialized = true;
+  }
+
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    _groupController.dispose();
+    _teacherController.dispose();
+    super.dispose();
   }
 
   List<DateTime> _buildDateRange() {
     final today = DateUtils.dateOnly(DateTime.now());
-    final start = today.subtract(const Duration(days: 5));
-    final end = today.add(const Duration(days: 1));
+    final start = today.subtract(const Duration(days: 7));
+    final end = today.add(const Duration(days: 3));
     final items = <DateTime>[];
     for (int i = 0; i <= end.difference(start).inDays; i++) {
       final day = DateTime(start.year, start.month, start.day + i);
@@ -2133,15 +2829,33 @@ class _SchedulePageState extends State<SchedulePage> {
     return day.weekday == DateTime.saturday || day.weekday == DateTime.sunday;
   }
 
+  String _lessonsSignature(List<ScheduleLesson> items) {
+    return items
+        .map(
+          (item) => [
+            item.shift,
+            item.period,
+            item.time,
+            item.audience,
+            item.lesson,
+            item.groupName,
+          ].join('|'),
+        )
+        .join('||');
+  }
+
   String _lessonType(String lesson) {
     final lower = lesson.toLowerCase();
-    if (lower.contains('lab') || lower.contains('\u043b\u0430\u0431'))
+    if (lower.contains('lab') || lower.contains('\u043b\u0430\u0431')) {
       return 'Lab';
+    }
     if (lower.contains('pract') ||
-        lower.contains('\u043f\u0440\u0430\u043a\u0442'))
+        lower.contains('\u043f\u0440\u0430\u043a\u0442')) {
       return 'Practice';
-    if (lower.contains('lec') || lower.contains('\u043b\u0435\u043a'))
+    }
+    if (lower.contains('lec') || lower.contains('\u043b\u0435\u043a')) {
       return 'Lecture';
+    }
     return 'Class';
   }
 
@@ -2163,32 +2877,52 @@ class _SchedulePageState extends State<SchedulePage> {
     try {
       final latest = await client.latestSchedule();
       if (!mounted) return;
-      setState(() => _latest = latest);
+      final oldKey = _latest == null
+          ? ''
+          : '${_latest!.id}|${_latest!.scheduleDate?.toIso8601String() ?? ''}|${_latest!.uploadedAt.toIso8601String()}';
+      final newKey = latest == null
+          ? ''
+          : '${latest.id}|${latest.scheduleDate?.toIso8601String() ?? ''}|${latest.uploadedAt.toIso8601String()}';
+      if (oldKey != newKey) {
+        setState(() => _latest = latest);
+      }
     } catch (_) {}
   }
 
-  Future<void> _loadGroups() async {
+  Future<void> _loadAdminFiltersForSelectedDate({bool silent = false}) async {
+    final user = AppStateScope.of(context).user;
+    if (user?.role != 'admin') return;
     try {
-      final groups = await AppStateScope.of(
-        context,
-      ).client.listScheduleGroups();
+      final client = AppStateScope.of(context).client;
+      final groups = await client.listScheduleGroups(at: _selectedDate);
+      final teachers = await client.listScheduleTeachers(at: _selectedDate);
       if (!mounted) return;
-      setState(() => _groups = groups);
-    } catch (_) {}
-  }
-
-  Future<void> _loadTeachers() async {
-    try {
-      final teachers = await AppStateScope.of(
-        context,
-      ).client.listScheduleTeachers();
-      if (!mounted) return;
-      setState(() => _teachers = teachers);
-    } catch (_) {}
+      final selectedGroup = _groupController.text.trim();
+      final selectedTeacher = _teacherController.text.trim();
+      final hasGroup = groups.any((item) => item == selectedGroup);
+      final hasTeacher = teachers.any((item) => item == selectedTeacher);
+      setState(() {
+        _groups = groups;
+        _teachers = teachers;
+        if (selectedGroup.isNotEmpty && !hasGroup) {
+          _groupController.clear();
+        }
+        if (selectedTeacher.isNotEmpty && !hasTeacher) {
+          _teacherController.clear();
+        }
+      });
+    } catch (error) {
+      if (!mounted || silent) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = humanizeError(error);
+      });
+    }
   }
 
   Future<void> _uploadSchedule() async {
     if (_uploading) return;
+    final client = AppStateScope.of(context).client;
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['docx'],
@@ -2207,15 +2941,18 @@ class _SchedulePageState extends State<SchedulePage> {
     }
     setState(() => _uploading = true);
     try {
-      final uploaded = await AppStateScope.of(
-        context,
-      ).client.uploadScheduleBytes(filename: file.name, bytes: bytes);
+      final uploaded = await client.uploadScheduleBytes(
+        filename: file.name,
+        bytes: bytes,
+      );
       if (!mounted) return;
       setState(() => _latest = uploaded);
       setState(() {
         _noticeError = false;
         _noticeMessage = 'Расписание загружено: ${uploaded.filename}';
       });
+      await _loadAdminFiltersForSelectedDate();
+      await _reloadForSelectedDate();
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -2229,50 +2966,134 @@ class _SchedulePageState extends State<SchedulePage> {
     }
   }
 
-  Future<void> _loadSchedule() async {
+  Future<void> _loadSchedule({bool silent = false}) async {
     final group = _groupController.text.trim();
     if (group.isEmpty) return;
-    setState(() => _loading = true);
+    if (!silent) {
+      setState(() => _loading = true);
+    }
     try {
       final data = await AppStateScope.of(
         context,
-      ).client.scheduleForGroup(group);
+      ).client.scheduleForGroup(group, at: _selectedDate);
       if (!mounted) return;
-      setState(() => _lessons = data);
-      _saveCachedSchedule();
+      final changed = _lessonsSignature(_lessons) != _lessonsSignature(data);
+      if (changed) {
+        setState(() => _lessons = data);
+        _saveCachedSchedule(forDate: _selectedDate);
+      }
     } catch (error) {
       if (!mounted) return;
-      setState(() {
-        _noticeError = true;
-        _noticeMessage =
-            'Не удалось загрузить расписание: ${humanizeError(error)}';
-      });
+      if (!silent) {
+        setState(() {
+          _noticeError = true;
+          _noticeMessage =
+              'Не удалось загрузить расписание: ${humanizeError(error)}';
+        });
+      }
     } finally {
-      if (mounted) {
+      if (!silent && mounted) {
         setState(() => _loading = false);
       }
     }
   }
 
-  Future<void> _loadScheduleForMe() async {
-    setState(() => _loading = true);
+  Future<void> _loadScheduleForMe({bool silent = false}) async {
+    if (!silent) {
+      setState(() => _loading = true);
+    }
     try {
-      final data = await AppStateScope.of(context).client.scheduleForMe();
+      final data = await AppStateScope.of(
+        context,
+      ).client.scheduleForMe(at: _selectedDate);
       if (!mounted) return;
-      setState(() => _lessons = data);
-      _saveCachedSchedule();
+      final changed = _lessonsSignature(_lessons) != _lessonsSignature(data);
+      if (changed) {
+        setState(() => _lessons = data);
+        _saveCachedSchedule(forDate: _selectedDate);
+      }
     } catch (error) {
       if (!mounted) return;
-      setState(() {
-        _noticeError = true;
-        _noticeMessage =
-            'Не удалось загрузить расписание: ${humanizeError(error)}';
-      });
+      if (!silent) {
+        setState(() {
+          _noticeError = true;
+          _noticeMessage =
+              'Не удалось загрузить расписание: ${humanizeError(error)}';
+        });
+      }
     } finally {
-      if (mounted) {
+      if (!silent && mounted) {
         setState(() => _loading = false);
       }
     }
+  }
+
+  Future<void> _loadScheduleForTeacher({bool silent = false}) async {
+    final teacher = _teacherController.text.trim();
+    if (teacher.isEmpty) return;
+    if (!silent) {
+      setState(() => _loading = true);
+    }
+    try {
+      final data = await AppStateScope.of(
+        context,
+      ).client.scheduleForTeacher(teacher, at: _selectedDate);
+      if (!mounted) return;
+      final changed = _lessonsSignature(_lessons) != _lessonsSignature(data);
+      if (changed) {
+        setState(() => _lessons = data);
+        _saveCachedSchedule(forDate: _selectedDate);
+      }
+    } catch (error) {
+      if (!mounted) return;
+      if (!silent) {
+        setState(() {
+          _noticeError = true;
+          _noticeMessage =
+              'Не удалось загрузить расписание: ${humanizeError(error)}';
+        });
+      }
+    } finally {
+      if (!silent && mounted) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _reloadForSelectedDate({bool silent = false}) async {
+    final user = AppStateScope.of(context).user;
+    try {
+      if (user != null && (user.role == 'student' || user.role == 'teacher')) {
+        await _loadScheduleForMe(silent: silent);
+        return;
+      }
+      final group = _groupController.text.trim();
+      if (group.isNotEmpty) {
+        await _loadSchedule(silent: silent);
+        return;
+      }
+      final teacher = _teacherController.text.trim();
+      if (teacher.isNotEmpty) {
+        await _loadScheduleForTeacher(silent: silent);
+        return;
+      }
+      if (_lessons.isNotEmpty) {
+        setState(() => _lessons = []);
+      }
+    } catch (error) {
+      if (!mounted || silent) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = humanizeError(error);
+      });
+    }
+  }
+
+  Future<void> _onDateSelected(DateTime value) async {
+    setState(() => _selectedDate = DateUtils.dateOnly(value));
+    await _loadAdminFiltersForSelectedDate(silent: true);
+    await _loadCachedSchedule(forDate: _selectedDate);
+    await _reloadForSelectedDate();
   }
 
   String _cacheKey(UserProfile? user) {
@@ -2281,16 +3102,30 @@ class _SchedulePageState extends State<SchedulePage> {
       return 'schedule_cache_student_${user.studentGroup ?? 'none'}';
     }
     if (user.role == 'teacher') {
-      return 'schedule_cache_teacher_${user.teacherName ?? 'none'}';
+      final teacherKey = (user.teacherName ?? '').trim().isNotEmpty
+          ? user.teacherName!.trim()
+          : user.fullName.trim();
+      return 'schedule_cache_teacher_${teacherKey.isEmpty ? 'none' : teacherKey}';
     }
     return 'schedule_cache_admin';
   }
 
-  Future<void> _loadCachedSchedule() async {
+  String _cacheKeyForDate(UserProfile? user, DateTime date) {
+    final day = DateUtils.dateOnly(date);
+    return '${_cacheKey(user)}_${DateFormat('yyyyMMdd').format(day)}';
+  }
+
+  Future<void> _loadCachedSchedule({required DateTime forDate}) async {
+    final user = AppStateScope.of(context).user;
     final prefs = await SharedPreferences.getInstance();
-    final key = _cacheKey(AppStateScope.of(context).user);
+    final key = _cacheKeyForDate(user, forDate);
     final raw = prefs.getString(key);
-    if (raw == null || raw.isEmpty) return;
+    if (raw == null || raw.isEmpty) {
+      if (mounted && _lessons.isNotEmpty) {
+        setState(() => _lessons = []);
+      }
+      return;
+    }
     try {
       final data = jsonDecode(raw) as List<dynamic>;
       final lessons = data
@@ -2301,9 +3136,10 @@ class _SchedulePageState extends State<SchedulePage> {
     } catch (_) {}
   }
 
-  Future<void> _saveCachedSchedule() async {
+  Future<void> _saveCachedSchedule({required DateTime forDate}) async {
+    final user = AppStateScope.of(context).user;
     final prefs = await SharedPreferences.getInstance();
-    final key = _cacheKey(AppStateScope.of(context).user);
+    final key = _cacheKeyForDate(user, forDate);
     final payload = _lessons
         .map(
           (item) => {
@@ -2321,14 +3157,9 @@ class _SchedulePageState extends State<SchedulePage> {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
     final user = AppStateScope.of(context).user;
     final canUpload = user?.role == 'admin';
-    final scheduleDate = _latest?.scheduleDate;
-    final matchesDate =
-        scheduleDate == null ||
-        DateUtils.isSameDay(scheduleDate, _selectedDate);
-    final visibleLessons = matchesDate ? _lessons : <ScheduleLesson>[];
+    final visibleLessons = _lessons;
     final isEmpty = visibleLessons.isEmpty;
 
     return ListView(
@@ -2337,6 +3168,13 @@ class _SchedulePageState extends State<SchedulePage> {
         if (_noticeMessage != null)
           InlineNotice(message: _noticeMessage!, isError: _noticeError),
         if (_noticeMessage != null) const SizedBox(height: 12),
+        if (_latest?.scheduleDate != null) ...[
+          Text(
+            'Актуальный пакет: ${DateFormat('dd.MM.yyyy').format(_latest!.scheduleDate!)}',
+            style: TextStyle(color: kSecondaryText),
+          ),
+          const SizedBox(height: 10),
+        ],
         if (canUpload)
           Card(
             child: Padding(
@@ -2368,10 +3206,19 @@ class _SchedulePageState extends State<SchedulePage> {
                       runSpacing: 8,
                       children: [
                         for (final group in _groups.take(12))
-                          ActionChip(
+                          ChoiceChip(
+                            selected: _groupController.text.trim() == group,
                             label: Text(group),
-                            onPressed: () {
+                            onSelected: (selected) {
+                              if (!selected) {
+                                setState(() {
+                                  _groupController.clear();
+                                  _lessons = [];
+                                });
+                                return;
+                              }
                               _groupController.text = group;
+                              _teacherController.clear();
                               _loadSchedule();
                             },
                           ),
@@ -2385,13 +3232,52 @@ class _SchedulePageState extends State<SchedulePage> {
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 280,
+                          child: TextField(
+                            controller: _teacherController,
+                            decoration: const InputDecoration(
+                              hintText: 'Search teacher',
+                              isDense: true,
+                            ),
+                            onSubmitted: (_) {
+                              _groupController.clear();
+                              _loadScheduleForTeacher();
+                            },
+                          ),
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () {
+                            _groupController.clear();
+                            _loadScheduleForTeacher();
+                          },
+                          icon: const Icon(Icons.search),
+                          label: const Text('Find'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
                       children: [
                         for (final teacher in _teachers.take(12))
-                          ActionChip(
+                          ChoiceChip(
+                            selected: _teacherController.text.trim() == teacher,
                             label: Text(teacher),
-                            onPressed: () {
+                            onSelected: (selected) {
+                              if (!selected) {
+                                setState(() {
+                                  _teacherController.clear();
+                                  _lessons = [];
+                                });
+                                return;
+                              }
                               _teacherController.text = teacher;
-                              _loadScheduleForMe();
+                              _groupController.clear();
+                              _loadScheduleForTeacher();
                             },
                           ),
                       ],
@@ -2407,13 +3293,13 @@ class _SchedulePageState extends State<SchedulePage> {
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: _dateRange.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            separatorBuilder: (_, _) => const SizedBox(width: 8),
             itemBuilder: (context, index) {
               final day = _dateRange[index];
               final isSelected = DateUtils.isSameDay(day, _selectedDate);
               final isToday = DateUtils.isSameDay(day, DateTime.now());
               return InkWell(
-                onTap: () => setState(() => _selectedDate = day),
+                onTap: () => _onDateSelected(day),
                 child: Container(
                   width: 64,
                   decoration: BoxDecoration(
@@ -2449,7 +3335,7 @@ class _SchedulePageState extends State<SchedulePage> {
           ),
         ),
         const SizedBox(height: 16),
-        if (_loading) const Center(child: CircularProgressIndicator()),
+        if (_loading) const Center(child: BrandLoadingIndicator()),
         if (!_loading && isEmpty)
           const Text('No lessons for this day')
         else if (!_loading)
@@ -2480,7 +3366,7 @@ class _SchedulePageState extends State<SchedulePage> {
                               decoration: BoxDecoration(
                                 color: _typeColor(
                                   _lessonType(lesson.lesson),
-                                ).withOpacity(0.15),
+                                ).withValues(alpha: 0.15),
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Text(
@@ -2524,9 +3410,14 @@ class AttendancePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final role = AppStateScope.of(context).user?.role ?? '';
+    if (role == 'parent') {
+      return const ParentAttendancePage();
+    }
     final canEdit = role == 'teacher' || role == 'admin';
+    final canManageGroups = role == 'admin';
     return AttendanceJournalPage(
       canEdit: canEdit,
+      canManageGroups: canManageGroups,
       client: AppStateScope.of(context).client,
     );
   }
@@ -2538,10 +3429,179 @@ class GradesPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final role = AppStateScope.of(context).user?.role ?? '';
+    if (role == 'parent') {
+      return const ParentGradesPage();
+    }
     final canEdit = role == 'teacher' || role == 'admin';
-    return GradesPlutoPage(
+    final canManageGroups = role == 'admin';
+    return GradesPresetJournalPage(
       canEdit: canEdit,
+      canManageGroups: canManageGroups,
       client: AppStateScope.of(context).client,
+    );
+  }
+}
+
+class ParentAttendancePage extends StatefulWidget {
+  const ParentAttendancePage({super.key});
+
+  @override
+  State<ParentAttendancePage> createState() => _ParentAttendancePageState();
+}
+
+class _ParentAttendancePageState extends State<ParentAttendancePage> {
+  Future<List<AttendanceRecord>>? _future;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reload();
+  }
+
+  Future<void> _reload() async {
+    final state = AppStateScope.of(context);
+    setState(() {
+      _future = state.client.listJournalGroups().then((groups) async {
+        if (groups.isEmpty) return const <AttendanceRecord>[];
+        return state.client.listAttendance(groups.first);
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    return ModulePanel(
+      title: isRu ? 'Посещаемость ребёнка' : 'Child attendance',
+      subtitle: isRu
+          ? 'Только записи по подтвержденному ребёнку.'
+          : 'Only records for approved child.',
+      child: FutureBuilder<List<AttendanceRecord>>(
+        future: _future,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: BrandLoadingIndicator());
+          }
+          if (snapshot.hasError) {
+            return InlineNotice(
+              message: humanizeError(snapshot.error!),
+              isError: true,
+            );
+          }
+          final rows = snapshot.data ?? const <AttendanceRecord>[];
+          if (rows.isEmpty) {
+            return Text(isRu ? 'Записей пока нет.' : 'No records yet.');
+          }
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              columns: [
+                DataColumn(label: Text(isRu ? 'Дата' : 'Date')),
+                DataColumn(label: Text(isRu ? 'Группа' : 'Group')),
+                DataColumn(label: Text(isRu ? 'Статус' : 'Status')),
+              ],
+              rows: rows
+                  .map(
+                    (item) => DataRow(
+                      cells: [
+                        DataCell(
+                          Text(DateFormat('dd.MM.yyyy').format(item.classDate)),
+                        ),
+                        DataCell(Text(item.groupName)),
+                        DataCell(
+                          Text(
+                            item.present
+                                ? (isRu ? 'Присутствовал' : 'Present')
+                                : (isRu ? 'Отсутствовал' : 'Absent'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                  .toList(),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class ParentGradesPage extends StatefulWidget {
+  const ParentGradesPage({super.key});
+
+  @override
+  State<ParentGradesPage> createState() => _ParentGradesPageState();
+}
+
+class _ParentGradesPageState extends State<ParentGradesPage> {
+  Future<List<GradeRecord>>? _future;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reload();
+  }
+
+  Future<void> _reload() async {
+    final state = AppStateScope.of(context);
+    setState(() {
+      _future = state.client.listJournalGroups().then((groups) async {
+        if (groups.isEmpty) return const <GradeRecord>[];
+        return state.client.listGrades(groups.first);
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    return ModulePanel(
+      title: isRu ? 'Оценки ребёнка' : 'Child grades',
+      subtitle: isRu
+          ? 'Только оценки подтвержденного ребёнка.'
+          : 'Only grades for approved child.',
+      child: FutureBuilder<List<GradeRecord>>(
+        future: _future,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: BrandLoadingIndicator());
+          }
+          if (snapshot.hasError) {
+            return InlineNotice(
+              message: humanizeError(snapshot.error!),
+              isError: true,
+            );
+          }
+          final rows = snapshot.data ?? const <GradeRecord>[];
+          if (rows.isEmpty) {
+            return Text(isRu ? 'Оценок пока нет.' : 'No grades yet.');
+          }
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              columns: [
+                DataColumn(label: Text(isRu ? 'Дата' : 'Date')),
+                DataColumn(label: Text(isRu ? 'Группа' : 'Group')),
+                DataColumn(label: Text(isRu ? 'Оценка' : 'Grade')),
+              ],
+              rows: rows
+                  .map(
+                    (item) => DataRow(
+                      cells: [
+                        DataCell(
+                          Text(DateFormat('dd.MM.yyyy').format(item.classDate)),
+                        ),
+                        DataCell(Text(item.groupName)),
+                        DataCell(Text(item.grade.toString())),
+                      ],
+                    ),
+                  )
+                  .toList(),
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -2563,6 +3623,21 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
   Future<List<ExamUpload>>? _uploadsFuture;
   bool _initialized = false;
   bool _showUploads = false;
+
+  List<ExamGrade> _filterGradesByRole(List<ExamGrade> source) {
+    final user = AppStateScope.of(context).user;
+    if (user == null) return source;
+    if (user.role != 'student') return source;
+    final fullName = user.fullName.trim().toLowerCase();
+    final group = (user.studentGroup ?? '').trim().toLowerCase();
+    return source.where((item) {
+      final sameName = item.studentName.trim().toLowerCase() == fullName;
+      final sameGroup = group.isEmpty
+          ? true
+          : item.groupName.trim().toLowerCase() == group;
+      return sameName && sameGroup;
+    }).toList();
+  }
 
   bool get _canUpload {
     final role = AppStateScope.of(context).user?.role ?? '';
@@ -2605,6 +3680,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
   }
 
   Future<void> _openUploadDialog() async {
+    final client = AppStateScope.of(context).client;
     final groupController = TextEditingController(
       text: _groupController.text.trim(),
     );
@@ -2640,7 +3716,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                       labelText: 'Exam name',
                       border: OutlineInputBorder(),
                     ),
-                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                    onSubmitted: (_) => FocusScope.of(context).unfocus(),
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -2696,13 +3772,12 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                           }
                           setStateDialog(() => uploading = true);
                           try {
-                            final count = await AppStateScope.of(context).client
-                                .uploadExamGradesBytes(
-                                  groupName: group,
-                                  examName: exam,
-                                  filename: filename!,
-                                  bytes: bytes!,
-                                );
+                            final count = await client.uploadExamGradesBytes(
+                              groupName: group,
+                              examName: exam,
+                              filename: filename!,
+                              bytes: bytes!,
+                            );
                             if (!mounted) return;
                             setState(() {
                               _noticeError = false;
@@ -2711,7 +3786,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                             _groupController.text = group;
                             _examController.text = exam;
                             _reload();
-                            if (mounted) Navigator.of(context).pop();
+                            if (mounted) Navigator.of(this.context).pop();
                           } catch (error) {
                             if (!mounted) return;
                             setState(() {
@@ -2719,8 +3794,9 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                               _noticeMessage = humanizeError(error);
                             });
                           } finally {
-                            if (mounted)
+                            if (mounted) {
                               setStateDialog(() => uploading = false);
+                            }
                           }
                         },
                   child: uploading
@@ -2748,12 +3824,12 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(child: BrandLoadingIndicator());
         }
         if (snapshot.hasError) {
           return Text('Failed to load exam grades: ${snapshot.error}');
         }
-        final items = snapshot.data ?? [];
+        final items = _filterGradesByRole(snapshot.data ?? []);
         if (items.isEmpty) {
           return const Text('No exam grades yet');
         }
@@ -2763,7 +3839,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
               Card(
                 margin: const EdgeInsets.only(bottom: 12),
                 child: ListTile(
-                  leading: const CircleAvatar(child: Icon(Icons.school)),
+                  leading: const CircleAvatar(child: BrandLogo(size: 20)),
                   title: Text('${item.examName} (${item.groupName})'),
                   subtitle: Text(
                     '${item.studentName} - ${_dateFormat.format(item.createdAt)}',
@@ -2783,7 +3859,60 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
     );
   }
 
+  Widget _buildParentExamTable() {
+    final future = _gradesFuture;
+    final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    if (future == null) return const SizedBox.shrink();
+    return FutureBuilder<List<ExamGrade>>(
+      future: future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: BrandLoadingIndicator());
+        }
+        if (snapshot.hasError) {
+          return InlineNotice(
+            message: humanizeError(snapshot.error!),
+            isError: true,
+          );
+        }
+        final rows = snapshot.data ?? const <ExamGrade>[];
+        final filteredRows = _filterGradesByRole(rows);
+        if (filteredRows.isEmpty) {
+          return Text(
+            isRu ? 'Экзаменационных оценок пока нет.' : 'No exam grades yet.',
+          );
+        }
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            columns: [
+              DataColumn(label: Text(isRu ? 'Экзамен' : 'Exam')),
+              DataColumn(label: Text(isRu ? 'Дата' : 'Date')),
+              DataColumn(label: Text(isRu ? 'Группа' : 'Group')),
+              DataColumn(label: Text(isRu ? 'Оценка' : 'Grade')),
+            ],
+            rows: filteredRows
+                .map(
+                  (item) => DataRow(
+                    cells: [
+                      DataCell(Text(item.examName)),
+                      DataCell(
+                        Text(DateFormat('dd.MM.yyyy').format(item.createdAt)),
+                      ),
+                      DataCell(Text(item.groupName)),
+                      DataCell(Text(item.grade.toString())),
+                    ],
+                  ),
+                )
+                .toList(),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _editUpload(ExamUpload upload) async {
+    final client = AppStateScope.of(context).client;
     final groupController = TextEditingController(text: upload.groupName);
     final examController = TextEditingController(text: upload.examName);
     final result = await showDialog<bool>(
@@ -2808,6 +3937,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                 labelText: 'Exam name',
                 border: OutlineInputBorder(),
               ),
+              onSubmitted: (_) => Navigator.pop(context, true),
             ),
           ],
         ),
@@ -2825,7 +3955,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
     );
     if (result != true) return;
     try {
-      await AppStateScope.of(context).client.updateExamUpload(
+      await client.updateExamUpload(
         upload.id,
         groupName: groupController.text.trim(),
         examName: examController.text.trim(),
@@ -2846,6 +3976,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
   }
 
   Future<void> _deleteUpload(ExamUpload upload) async {
+    final client = AppStateScope.of(context).client;
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -2865,7 +3996,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
     );
     if (ok != true) return;
     try {
-      await AppStateScope.of(context).client.deleteExamUpload(upload.id);
+      await client.deleteExamUpload(upload.id);
       if (!mounted) return;
       _reload();
       setState(() {
@@ -2890,7 +4021,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(child: BrandLoadingIndicator());
         }
         if (snapshot.hasError) {
           return Text('Failed to load uploads: ${snapshot.error}');
@@ -2941,6 +4072,19 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
 
   @override
   Widget build(BuildContext context) {
+    final role = AppStateScope.of(context).user?.role ?? '';
+    final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    if (role == 'parent') {
+      return FeatureScaffold(
+        title: isRu ? 'Экзаменационные оценки ребёнка' : 'Child exam grades',
+        subtitle: isRu
+            ? 'Только оценки подтвержденного ребёнка.'
+            : 'Only grades for approved child.',
+        actionLabel: isRu ? 'Обновить' : 'Refresh',
+        onAction: _reload,
+        child: _buildParentExamTable(),
+      );
+    }
     return FeatureScaffold(
       title: 'Exam grades',
       subtitle: _canUpload
@@ -2951,6 +4095,9 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_noticeMessage != null)
+            InlineNotice(message: _noticeMessage!, isError: _noticeError),
+          if (_noticeMessage != null) const SizedBox(height: 12),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -2971,7 +4118,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                       labelText: 'Exam name',
                       border: OutlineInputBorder(),
                     ),
-                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                    onSubmitted: (_) => _reload(),
                   ),
                   const SizedBox(height: 12),
                   Align(
@@ -2998,7 +4145,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                           ? null
                           : Theme.of(
                               context,
-                            ).colorScheme.primary.withOpacity(0.12),
+                            ).colorScheme.primary.withValues(alpha: 0.12),
                     ),
                     child: const Text('Grades'),
                   ),
@@ -3011,7 +4158,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                       backgroundColor: _showUploads
                           ? Theme.of(
                               context,
-                            ).colorScheme.primary.withOpacity(0.12)
+                            ).colorScheme.primary.withValues(alpha: 0.12)
                           : null,
                     ),
                     child: const Text('Uploads'),
@@ -3091,7 +4238,9 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
     if (!_canManage) return;
     if (_teachers.isEmpty) {
       await _reload();
+      if (!mounted) return;
     }
+    final client = AppStateScope.of(context).client;
     int? selectedId = _teachers.isNotEmpty ? _teachers.first.id : null;
     final groupController = TextEditingController(
       text: _groupController.text.trim(),
@@ -3105,7 +4254,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             DropdownButtonFormField<int>(
-              value: selectedId,
+              initialValue: selectedId,
               items: [
                 for (final teacher in _teachers)
                   DropdownMenuItem(
@@ -3153,7 +4302,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
     );
     if (ok != true || selectedId == null) return;
     try {
-      await AppStateScope.of(context).client.createTeacherAssignment(
+      await client.createTeacherAssignment(
         teacherId: selectedId!,
         groupName: groupController.text.trim(),
         subject: subjectController.text.trim(),
@@ -3175,6 +4324,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
 
   Future<void> _editAssignment(TeacherGroupAssignment item) async {
     if (!_canManage) return;
+    final client = AppStateScope.of(context).client;
     final groupController = TextEditingController(text: item.groupName);
     final subjectController = TextEditingController(text: item.subject);
     final ok = await showDialog<bool>(
@@ -3217,7 +4367,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
     );
     if (ok != true) return;
     try {
-      await AppStateScope.of(context).client.updateTeacherAssignment(
+      await client.updateTeacherAssignment(
         item.id,
         groupName: groupController.text.trim(),
         subject: subjectController.text.trim(),
@@ -3239,6 +4389,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
 
   Future<void> _deleteAssignment(TeacherGroupAssignment item) async {
     if (!_canManage) return;
+    final client = AppStateScope.of(context).client;
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -3257,7 +4408,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
     );
     if (ok != true) return;
     try {
-      await AppStateScope.of(context).client.deleteTeacherAssignment(item.id);
+      await client.deleteTeacherAssignment(item.id);
       if (!mounted) return;
       _reload();
     } catch (error) {
@@ -3284,7 +4435,9 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
               onPressed: () => setState(() => _tabIndex = i),
               style: OutlinedButton.styleFrom(
                 backgroundColor: _tabIndex == i
-                    ? Theme.of(context).colorScheme.primary.withOpacity(0.12)
+                    ? Theme.of(
+                        context,
+                      ).colorScheme.primary.withValues(alpha: 0.12)
                     : null,
               ),
               child: Text(tabs[i]),
@@ -3301,7 +4454,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(child: BrandLoadingIndicator());
         }
         if (snapshot.hasError) {
           return Text('Failed to load groups: ${snapshot.error}');
@@ -3335,7 +4488,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(child: BrandLoadingIndicator());
         }
         if (snapshot.hasError) {
           return Text('Failed to load attendance: ${snapshot.error}');
@@ -3352,7 +4505,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
                 child: ListTile(
                   title: Text('${item.studentName} (${item.groupName})'),
                   subtitle: Text(
-                    '${DateFormat('dd.MM.yyyy').format(item.classDate)}',
+                    DateFormat('dd.MM.yyyy').format(item.classDate),
                   ),
                   trailing: Icon(
                     item.present ? Icons.check_circle : Icons.cancel,
@@ -3373,7 +4526,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(child: BrandLoadingIndicator());
         }
         if (snapshot.hasError) {
           return Text('Failed to load grades: ${snapshot.error}');
@@ -3411,7 +4564,7 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
       future: future,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(child: BrandLoadingIndicator());
         }
         if (snapshot.hasError) {
           return Text('Failed to load assignments: ${snapshot.error}');
@@ -3467,6 +4620,9 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_noticeMessage != null)
+            InlineNotice(message: _noticeMessage!, isError: _noticeError),
+          if (_noticeMessage != null) const SizedBox(height: 12),
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -3530,15 +4686,10 @@ class _RequestsPageState extends State<RequestsPage> {
     _initialized = true;
   }
 
-  Future<void> _refresh() async {
-    setState(() {
-      _requestsFuture = AppStateScope.of(context).client.listRequests();
-    });
-  }
-
   Future<void> _createRequest() async {
-    final created = await Navigator.of(context).push<RequestTicket>(
-      MaterialPageRoute(builder: (_) => RequestComposePage()),
+    final created = await pushAdaptivePage<RequestTicket>(
+      context,
+      RequestComposePage(),
     );
     if (created == null) return;
     setState(() {
@@ -3555,98 +4706,107 @@ class _RequestsPageState extends State<RequestsPage> {
           : 'Submit a request',
       actionLabel: widget.canProcess ? null : 'New request',
       onAction: widget.canProcess ? null : _createRequest,
-      child: FutureBuilder<List<RequestTicket>>(
-        future: _requestsFuture,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Text('Failed to load requests: ${snapshot.error}');
-          }
-          final items = snapshot.data ?? [];
-          if (items.isEmpty) {
-            return const Text('No requests yet');
-          }
-          return Column(
-            children: [
-              for (final item in items)
-                Card(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  child: ListTile(
-                    leading: const CircleAvatar(child: Icon(Icons.description)),
-                    title: Text(item.requestType),
-                    subtitle: Text(
-                      '\u0421\u0442\u0430\u0442\u0443\u0441: ${item.status}\n${item.studentName} - ${_requestDateFormat.format(item.createdAt)}',
-                    ),
-                    trailing: widget.canProcess
-                        ? IconButton(
-                            icon: const Icon(Icons.delete_outline),
-                            onPressed: () async {
-                              final ok = await showDialog<bool>(
-                                context: context,
-                                builder: (_) => AlertDialog(
-                                  title: const Text('Delete request?'),
-                                  content: const Text(
-                                    'This will remove it for the student too.',
-                                  ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () =>
-                                          Navigator.pop(context, false),
-                                      child: const Text('Cancel'),
-                                    ),
-                                    FilledButton(
-                                      onPressed: () =>
-                                          Navigator.pop(context, true),
-                                      child: const Text('Delete'),
-                                    ),
-                                  ],
-                                ),
-                              );
-                              if (ok != true) return;
-                              try {
-                                await AppStateScope.of(
-                                  context,
-                                ).client.deleteRequest(item.id);
-                                if (!mounted) return;
-                                setState(() {
-                                  _requestsFuture = AppStateScope.of(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_noticeMessage != null)
+            InlineNotice(message: _noticeMessage!, isError: _noticeError),
+          if (_noticeMessage != null) const SizedBox(height: 12),
+          FutureBuilder<List<RequestTicket>>(
+            future: _requestsFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: BrandLoadingIndicator());
+              }
+              if (snapshot.hasError) {
+                return Text('Failed to load requests: ${snapshot.error}');
+              }
+              final items = snapshot.data ?? [];
+              if (items.isEmpty) {
+                return const Text('No requests yet');
+              }
+              return Column(
+                children: [
+                  for (final item in items)
+                    Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      child: ListTile(
+                        leading: const CircleAvatar(
+                          child: Icon(Icons.description),
+                        ),
+                        title: Text(item.requestType),
+                        subtitle: Text(
+                          '\u0421\u0442\u0430\u0442\u0443\u0441: ${item.status}\n${item.studentName} - ${_requestDateFormat.format(item.createdAt)}',
+                        ),
+                        trailing: widget.canProcess
+                            ? IconButton(
+                                icon: const Icon(Icons.delete_outline),
+                                onPressed: () async {
+                                  final client = AppStateScope.of(
                                     context,
-                                  ).client.listRequests();
-                                });
-                              } catch (error) {
-                                if (!mounted) return;
-                                setState(() {
-                                  _noticeError = true;
-                                  _noticeMessage = humanizeError(error);
-                                });
-                              }
-                            },
-                          )
-                        : null,
-                    onTap: () async {
-                      final canProcess = widget.canProcess;
-                      final updated = await Navigator.of(context)
-                          .push<RequestTicket>(
-                            MaterialPageRoute(
-                              builder: (_) => RequestDetailPage(
-                                ticket: item,
-                                canProcess: canProcess,
-                              ),
+                                  ).client;
+                                  final ok = await showDialog<bool>(
+                                    context: context,
+                                    builder: (_) => AlertDialog(
+                                      title: const Text('Delete request?'),
+                                      content: const Text(
+                                        'This will remove it for the student too.',
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.pop(context, false),
+                                          child: const Text('Cancel'),
+                                        ),
+                                        FilledButton(
+                                          onPressed: () =>
+                                              Navigator.pop(context, true),
+                                          child: const Text('Delete'),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                  if (ok != true) return;
+                                  try {
+                                    await client.deleteRequest(item.id);
+                                    if (!mounted) return;
+                                    setState(() {
+                                      _requestsFuture = client.listRequests();
+                                    });
+                                  } catch (error) {
+                                    if (!mounted) return;
+                                    setState(() {
+                                      _noticeError = true;
+                                      _noticeMessage = humanizeError(error);
+                                    });
+                                  }
+                                },
+                              )
+                            : null,
+                        onTap: () async {
+                          final canProcess = widget.canProcess;
+                          await pushAdaptivePage<RequestTicket>(
+                            context,
+                            RequestDetailPage(
+                              ticket: item,
+                              canProcess: canProcess,
                             ),
                           );
-                      setState(() {
-                        _requestsFuture = AppStateScope.of(
-                          context,
-                        ).client.listRequests();
-                      });
-                    },
-                  ),
-                ),
-            ],
-          );
-        },
+                          if (mounted) {
+                            setState(() {
+                              _requestsFuture = AppStateScope.of(
+                                context,
+                              ).client.listRequests();
+                            });
+                          }
+                        },
+                      ),
+                    ),
+                ],
+              );
+            },
+          ),
+        ],
       ),
     );
   }
@@ -3664,14 +4824,33 @@ class _RequestComposePageState extends State<RequestComposePage> {
   bool _noticeError = false;
   final _detailsController = TextEditingController();
   String? _selectedType;
+  String? _selectedTeacherGroup;
+  Future<List<String>>? _teacherGroupsFuture;
+  bool _initialized = false;
   bool _sending = false;
 
   bool _profileComplete(UserProfile? user) {
-    return user != null &&
-        (user.fullName).trim().isNotEmpty &&
-        (user.phone ?? '').trim().isNotEmpty &&
-        (user.studentGroup ?? '').trim().isNotEmpty &&
-        (user.birthDate != null);
+    return user != null;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
+    final user = AppStateScope.of(context).user;
+    if (user?.role == 'teacher') {
+      _selectedType = kTeacherGroupRequestType;
+      _teacherGroupsFuture = AppStateScope.of(
+        context,
+      ).client.listJournalGroupCatalog();
+      _teacherGroupsFuture!.then((groups) {
+        if (!mounted || groups.isEmpty) return;
+        setState(() {
+          _selectedTeacherGroup ??= groups.first;
+        });
+      });
+    }
   }
 
   Future<void> _submit() async {
@@ -3680,12 +4859,13 @@ class _RequestComposePageState extends State<RequestComposePage> {
     if (!_profileComplete(user)) {
       setState(() {
         _noticeError = true;
-        _noticeMessage =
-            'Заполните профиль: ФИО, телефон, дату рождения и группу.';
+        _noticeMessage = 'Профиль не найден. Перезайдите в аккаунт.';
       });
       return;
     }
-    final type = _selectedType;
+    final type = user?.role == 'teacher'
+        ? kTeacherGroupRequestType
+        : _selectedType;
     if (type == null) {
       setState(() {
         _noticeError = true;
@@ -3693,10 +4873,21 @@ class _RequestComposePageState extends State<RequestComposePage> {
       });
       return;
     }
+    final groupName = user?.role == 'teacher'
+        ? (_selectedTeacherGroup ?? '').trim()
+        : '';
+    if (user?.role == 'teacher' && groupName.isEmpty) {
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = 'Выберите группу для заявки.';
+      });
+      return;
+    }
     setState(() => _sending = true);
     try {
       final ticket = await state.client.createRequest(
         requestType: type,
+        groupName: groupName.isEmpty ? null : groupName,
         details: _detailsController.text.trim().isEmpty
             ? null
             : _detailsController.text.trim(),
@@ -3722,21 +4913,55 @@ class _RequestComposePageState extends State<RequestComposePage> {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
+    final role = AppStateScope.of(context).user?.role ?? '';
     return Scaffold(
       appBar: AppBar(title: const Text('New request')),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          DropdownButtonFormField<String>(
-            value: _selectedType,
-            items: [
-              for (final type in kRequestTypes)
-                DropdownMenuItem(value: type, child: Text(type)),
-            ],
-            onChanged: (value) => setState(() => _selectedType = value),
-            decoration: const InputDecoration(labelText: 'Request type'),
-          ),
+          if (_noticeMessage != null) ...[
+            InlineNotice(message: _noticeMessage!, isError: _noticeError),
+            const SizedBox(height: 12),
+          ],
+          if (role == 'teacher') ...[
+            InputDecorator(
+              decoration: const InputDecoration(labelText: 'Request type'),
+              child: Text(kTeacherGroupRequestType),
+            ),
+            const SizedBox(height: 12),
+            FutureBuilder<List<String>>(
+              future: _teacherGroupsFuture,
+              builder: (context, snapshot) {
+                final groups = snapshot.data ?? const <String>[];
+                final selected = groups.contains(_selectedTeacherGroup)
+                    ? _selectedTeacherGroup
+                    : (groups.isNotEmpty ? groups.first : null);
+                return DropdownButtonFormField<String>(
+                  initialValue: selected,
+                  items: groups
+                      .map(
+                        (group) =>
+                            DropdownMenuItem(value: group, child: Text(group)),
+                      )
+                      .toList(),
+                  onChanged: groups.isEmpty
+                      ? null
+                      : (value) =>
+                            setState(() => _selectedTeacherGroup = value),
+                  decoration: const InputDecoration(labelText: 'Group'),
+                );
+              },
+            ),
+          ] else
+            DropdownButtonFormField<String>(
+              initialValue: _selectedType,
+              items: [
+                for (final type in kRequestTypes)
+                  DropdownMenuItem(value: type, child: Text(type)),
+              ],
+              onChanged: (value) => setState(() => _selectedType = value),
+              decoration: const InputDecoration(labelText: 'Request type'),
+            ),
           const SizedBox(height: 12),
           TextField(
             controller: _detailsController,
@@ -3782,14 +5007,45 @@ class _RequestDetailPageState extends State<RequestDetailPage> {
   late RequestTicket _ticket;
   String? _status;
   bool _saving = false;
+  final _commentController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _ticket = widget.ticket;
-    _status = kRequestStatuses.contains(_ticket.status)
-        ? _ticket.status
-        : kRequestStatuses.first;
+    _commentController.text = (_ticket.comment ?? '').trim();
+    if (_isTeachingGroupRequest(_ticket.requestType)) {
+      _status = _normalizeTeachingDecisionStatus(_ticket.status);
+    } else {
+      _status = kRequestStatuses.contains(_ticket.status)
+          ? _ticket.status
+          : kRequestStatuses.first;
+    }
+  }
+
+  @override
+  void dispose() {
+    _commentController.dispose();
+    super.dispose();
+  }
+
+  bool _isTeachingGroupRequest(String value) {
+    final text = value.toLowerCase();
+    return text.contains('преподавание группы') ||
+        (text.contains('teacher') && text.contains('group'));
+  }
+
+  String _normalizeTeachingDecisionStatus(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized == 'approved' ||
+        normalized == 'одобрена' ||
+        normalized == 'принята') {
+      return 'approved';
+    }
+    if (normalized == 'rejected' || normalized == 'отклонена') {
+      return 'rejected';
+    }
+    return 'approved';
   }
 
   Future<void> _save() async {
@@ -3798,7 +5054,11 @@ class _RequestDetailPageState extends State<RequestDetailPage> {
     try {
       final updated = await AppStateScope.of(
         context,
-      ).client.updateRequest(_ticket.id, status: _status);
+      ).client.updateRequest(
+        _ticket.id,
+        status: _status,
+        comment: _commentController.text.trim(),
+      );
       if (!mounted) return;
       setState(() => _ticket = updated);
       setState(() {
@@ -3818,34 +5078,59 @@ class _RequestDetailPageState extends State<RequestDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(title: const Text('Request')),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
+          if (_noticeMessage != null)
+            InlineNotice(message: _noticeMessage!, isError: _noticeError),
+          if (_noticeMessage != null) const SizedBox(height: 12),
           Card(
             child: ListTile(
               title: Text(_ticket.requestType),
               subtitle: Text(
                 "${_ticket.studentName}\n"
                 "${DateFormat("dd.MM.yyyy HH:mm").format(_ticket.createdAt)}\n"
-                "Status: ${_ticket.status}",
+                "Status: ${_ticket.status}"
+                "${(_ticket.comment ?? '').trim().isEmpty ? '' : '\nКомментарий: ${_ticket.comment!.trim()}'}",
               ),
             ),
           ),
           const SizedBox(height: 12),
           if (widget.canProcess) ...[
-            DropdownButtonFormField<String>(
-              value: kRequestStatuses.contains(_status)
-                  ? _status
-                  : kRequestStatuses.first,
-              items: [
-                for (final status in kRequestStatuses)
-                  DropdownMenuItem(value: status, child: Text(status)),
-              ],
-              onChanged: (value) => setState(() => _status = value),
-              decoration: const InputDecoration(labelText: 'Status'),
+            if (_isTeachingGroupRequest(_ticket.requestType))
+              DropdownButtonFormField<String>(
+                initialValue: _status == 'rejected' ? 'rejected' : 'approved',
+                items: const [
+                  DropdownMenuItem(value: 'approved', child: Text('Принять')),
+                  DropdownMenuItem(value: 'rejected', child: Text('Отклонить')),
+                ],
+                onChanged: (value) => setState(() => _status = value),
+                decoration: const InputDecoration(labelText: 'Решение'),
+              )
+            else
+              DropdownButtonFormField<String>(
+                initialValue: kRequestStatuses.contains(_status)
+                    ? _status
+                    : kRequestStatuses.first,
+                items: [
+                  for (final status in kRequestStatuses)
+                    DropdownMenuItem(value: status, child: Text(status)),
+                ],
+                onChanged: (value) => setState(() => _status = value),
+                decoration: const InputDecoration(labelText: 'Status'),
+              ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _commentController,
+              minLines: 2,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                labelText: 'Комментарий к решению (опционально)',
+              ),
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _save(),
             ),
             const SizedBox(height: 12),
             FilledButton(
@@ -3882,9 +5167,11 @@ class _ProfilePageState extends State<ProfilePage> {
   final _teacherController = TextEditingController();
   final _scrollController = ScrollController();
   bool _initialized = false;
-  bool _prefsLoaded = false;
   bool _notifySchedule = true;
   bool _notifyRequests = true;
+  bool get _isRu => AppStateScope.of(
+    context,
+  ).locale.languageCode.toLowerCase().startsWith('ru');
 
   @override
   void dispose() {
@@ -3900,11 +5187,10 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (!_prefsLoaded) {
-      _loadPrefs();
-    }
-    if (_initialized) return;
     final user = AppStateScope.of(context).user;
+    _notifySchedule = user?.notifySchedule ?? true;
+    _notifyRequests = user?.notifyRequests ?? true;
+    if (_initialized) return;
     _fullNameController.text = user?.fullName ?? '';
     _phoneController.text = user?.phone ?? '';
     _birthController.text = user?.birthDate == null
@@ -3915,28 +5201,26 @@ class _ProfilePageState extends State<ProfilePage> {
     _initialized = true;
   }
 
-  Future<void> _loadPrefs() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    setState(() {
-      _notifySchedule = prefs.getBool('pref_notify_schedule') ?? true;
-      _notifyRequests = prefs.getBool('pref_notify_requests') ?? true;
-      _prefsLoaded = true;
-    });
-  }
-
-  Future<void> _savePref(String key, bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(key, value);
-  }
-
-  void _scrollTo(double offset) {
-    if (!_scrollController.hasClients) return;
-    _scrollController.animateTo(
-      offset,
-      duration: const Duration(milliseconds: 450),
-      curve: Curves.easeOutCubic,
-    );
+  Future<void> _saveNotificationPref(String key, bool value) async {
+    final state = AppStateScope.of(context);
+    final payload = <String, dynamic>{key: value};
+    try {
+      final updated = await state.updateProfile(payload);
+      if (!mounted) return;
+      setState(() {
+        _notifySchedule = updated?.notifySchedule ?? _notifySchedule;
+        _notifyRequests = updated?.notifyRequests ?? _notifyRequests;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      final user = state.user;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = humanizeError(error);
+        _notifySchedule = user?.notifySchedule ?? true;
+        _notifyRequests = user?.notifyRequests ?? true;
+      });
+    }
   }
 
   Future<void> _saveProfile() async {
@@ -3962,9 +5246,6 @@ class _ProfilePageState extends State<ProfilePage> {
       }
       payload['birth_date'] = birth;
     }
-    if (_groupController.text.trim().isNotEmpty) {
-      payload['student_group'] = _groupController.text.trim();
-    }
     if (user.role == 'teacher' && _teacherController.text.trim().isNotEmpty) {
       payload['teacher_name'] = _teacherController.text.trim();
     }
@@ -3985,21 +5266,367 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
+  Future<void> _pickAndUploadAvatar() async {
+    final state = AppStateScope.of(context);
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final file = result.files.first;
+    final bytes = file.bytes;
+    if (bytes == null || bytes.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = _isRu
+            ? 'Не удалось прочитать выбранный файл.'
+            : 'Failed to read selected file.';
+      });
+      return;
+    }
+    try {
+      final uploaded = await state.client.uploadMyAvatarBytes(
+        filename: file.name,
+        bytes: bytes,
+      );
+      final avatarUrl = uploaded.avatarUrl;
+      if (avatarUrl != null && avatarUrl.trim().isNotEmpty) {
+        await state.updateProfile({'avatar_url': avatarUrl.trim()});
+      }
+      if (!mounted) return;
+      setState(() {
+        _noticeError = false;
+        _noticeMessage = _isRu ? 'Аватар обновлён.' : 'Avatar updated.';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = humanizeError(error);
+      });
+    }
+  }
+
+  Future<void> _openEditProfileDialog() async {
+    final l10n = AppLocalizations.of(context);
+    final user = AppStateScope.of(context).user;
+    if (user == null) return;
+    _fullNameController.text = user.fullName;
+    _phoneController.text = user.phone ?? '';
+    _birthController.text = user.birthDate == null
+        ? ''
+        : DateFormat('yyyy-MM-dd').format(user.birthDate!);
+    _teacherController.text = user.teacherName ?? '';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        bool uploadingAvatar = false;
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final currentUser = AppStateScope.of(context).user;
+            final avatarUrl = currentUser?.avatarUrl?.trim();
+            final hasAvatar = avatarUrl != null && avatarUrl.isNotEmpty;
+            return AlertDialog(
+              title: Text(_isRu ? 'Редактировать профиль' : 'Edit profile'),
+              content: SingleChildScrollView(
+                child: SizedBox(
+                  width: 520,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 26,
+                            backgroundImage: hasAvatar
+                                ? NetworkImage(_resolveMediaUrl(avatarUrl))
+                                : null,
+                            child: hasAvatar
+                                ? null
+                                : const Icon(Icons.person_outline_rounded),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: uploadingAvatar
+                                  ? null
+                                  : () async {
+                                      setDialogState(() {
+                                        uploadingAvatar = true;
+                                      });
+                                      await _pickAndUploadAvatar();
+                                      if (!mounted) return;
+                                      setDialogState(() {
+                                        uploadingAvatar = false;
+                                      });
+                                    },
+                              icon: uploadingAvatar
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.upload_file_rounded),
+                              label: Text(
+                                _isRu ? 'Загрузить аватар' : 'Upload avatar',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _fullNameController,
+                        decoration: InputDecoration(
+                          labelText: l10n.t('full_name'),
+                        ),
+                        onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _phoneController,
+                        decoration: InputDecoration(
+                          labelText: l10n.t('phone_label'),
+                        ),
+                        keyboardType: TextInputType.phone,
+                        onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _birthController,
+                        decoration: InputDecoration(
+                          labelText: l10n.t('birth_date_label'),
+                        ),
+                        onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                      ),
+                      if (user.role == 'teacher') ...[
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _teacherController,
+                          decoration: InputDecoration(
+                            labelText: l10n.t('teacher_name_label'),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: Text(_isRu ? 'Отмена' : 'Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: Text(_isRu ? 'Сохранить' : 'Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (ok != true) return;
+    await _saveProfile();
+  }
+
+  Widget _buildRoleContextCard({
+    required UserProfile? user,
+    required bool isRu,
+  }) {
+    if (user == null) {
+      return const SizedBox.shrink();
+    }
+    final role = user.role.trim();
+    final approved = user.isApproved ?? true;
+    final approvalChip = Chip(
+      label: Text(
+        approved
+            ? (isRu ? 'Подтвержден' : 'Approved')
+            : (isRu ? 'Ожидает подтверждения' : 'Pending approval'),
+      ),
+      backgroundColor: approved
+          ? const Color(0xFFD1FAE5)
+          : const Color(0xFFFFEDD5),
+    );
+    switch (role) {
+      case 'student':
+        return _ProfileSectionCard(
+          title: isRu ? 'Профиль студента' : 'Student profile',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  approvalChip,
+                  Chip(
+                    label: Text(
+                      (user.studentGroup ?? '').trim().isEmpty
+                          ? (isRu ? 'Группа не назначена' : 'Group not set')
+                          : '${isRu ? 'Группа' : 'Group'}: ${user.studentGroup}',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                isRu
+                    ? 'Доступ: расписание, оценки, экзамены, отработки и заявки.'
+                    : 'Access: schedule, grades, exams, makeups and requests.',
+              ),
+            ],
+          ),
+        );
+      case 'teacher':
+        return _ProfileSectionCard(
+          title: isRu ? 'Профиль преподавателя' : 'Teacher profile',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  approvalChip,
+                  Chip(
+                    label: Text(
+                      (user.teacherName ?? '').trim().isEmpty
+                          ? (isRu
+                                ? 'ФИО преподавателя не заполнено'
+                                : 'Teacher name not set')
+                          : '${isRu ? 'ФИО в журнале' : 'Journal name'}: ${user.teacherName}',
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                isRu
+                    ? 'Доступ: расписание, посещаемость, оценки, отработки и запросы на группы.'
+                    : 'Access: schedule, attendance, grades, makeups and group-access requests.',
+              ),
+            ],
+          ),
+        );
+      case 'parent':
+        return _ProfileSectionCard(
+          title: isRu ? 'Профиль родителя' : 'Parent profile',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  approvalChip,
+                  Chip(
+                    label: Text(
+                      (user.childFullName ?? '').trim().isEmpty
+                          ? (isRu
+                                ? 'Ребенок не привязан'
+                                : 'Child is not linked')
+                          : '${isRu ? 'Ребенок' : 'Child'}: ${user.childFullName}',
+                    ),
+                  ),
+                  if ((user.studentGroup ?? '').trim().isNotEmpty)
+                    Chip(
+                      label: Text(
+                        '${isRu ? 'Группа ребенка' : 'Child group'}: ${user.studentGroup}',
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                isRu
+                    ? 'Доступ только к данным подтвержденного ребенка: посещаемость, оценки, экзамены.'
+                    : 'Access is limited to approved child data: attendance, grades and exams.',
+              ),
+            ],
+          ),
+        );
+      case 'admin':
+        final permissions = user.adminPermissions;
+        return _ProfileSectionCard(
+          title: isRu ? 'Профиль администратора' : 'Admin profile',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  approvalChip,
+                  Chip(
+                    label: Text(
+                      isRu ? 'Полный CRUD по системе' : 'Full system CRUD',
+                    ),
+                  ),
+                  if (permissions.isNotEmpty)
+                    ...permissions.map(
+                      (item) => Chip(
+                        label: Text(
+                          isRu ? 'Право: $item' : 'Permission: $item',
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                isRu
+                    ? 'Используйте админ-панель для подтверждений, ролей и экосистемы пользователей.'
+                    : 'Use admin panel for approvals, roles and user ecosystem management.',
+              ),
+            ],
+          ),
+        );
+      default:
+        return _ProfileSectionCard(
+          title: isRu ? 'Профиль' : 'Profile',
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              approvalChip,
+              Chip(label: Text(role.isEmpty ? '-' : role)),
+            ],
+          ),
+        );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
     final user = AppStateScope.of(context).user;
+    final isRu = AppStateScope.of(
+      context,
+    ).locale.languageCode.toLowerCase().startsWith('ru');
     final roleLabel = user?.role ?? l10n.t('role_label');
     final displayName = (user?.fullName.isNotEmpty ?? false)
         ? user!.fullName
         : l10n.t('full_name');
-    final subtitle = user?.role == 'teacher'
-        ? ((user?.teacherName?.isNotEmpty ?? false)
-              ? user!.teacherName!
-              : l10n.t('teacher_not_set'))
-        : ((user?.studentGroup?.isNotEmpty ?? false)
-              ? user!.studentGroup!
-              : l10n.t('group_not_set'));
+    final subtitle = switch (user?.role) {
+      'teacher' =>
+        ((user?.teacherName?.isNotEmpty ?? false)
+            ? user!.teacherName!
+            : l10n.t('teacher_not_set')),
+      'parent' =>
+        ((user?.childFullName?.isNotEmpty ?? false)
+            ? user!.childFullName!
+            : l10n.t('group_not_set')),
+      _ =>
+        ((user?.studentGroup?.isNotEmpty ?? false)
+            ? user!.studentGroup!
+            : l10n.t('group_not_set')),
+    };
     final phoneValue = (user?.phone?.isNotEmpty ?? false)
         ? user!.phone!
         : l10n.t('group_not_set');
@@ -4011,6 +5638,8 @@ class _ProfilePageState extends State<ProfilePage> {
               .join()
               .toUpperCase()
         : 'PA';
+    final avatarUrl = user?.avatarUrl?.trim();
+    final hasAvatar = avatarUrl != null && avatarUrl.isNotEmpty;
 
     return ListView(
       controller: _scrollController,
@@ -4030,15 +5659,20 @@ class _ProfilePageState extends State<ProfilePage> {
             children: [
               CircleAvatar(
                 radius: 40,
-                backgroundColor: Colors.white.withOpacity(0.2),
-                child: Text(
-                  initials,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
-                  ),
-                ),
+                backgroundColor: Colors.white.withValues(alpha: 0.2),
+                backgroundImage: hasAvatar
+                    ? NetworkImage(_resolveMediaUrl(avatarUrl))
+                    : null,
+                child: hasAvatar
+                    ? null
+                    : Text(
+                        initials,
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
               ),
               const SizedBox(height: 12),
               Text(
@@ -4052,7 +5686,7 @@ class _ProfilePageState extends State<ProfilePage> {
               const SizedBox(height: 6),
               Text(
                 subtitle,
-                style: TextStyle(color: Colors.white.withOpacity(0.85)),
+                style: TextStyle(color: Colors.white.withValues(alpha: 0.85)),
               ),
               const SizedBox(height: 12),
               Wrap(
@@ -4063,13 +5697,8 @@ class _ProfilePageState extends State<ProfilePage> {
                   _ProfileActionButton(
                     label: l10n.t('profile_edit'),
                     icon: Icons.edit,
-                    onPressed: () => _scrollTo(320),
-                  ),
-                  _ProfileActionButton(
-                    label: l10n.t('save_profile'),
-                    icon: Icons.check_circle_outline,
                     isPrimary: true,
-                    onPressed: _saveProfile,
+                    onPressed: _openEditProfileDialog,
                   ),
                 ],
               ),
@@ -4090,7 +5719,7 @@ class _ProfilePageState extends State<ProfilePage> {
                   borderRadius: BorderRadius.circular(20),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.06),
+                      color: Colors.black.withValues(alpha: 0.06),
                       blurRadius: 16,
                       offset: const Offset(0, 8),
                     ),
@@ -4122,57 +5751,72 @@ class _ProfilePageState extends State<ProfilePage> {
                 ),
               ),
               const SizedBox(height: 16),
+              _buildRoleContextCard(user: user, isRu: isRu),
+              const SizedBox(height: 16),
               _ProfileSectionCard(
                 title: l10n.t('account_info'),
                 child: Column(
                   children: [
-                    TextField(
-                      controller: _fullNameController,
-                      decoration: InputDecoration(
-                        labelText: l10n.t('full_name'),
-                      ),
-                      onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                    ListTile(
+                      leading: const Icon(Icons.badge_outlined),
+                      title: Text(l10n.t('full_name')),
+                      subtitle: Text(displayName),
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _phoneController,
-                      decoration: InputDecoration(
-                        labelText: l10n.t('phone_label'),
-                      ),
-                      keyboardType: TextInputType.phone,
-                      onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.email_outlined),
+                      title: const Text('Email'),
+                      subtitle: Text(user?.email ?? '-'),
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _birthController,
-                      decoration: InputDecoration(
-                        labelText: l10n.t('birth_date_label'),
-                      ),
-                      onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.phone_outlined),
+                      title: Text(l10n.t('phone_label')),
+                      subtitle: Text(phoneValue),
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _groupController,
-                      decoration: InputDecoration(
-                        labelText: l10n.t('group_label'),
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.cake_outlined),
+                      title: Text(l10n.t('birth_date_label')),
+                      subtitle: Text(
+                        (user?.birthDate == null)
+                            ? (isRu ? 'Не указан' : 'Not set')
+                            : DateFormat('yyyy-MM-dd').format(user!.birthDate!),
                       ),
-                      onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                     ),
                     if (user?.role == 'teacher') ...[
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: _teacherController,
-                        decoration: InputDecoration(
-                          labelText: l10n.t('teacher_name_label'),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.co_present_outlined),
+                        title: Text(l10n.t('teacher_name_label')),
+                        subtitle: Text(
+                          (user?.teacherName ?? '').trim().isEmpty
+                              ? (isRu ? 'Не указан' : 'Not set')
+                              : user!.teacherName!,
                         ),
                       ),
                     ],
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed: _saveProfile,
-                        child: Text(l10n.t('save_profile')),
+                    if (user?.role == 'parent') ...[
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.family_restroom_outlined),
+                        title: Text(
+                          isRu ? 'Подтвержденный ребенок' : 'Approved child',
+                        ),
+                        subtitle: Text(
+                          (user?.childFullName ?? '').trim().isEmpty
+                              ? (isRu ? 'Не указан' : 'Not set')
+                              : user!.childFullName!,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton.icon(
+                        onPressed: _openEditProfileDialog,
+                        icon: const Icon(Icons.edit_rounded),
+                        label: Text(l10n.t('profile_edit')),
                       ),
                     ),
                   ],
@@ -4208,18 +5852,18 @@ class _ProfilePageState extends State<ProfilePage> {
                     const Divider(height: 1),
                     SwitchListTile(
                       value: _notifySchedule,
-                      onChanged: (value) {
+                      onChanged: (value) async {
                         setState(() => _notifySchedule = value);
-                        _savePref('pref_notify_schedule', value);
+                        await _saveNotificationPref('notify_schedule', value);
                       },
                       title: Text(l10n.t('schedule_updates')),
                     ),
                     const Divider(height: 1),
                     SwitchListTile(
                       value: _notifyRequests,
-                      onChanged: (value) {
+                      onChanged: (value) async {
                         setState(() => _notifyRequests = value);
-                        _savePref('pref_notify_requests', value);
+                        await _saveNotificationPref('notify_requests', value);
                       },
                       title: Text(l10n.t('request_updates')),
                     ),
@@ -4235,10 +5879,9 @@ class _ProfilePageState extends State<ProfilePage> {
                       leading: const Icon(Icons.lock_reset),
                       title: Text(l10n.t('reset_password_action')),
                       onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => const ResetPasswordPage(),
-                          ),
+                        pushAdaptivePage<void>(
+                          context,
+                          const ResetPasswordPage(),
                         );
                       },
                     ),
@@ -4328,7 +5971,7 @@ class _ProfileSectionCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.04),
+            color: Colors.black.withValues(alpha: 0.04),
             blurRadius: 14,
             offset: const Offset(0, 8),
           ),
@@ -4371,7 +6014,33 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   Future<List<AppNotification>> _load() async {
-    return AppStateScope.of(context).client.listNotifications();
+    final state = AppStateScope.of(context);
+    final rows = await state.client.listNotifications();
+    final role = (state.user?.role ?? '').trim().toLowerCase();
+    if (role != 'request_handler') {
+      return rows;
+    }
+    return rows
+        .where((item) {
+          final type = (item.data?['type'] ?? '')
+              .toString()
+              .trim()
+              .toLowerCase();
+          if (type != 'request_created' && type != 'request_updated') {
+            return true;
+          }
+          final title = item.title.toLowerCase();
+          final body = item.body.toLowerCase();
+          final text = '$title $body';
+          if (text.contains('преподав') && text.contains('груп')) {
+            return false;
+          }
+          if (text.contains('teacher') && text.contains('group')) {
+            return false;
+          }
+          return true;
+        })
+        .toList(growable: false);
   }
 
   Future<void> _refresh() async {
@@ -4379,8 +6048,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
     await _future;
   }
 
-  Future<void> _markRead(AppNotification notification) async {
-    if (notification.isRead) return;
+  Future<void> _consumeNotification(AppNotification notification) async {
     try {
       await AppStateScope.of(
         context,
@@ -4388,6 +6056,74 @@ class _NotificationsPageState extends State<NotificationsPage> {
       if (!mounted) return;
       await _refresh();
     } catch (_) {}
+  }
+
+  Future<void> _openNotification(AppNotification notification) async {
+    await _consumeNotification(notification);
+    if (!mounted) return;
+    final type = (notification.data?['type'] ?? '').toString().trim();
+    final state = AppStateScope.of(context);
+    final role = state.user?.role ?? '';
+    Widget? target;
+    switch (type) {
+      case 'schedule_updated':
+        target = const SchedulePage();
+        break;
+      case 'exam_grades':
+        target = const ExamGradesPage();
+        break;
+      case 'request_created':
+      case 'request_updated':
+        target = RequestsPage(
+          canProcess: role == 'admin' || role == 'request_handler',
+        );
+        break;
+      case 'makeup_created':
+      case 'makeup_updated':
+      case 'makeup_message':
+      case 'makeup_graded':
+        if (state.user != null) {
+          target = MakeupWorkspacePage(
+            client: state.client,
+            currentUser: state.user!,
+            locale: state.locale,
+            baseUrl: state.baseUrl,
+            errorText: humanizeError,
+          );
+        }
+        break;
+      case 'attendance_updated':
+        target = const AttendancePage();
+        break;
+      case 'grade_updated':
+        target = const GradesPage();
+        break;
+      case 'news_created':
+      case 'news_updated':
+        target = NewsFeedPage(canEdit: role == 'admin' || role == 'smm');
+        break;
+      default:
+        break;
+    }
+    if (target != null && mounted) {
+      await pushAdaptivePage<void>(context, target);
+    }
+  }
+
+  Future<void> _deleteNotification(AppNotification notification) async {
+    setState(() {
+      _future = _future.then(
+        (items) => items.where((item) => item.id != notification.id).toList(),
+      );
+    });
+    try {
+      await AppStateScope.of(
+        context,
+      ).client.deleteNotification(notification.id);
+    } catch (_) {
+      if (!mounted) return;
+      await _refresh();
+    }
   }
 
   String _notificationBody(AppNotification item) {
@@ -4441,14 +6177,20 @@ class _NotificationsPageState extends State<NotificationsPage> {
     final l10n = AppLocalizations.of(context);
     final dateFormat = DateFormat('dd.MM.yyyy HH:mm');
     return Scaffold(
-      appBar: AppBar(title: Text(l10n.t('notifications_title'))),
+      appBar: AppBar(
+        leading: IconButton(
+          onPressed: () => Navigator.of(context).maybePop(),
+          icon: const Icon(Icons.arrow_back),
+        ),
+        title: Text(l10n.t('notifications_title')),
+      ),
       body: RefreshIndicator(
         onRefresh: _refresh,
         child: FutureBuilder<List<AppNotification>>(
           future: _future,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
+              return const Center(child: BrandLoadingIndicator());
             }
             if (snapshot.hasError) {
               final message = humanizeError(snapshot.error ?? '');
@@ -4466,11 +6208,11 @@ class _NotificationsPageState extends State<NotificationsPage> {
             return ListView.separated(
               padding: const EdgeInsets.all(16),
               itemCount: items.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 12),
+              separatorBuilder: (_, _) => const SizedBox(height: 12),
               itemBuilder: (context, index) {
                 final item = items[index];
                 return GestureDetector(
-                  onTap: () => _markRead(item),
+                  onTap: () => _openNotification(item),
                   child: Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
@@ -4478,7 +6220,9 @@ class _NotificationsPageState extends State<NotificationsPage> {
                       borderRadius: BorderRadius.circular(16),
                       border: item.isRead
                           ? null
-                          : Border.all(color: kBrandPrimary.withOpacity(0.3)),
+                          : Border.all(
+                              color: kBrandPrimary.withValues(alpha: 0.3),
+                            ),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -4500,7 +6244,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
                                   vertical: 4,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: kBrandPrimary.withOpacity(0.12),
+                                  color: kBrandPrimary.withValues(alpha: 0.12),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Text(
@@ -4519,6 +6263,16 @@ class _NotificationsPageState extends State<NotificationsPage> {
                         Text(
                           dateFormat.format(item.createdAt),
                           style: TextStyle(color: kSecondaryText, fontSize: 12),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: () => _deleteNotification(item),
+                              icon: const Icon(Icons.delete_outline_rounded),
+                              label: Text(l10n.t('notifications_delete')),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -4555,12 +6309,12 @@ class FeatureScaffold extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final maxWidth = constraints.maxWidth >= 1200
-            ? 1140.0
-            : constraints.maxWidth >= 900
-            ? 980.0
+        final maxWidth = constraints.maxWidth >= 1440
+            ? 1320.0
+            : constraints.maxWidth >= 1100
+            ? 1120.0
             : double.infinity;
-        final horizontal = constraints.maxWidth >= 900 ? 24.0 : 16.0;
+        final horizontal = constraints.maxWidth >= 1100 ? 28.0 : 16.0;
         return Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
@@ -4653,6 +6407,466 @@ class FeatureScaffold extends StatelessWidget {
   }
 }
 
+class HomeDashboardPage extends StatefulWidget {
+  const HomeDashboardPage({
+    super.key,
+    required this.role,
+    required this.onOpenFeature,
+  });
+
+  final RoleDefinition role;
+  final void Function(String featureId) onOpenFeature;
+
+  @override
+  State<HomeDashboardPage> createState() => _HomeDashboardPageState();
+}
+
+class _HomeDashboardPageState extends State<HomeDashboardPage> {
+  bool _loading = true;
+  bool _initialized = false;
+  String? _error;
+
+  NewsPost? _latestNews;
+  ScheduleUpload? _latestSchedule;
+  List<ExamGrade> _recentExams = const [];
+  List<MakeupCaseDto> _recentMakeups = const [];
+  List<RequestTicket> _recentRequests = const [];
+  List<AppNotification> _newNotifications = const [];
+
+  bool get _isRu => AppStateScope.of(context).locale.languageCode == 'ru';
+  String _t(String ru, String en) => _isRu ? ru : en;
+
+  bool _hasFeature(String featureId) =>
+      widget.role.features.any((item) => item.id == featureId);
+
+  FeatureDefinition? _findFeature(String featureId) {
+    for (final item in widget.role.features) {
+      if (item.id == featureId) return item;
+    }
+    return null;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialized) return;
+    _initialized = true;
+    _loadDashboard();
+  }
+
+  Future<void> _loadDashboard() async {
+    if (!mounted) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    final client = AppStateScope.of(context).client;
+    final now = DateTime.now().toUtc();
+    final weekAgo = now.subtract(const Duration(days: 7));
+
+    NewsPost? latestNews;
+    ScheduleUpload? latestSchedule;
+    List<ExamGrade> recentExams = const [];
+    List<MakeupCaseDto> recentMakeups = const [];
+    List<RequestTicket> recentRequests = const [];
+    List<AppNotification> notifications = const [];
+
+    Future<void> safeRun(Future<void> Function() block) async {
+      try {
+        await block();
+      } catch (_) {}
+    }
+
+    if (_hasFeature('news')) {
+      await safeRun(() async {
+        final posts = await client.listNews(limit: 1);
+        if (posts.isNotEmpty) {
+          latestNews = posts.first;
+        }
+      });
+    }
+    if (_hasFeature('schedule')) {
+      await safeRun(() async {
+        latestSchedule = await client.latestSchedule();
+      });
+    }
+    if (_hasFeature('exams')) {
+      await safeRun(() async {
+        final rows = await client.listExamGrades();
+        rows.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        recentExams = rows.take(5).toList(growable: false);
+      });
+    }
+    if (_hasFeature('makeup')) {
+      await safeRun(() async {
+        final rows = await client.listMakeups();
+        rows.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        final filtered = rows.where((item) {
+          final status = item.status.trim().toLowerCase();
+          final closed =
+              status == 'closed' ||
+              status == 'graded' ||
+              status == 'completed' ||
+              status == 'cancelled';
+          return !closed || item.updatedAt.toUtc().isAfter(weekAgo);
+        }).toList();
+        recentMakeups = filtered.take(5).toList(growable: false);
+      });
+    }
+    if (_hasFeature('requests')) {
+      await safeRun(() async {
+        final rows = await client.listRequests();
+        rows.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        final filtered = rows.where((item) {
+          final status = item.status.trim().toLowerCase();
+          final closed =
+              status == 'approved' ||
+              status == 'rejected' ||
+              status == 'closed' ||
+              status == 'done' ||
+              status == 'completed';
+          return !closed || item.createdAt.toUtc().isAfter(weekAgo);
+        }).toList();
+        recentRequests = filtered.take(5).toList(growable: false);
+      });
+    }
+    await safeRun(() async {
+      final rows = await client.listNotifications(limit: 20);
+      rows.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      notifications = rows.where((item) => !item.isRead).take(6).toList();
+    });
+
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _latestNews = latestNews;
+      _latestSchedule = latestSchedule;
+      _recentExams = recentExams;
+      _recentMakeups = recentMakeups;
+      _recentRequests = recentRequests;
+      _newNotifications = notifications;
+    });
+  }
+
+  void _openFeature(String featureId) {
+    final feature = _findFeature(featureId);
+    if (feature == null) return;
+    widget.onOpenFeature(featureId);
+  }
+
+  String _requestLabel(String status) {
+    if (!_isRu) return status;
+    final normalized = status.trim().toLowerCase();
+    if (normalized == 'submitted') return 'Отправлена';
+    if (normalized == 'in_progress') return 'В обработке';
+    if (normalized == 'approved') return 'Одобрена';
+    if (normalized == 'rejected') return 'Отклонена';
+    if (normalized == 'closed') return 'Закрыта';
+    return status;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final user = AppStateScope.of(context).user;
+    final today = DateFormat(
+      _isRu ? 'd MMMM yyyy, EEEE' : 'EEEE, MMMM d, yyyy',
+      _isRu ? 'ru' : 'en',
+    ).format(DateTime.now());
+
+    final summaryRows = <String>[
+      _t(
+        'Новых уведомлений: ${_newNotifications.length}',
+        'New notifications: ${_newNotifications.length}',
+      ),
+      if (_hasFeature('requests'))
+        _t(
+          'Актуальных заявок: ${_recentRequests.length}',
+          'Active requests: ${_recentRequests.length}',
+        ),
+      if (_hasFeature('makeup'))
+        _t(
+          'Актуальных отработок: ${_recentMakeups.length}',
+          'Active makeups: ${_recentMakeups.length}',
+        ),
+    ];
+
+    return FeatureScaffold(
+      title: _t('Главная', 'Home'),
+      subtitle: _t(
+        'Ключевые обновления по сервисам и вашим задачам.',
+        'Key updates across services and your tasks.',
+      ),
+      actionLabel: _t('Обновить', 'Refresh'),
+      onAction: _loadDashboard,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFFDBECE4), Color(0xFFF2FAF6)],
+              ),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: const Color(0xFFC9E2D7)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    'Здравствуйте, ${user?.fullName ?? widget.role.title}',
+                    'Hello, ${user?.fullName ?? widget.role.title}',
+                  ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 6),
+                Text(today, style: const TextStyle(color: kSecondaryText)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (_loading) const Center(child: BrandLoadingIndicator()),
+          if (_error != null) ...[
+            InlineNotice(message: _error!, isError: true),
+            const SizedBox(height: 10),
+          ],
+          if (!_loading) ...[
+            if (_hasFeature('news'))
+              _HomeDashboardCard(
+                title: _t('Последняя новость', 'Latest news'),
+                actionLabel: _t('Открыть', 'Open'),
+                onAction: () => _openFeature('news'),
+                child: _latestNews == null
+                    ? Text(_t('Новостей пока нет.', 'No news yet.'))
+                    : Builder(
+                        builder: (context) {
+                          final previewText = _newsPreviewText(
+                            _latestNews!.body,
+                          );
+                          final previewImage = _firstImageMedia(
+                            _latestNews!.media,
+                          );
+                          final previewImageUrl = previewImage != null
+                              ? _resolveMediaUrl(previewImage.url)
+                              : _firstMarkdownImageUrl(_latestNews!.body);
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _latestNews!.title,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              if (previewImageUrl != null) ...[
+                                const SizedBox(height: 8),
+                                _buildNewsImagePreview(
+                                  previewImageUrl,
+                                  maxWidth: 520,
+                                  maxHeight: 220,
+                                  borderRadius: 12,
+                                ),
+                              ],
+                              if (previewText.isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                Text(
+                                  previewText,
+                                  maxLines: 3,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
+                            ],
+                          );
+                        },
+                      ),
+              ),
+            if (_hasFeature('schedule')) ...[
+              const SizedBox(height: 10),
+              _HomeDashboardCard(
+                title: _t('Последнее расписание', 'Latest schedule upload'),
+                actionLabel: _t('Открыть', 'Open'),
+                onAction: () => _openFeature('schedule'),
+                child: Text(
+                  _latestSchedule?.scheduleDate == null
+                      ? _t(
+                          'Дата расписания отсутствует.',
+                          'Schedule date is not set.',
+                        )
+                      : '${_t('Дата', 'Date')}: ${DateFormat('dd.MM.yyyy').format(_latestSchedule!.scheduleDate!)}',
+                ),
+              ),
+            ],
+            if (_hasFeature('exams') && _recentExams.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _HomeDashboardCard(
+                title: _t('Экзаменационные оценки', 'Exam grades'),
+                actionLabel: _t('Открыть', 'Open'),
+                onAction: () => _openFeature('exams'),
+                child: Column(
+                  children: [
+                    for (final exam in _recentExams)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text('${exam.studentName} • ${exam.grade}'),
+                        subtitle: Text('${exam.examName} • ${exam.groupName}'),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+            if (_hasFeature('makeup') && _recentMakeups.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _HomeDashboardCard(
+                title: _t(
+                  'Отработки (новые/актуальные)',
+                  'Makeups (new/active)',
+                ),
+                actionLabel: _t('Открыть', 'Open'),
+                onAction: () => _openFeature('makeup'),
+                child: Column(
+                  children: [
+                    for (final item in _recentMakeups)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text('${item.groupName} • ${item.studentName}'),
+                        subtitle: Text(
+                          '${DateFormat('dd.MM.yyyy').format(item.classDate)} • ${item.status}',
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+            if (_hasFeature('requests') && _recentRequests.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              _HomeDashboardCard(
+                title: _t('Заявки (новые/актуальные)', 'Requests (new/active)'),
+                actionLabel: _t('Открыть', 'Open'),
+                onAction: () => _openFeature('requests'),
+                child: Column(
+                  children: [
+                    for (final item in _recentRequests)
+                      ListTile(
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(item.requestType),
+                        subtitle: Text(
+                          '${item.studentName} • ${_requestLabel(item.status)}',
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 10),
+            _HomeDashboardCard(
+              title: _t('Новые уведомления', 'New notifications'),
+              actionLabel: _t('Открыть', 'Open'),
+              onAction: () {
+                pushAdaptivePage<void>(context, const NotificationsPage());
+              },
+              child: _newNotifications.isEmpty
+                  ? Text(_t('Новых уведомлений нет.', 'No new notifications.'))
+                  : Column(
+                      children: [
+                        for (final item in _newNotifications)
+                          ListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            title: Text(item.title),
+                            subtitle: Text(
+                              DateFormat(
+                                'dd.MM.yyyy HH:mm',
+                              ).format(item.createdAt),
+                            ),
+                          ),
+                      ],
+                    ),
+            ),
+            const SizedBox(height: 10),
+            _HomeDashboardCard(
+              title: _t('Что нового', 'What is new'),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final row in summaryRows) ...[
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.fiber_manual_record,
+                          size: 8,
+                          color: kBrandPrimary,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(row)),
+                      ],
+                    ),
+                    if (row != summaryRows.last) const SizedBox(height: 8),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _HomeDashboardCard extends StatelessWidget {
+  const _HomeDashboardCard({
+    required this.title,
+    required this.child,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  final String title;
+  final Widget child;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+                if (actionLabel != null && onAction != null)
+                  TextButton(onPressed: onAction, child: Text(actionLabel!)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class HomePage extends StatelessWidget {
   const HomePage({super.key, required this.role});
 
@@ -4660,13 +6874,12 @@ class HomePage extends StatelessWidget {
 
   void _openFeature(BuildContext context, FeatureDefinition action) {
     final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (routeContext) => _FeatureStandalonePage(
-          title: _featureTitle(action.id, action.title, isRu),
-          child: action.builder(routeContext),
-          accent: role.color,
-        ),
+    pushAdaptivePage<void>(
+      context,
+      _FeatureStandalonePage(
+        title: _featureTitle(action.id, action.title, isRu),
+        accent: role.color,
+        child: action.builder(context),
       ),
     );
   }
@@ -4693,6 +6906,10 @@ class HomePage extends StatelessWidget {
           return 'News feed';
         case 'requests':
           return 'Request queue';
+        case 'makeup':
+          return 'Missed class makeups';
+        case 'admin_panel':
+          return 'Users and system CRUD';
         case 'exams':
           return 'Exam results';
         case 'profile':
@@ -4713,6 +6930,10 @@ class HomePage extends StatelessWidget {
         return 'Лента новостей';
       case 'requests':
         return 'Очередь заявок';
+      case 'makeup':
+        return 'Отработки занятий';
+      case 'admin_panel':
+        return 'CRUD и контроль системы';
       case 'exams':
         return 'Экзаменационные оценки';
       case 'profile':
@@ -4736,6 +6957,10 @@ class HomePage extends StatelessWidget {
         return 'Новости';
       case 'requests':
         return 'Заявки';
+      case 'makeup':
+        return 'Отработки';
+      case 'admin_panel':
+        return 'Админ панель';
       case 'exams':
         return 'Экзамены';
       case 'profile':
@@ -5094,12 +7319,12 @@ class HomePage extends StatelessWidget {
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: [
-                  role.color.withOpacity(0.25),
+                  role.color.withValues(alpha: 0.25),
                   Color.lerp(role.color, Colors.white, 0.8) ?? Colors.white,
                 ],
               ),
               borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: role.color.withOpacity(0.25)),
+              border: Border.all(color: role.color.withValues(alpha: 0.25)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -5108,7 +7333,7 @@ class HomePage extends StatelessWidget {
                   children: [
                     CircleAvatar(
                       radius: 28,
-                      backgroundColor: role.color.withOpacity(0.18),
+                      backgroundColor: role.color.withValues(alpha: 0.18),
                       child: Icon(_roleIcon(role.id), color: role.color),
                     ),
                     const SizedBox(width: 14),
@@ -5192,11 +7417,13 @@ class HomePage extends StatelessWidget {
                         end: Alignment.bottomRight,
                         colors: [
                           kSecondaryBackground,
-                          Colors.white.withOpacity(0.9),
+                          Colors.white.withValues(alpha: 0.9),
                         ],
                       ),
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: role.color.withOpacity(0.12)),
+                      border: Border.all(
+                        color: role.color.withValues(alpha: 0.12),
+                      ),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -5204,7 +7431,9 @@ class HomePage extends StatelessWidget {
                         Row(
                           children: [
                             CircleAvatar(
-                              backgroundColor: role.color.withOpacity(0.15),
+                              backgroundColor: role.color.withValues(
+                                alpha: 0.15,
+                              ),
                               foregroundColor: role.color,
                               child: Icon(action.icon),
                             ),
@@ -5215,7 +7444,7 @@ class HomePage extends StatelessWidget {
                                 vertical: 4,
                               ),
                               decoration: BoxDecoration(
-                                color: role.color.withOpacity(0.09),
+                                color: role.color.withValues(alpha: 0.09),
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: Text(
@@ -5245,7 +7474,7 @@ class HomePage extends StatelessWidget {
                           alignment: Alignment.bottomRight,
                           child: Icon(
                             Icons.arrow_forward_rounded,
-                            color: role.color.withOpacity(0.7),
+                            color: role.color.withValues(alpha: 0.7),
                           ),
                         ),
                       ],
@@ -5391,9 +7620,9 @@ class _HomeMetricChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.75),
+        color: Colors.white.withValues(alpha: 0.75),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: accent.withOpacity(0.2)),
+        border: Border.all(color: accent.withValues(alpha: 0.2)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -5438,7 +7667,7 @@ class _FeatureStandalonePage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: Text(title),
-        backgroundColor: accent.withOpacity(0.14),
+        backgroundColor: accent.withValues(alpha: 0.14),
       ),
       body: SafeArea(child: child),
     );
@@ -5530,7 +7759,9 @@ class _HomeNewsPreviewState extends State<_HomeNewsPreview> {
             if (_loading)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 18),
-                child: Center(child: CircularProgressIndicator()),
+                child: Center(
+                  child: BrandLoadingIndicator(logoSize: 48, spacing: 8),
+                ),
               )
             else if (_error != null)
               InlineNotice(message: _error!, isError: true)
@@ -5549,7 +7780,7 @@ class _HomeNewsPreviewState extends State<_HomeNewsPreview> {
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: CircleAvatar(
-                        backgroundColor: widget.accent.withOpacity(0.12),
+                        backgroundColor: widget.accent.withValues(alpha: 0.12),
                         child: Icon(
                           Icons.article_outlined,
                           color: widget.accent,
@@ -5658,7 +7889,9 @@ class _HomeAttendancePreviewState extends State<_HomeAttendancePreview> {
             if (_loading)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 18),
-                child: Center(child: CircularProgressIndicator()),
+                child: Center(
+                  child: BrandLoadingIndicator(logoSize: 48, spacing: 8),
+                ),
               )
             else if (_error != null)
               InlineNotice(message: _error!, isError: true)
@@ -5679,7 +7912,7 @@ class _HomeAttendancePreviewState extends State<_HomeAttendancePreview> {
                     ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: CircleAvatar(
-                        backgroundColor: widget.accent.withOpacity(0.12),
+                        backgroundColor: widget.accent.withValues(alpha: 0.12),
                         child: Icon(Icons.group_outlined, color: widget.accent),
                       ),
                       title: Text(_items[i].groupName),
@@ -5757,6 +7990,29 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
   int _offset = 0;
   String _selectedCategory = 'news';
   bool _initialized = false;
+
+  bool get _useDialogForRoutes {
+    if (kIsWeb) return true;
+    return defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.linux;
+  }
+
+  Future<T?> _openNewsRoute<T>(Widget child) {
+    if (!_useDialogForRoutes) {
+      return Navigator.of(
+        context,
+      ).push<T>(MaterialPageRoute(builder: (_) => child));
+    }
+    return showDialog<T>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Dialog(
+        insetPadding: const EdgeInsets.all(24),
+        child: SizedBox(width: 980, height: 760, child: child),
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -5870,6 +8126,7 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
     setState(() {
       _posts[index] = prev.copyWith(
         myReaction: nextReaction,
+        clearMyReaction: nextReaction == null,
         likedByMe: nextLiked,
         reactionCounts: updatedCounts,
         likesCount: updatedCounts.values.fold<int>(0, (a, b) => a + b),
@@ -5888,6 +8145,7 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
           likesCount: result.likesCount,
           reactionCounts: result.reactionCounts,
           myReaction: result.myReaction,
+          clearMyReaction: result.myReaction == null,
         );
       });
     } catch (_) {}
@@ -5895,27 +8153,66 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
 
   Future<void> _share(NewsPost post) async {
     try {
-      final count = await AppStateScope.of(context).client.shareNews(post.id);
+      final result = await AppStateScope.of(context).client.shareNews(post.id);
       final index = _posts.indexWhere((item) => item.id == post.id);
       if (!mounted || index == -1) return;
-      setState(() => _posts[index] = _posts[index].copyWith(shareCount: count));
-    } catch (_) {}
+      await Clipboard.setData(
+        ClipboardData(text: publicNewsShareLink(context, post.id)),
+      );
+      setState(
+        () => _posts[index] = _posts[index].copyWith(
+          shareCount: result.shareCount,
+        ),
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            result.shared
+                ? 'Репост сохранен, ссылка скопирована'
+                : 'Репост уже был, ссылка скопирована',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = humanizeError(error);
+      });
+    }
   }
 
   Future<void> _openDetail(NewsPost post) async {
-    final result = await Navigator.of(context).push<NewsPost>(
-      MaterialPageRoute(
-        builder: (_) => NewsPostDetailPage(post: post, canEdit: widget.canEdit),
-      ),
+    final result = await _openNewsRoute<NewsPostDetailResult>(
+      NewsPostDetailPage(post: post, canEdit: widget.canEdit),
+    );
+    if (result == null) return;
+    if (result.deleted) {
+      setState(() => _posts.removeWhere((item) => item.id == post.id));
+      return;
+    }
+    final index = _posts.indexWhere((item) => item.id == result.post.id);
+    if (index == -1) return;
+    setState(() => _posts[index] = result.post);
+  }
+
+  Future<void> _openEdit(NewsPost post) async {
+    final result = await _openNewsRoute<NewsPost>(
+      NewsComposePage(existingPost: post),
     );
     if (result == null) return;
     final index = _posts.indexWhere((item) => item.id == result.id);
-    if (index == -1) return;
+    if (index == -1) {
+      setState(() => _posts.insert(0, result));
+      return;
+    }
     setState(() => _posts[index] = result);
   }
 
   Future<void> _deletePost(NewsPost post) async {
     if (!widget.canEdit) return;
+    final client = AppStateScope.of(context).client;
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -5935,7 +8232,7 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
     );
     if (ok != true) return;
     try {
-      await AppStateScope.of(context).client.deleteNewsPost(post.id);
+      await client.deleteNewsPost(post.id);
       if (!mounted) return;
       setState(() => _posts.removeWhere((item) => item.id == post.id));
     } catch (error) {
@@ -5948,11 +8245,13 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
   }
 
   Future<void> _openCompose() async {
-    final created = await Navigator.of(
-      context,
-    ).push<bool>(MaterialPageRoute(builder: (_) => const NewsComposePage()));
-    if (created == true) {
-      _refresh();
+    final created = await _openNewsRoute<NewsPost>(const NewsComposePage());
+    if (created != null) {
+      setState(() => _posts.insert(0, created));
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Пост опубликован')));
     }
   }
 
@@ -6032,7 +8331,7 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
                   onSelected: (_) => _selectCategory(category['id'] ?? 'news'),
                 );
               },
-              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
               itemCount: kNewsCategories.length,
             ),
           ),
@@ -6044,7 +8343,7 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
             child: RefreshIndicator(
               onRefresh: _refresh,
               child: _loading && _posts.isEmpty
-                  ? const Center(child: CircularProgressIndicator())
+                  ? const Center(child: BrandLoadingIndicator())
                   : ListView.builder(
                       controller: _scrollController,
                       itemCount: _posts.length + (_loadingMore ? 1 : 0),
@@ -6052,7 +8351,12 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
                         if (index >= _posts.length) {
                           return const Padding(
                             padding: EdgeInsets.symmetric(vertical: 16),
-                            child: Center(child: CircularProgressIndicator()),
+                            child: Center(
+                              child: BrandLoadingIndicator(
+                                logoSize: 44,
+                                spacing: 8,
+                              ),
+                            ),
                           );
                         }
                         final post = _posts[index];
@@ -6061,8 +8365,8 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
                               colors: [
-                                kBrandPrimary.withOpacity(0.25),
-                                kInfo.withOpacity(0.25),
+                                kBrandPrimary.withValues(alpha: 0.25),
+                                kInfo.withValues(alpha: 0.25),
                               ],
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
@@ -6073,11 +8377,11 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
                             margin: const EdgeInsets.all(1.2),
                             padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.92),
+                              color: Colors.white.withValues(alpha: 0.92),
                               borderRadius: BorderRadius.circular(22),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.black.withOpacity(0.06),
+                                  color: Colors.black.withValues(alpha: 0.06),
                                   blurRadius: 16,
                                   offset: const Offset(0, 8),
                                 ),
@@ -6127,8 +8431,8 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
                                           vertical: 4,
                                         ),
                                         decoration: BoxDecoration(
-                                          color: kBrandPrimary.withOpacity(
-                                            0.12,
+                                          color: kBrandPrimary.withValues(
+                                            alpha: 0.12,
                                           ),
                                           borderRadius: BorderRadius.circular(
                                             12,
@@ -6143,9 +8447,26 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
                                         ),
                                       ),
                                     if (widget.canEdit)
-                                      IconButton(
-                                        onPressed: () => _deletePost(post),
-                                        icon: const Icon(Icons.delete_outline),
+                                      PopupMenuButton<String>(
+                                        onSelected: (value) {
+                                          if (value == 'edit') {
+                                            _openEdit(post);
+                                            return;
+                                          }
+                                          if (value == 'delete') {
+                                            _deletePost(post);
+                                          }
+                                        },
+                                        itemBuilder: (context) => const [
+                                          PopupMenuItem(
+                                            value: 'edit',
+                                            child: Text('Редактировать'),
+                                          ),
+                                          PopupMenuItem(
+                                            value: 'delete',
+                                            child: Text('Удалить'),
+                                          ),
+                                        ],
                                       ),
                                   ],
                                 ),
@@ -6181,66 +8502,48 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
                                       ?.copyWith(fontWeight: FontWeight.w700),
                                 ),
                                 const SizedBox(height: 6),
-                                Text(post.body),
+                                _NewsBodyContent(
+                                  body: post.body,
+                                  media: post.media,
+                                  onOpenMedia: (index) =>
+                                      _openMediaViewer(post.media, index),
+                                ),
                                 if (post.media.isNotEmpty) ...[
-                                  const SizedBox(height: 12),
-                                  SizedBox(
-                                    height: 160,
-                                    child: ListView.separated(
-                                      scrollDirection: Axis.horizontal,
-                                      itemCount: post.media.length,
-                                      separatorBuilder: (_, __) =>
-                                          const SizedBox(width: 12),
-                                      itemBuilder: (context, mediaIndex) {
-                                        final media = post.media[mediaIndex];
-                                        final url = _resolveMediaUrl(media.url);
-                                        if (_isVideo(media)) {
-                                          return GestureDetector(
-                                            onTap: () => _openMediaViewer(
-                                              post.media,
-                                              mediaIndex,
-                                            ),
-                                            child: SizedBox(
-                                              width: 220,
-                                              child: NewsVideoPreview(url: url),
-                                            ),
-                                          );
-                                        }
-                                        return GestureDetector(
-                                          onTap: () => _openMediaViewer(
-                                            post.media,
-                                            mediaIndex,
-                                          ),
-                                          child: ClipRRect(
-                                            borderRadius: BorderRadius.circular(
-                                              16,
-                                            ),
-                                            child: Image.network(
-                                              url,
-                                              width: 220,
-                                              height: 160,
-                                              fit: BoxFit.cover,
-                                              loadingBuilder:
-                                                  (context, child, progress) {
-                                                    if (progress == null)
-                                                      return child;
-                                                    return Container(
-                                                      width: 220,
-                                                      height: 160,
-                                                      color:
-                                                          kSecondaryBackground,
-                                                      child: const Center(
-                                                        child:
-                                                            CircularProgressIndicator(),
-                                                      ),
-                                                    );
-                                                  },
-                                            ),
-                                          ),
+                                  ...() {
+                                    final remainingMedia =
+                                        _newsRemainingMediaIndices(
+                                          post.body,
+                                          post.media,
                                         );
-                                      },
-                                    ),
-                                  ),
+                                    if (remainingMedia.isEmpty) {
+                                      return const <Widget>[];
+                                    }
+                                    return <Widget>[
+                                      const SizedBox(height: 12),
+                                      Column(
+                                        children: [
+                                          for (
+                                            int pos = 0;
+                                            pos < remainingMedia.length;
+                                            pos++
+                                          ) ...[
+                                            if (pos > 0)
+                                              const SizedBox(height: 10),
+                                            _buildNewsMediaBlock(
+                                              media: post.media,
+                                              mediaIndex: remainingMedia[pos],
+                                              previewHeight: 190,
+                                              onOpen: (index) =>
+                                                  _openMediaViewer(
+                                                    post.media,
+                                                    index,
+                                                  ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                    ];
+                                  }(),
                                 ],
                                 const SizedBox(height: 12),
                                 _buildReactionCounts(post),
@@ -6293,16 +8596,114 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
   }
 
   void _openMediaViewer(List<NewsMedia> media, int startIndex) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => MediaViewerPage(media: media, initialIndex: startIndex),
-      ),
+    pushAdaptivePage<void>(
+      context,
+      MediaViewerPage(media: media, initialIndex: startIndex),
+      width: 1180,
+      height: 840,
     );
   }
 }
 
+Widget _buildNewsMediaBlock({
+  required List<NewsMedia> media,
+  required int mediaIndex,
+  required void Function(int index) onOpen,
+  double previewHeight = 220,
+}) {
+  final item = media[mediaIndex];
+  final url = _resolveMediaUrl(item.url);
+  final normalizedHeight = previewHeight
+      .clamp(140.0, kNewsMediaMaxHeight)
+      .toDouble();
+  if (_isVideo(item)) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: kNewsMediaMaxWidth),
+        child: GestureDetector(
+          onTap: () => onOpen(mediaIndex),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: SizedBox(
+              height: normalizedHeight,
+              width: double.infinity,
+              child: NewsVideoPreview(url: url),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  if (_isImage(item)) {
+    return _buildNewsImagePreview(
+      url,
+      maxWidth: kNewsMediaMaxWidth,
+      maxHeight: normalizedHeight,
+      borderRadius: 16,
+      onTap: () => onOpen(mediaIndex),
+    );
+  }
+  return Align(
+    alignment: Alignment.centerLeft,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: kNewsMediaMaxWidth),
+      child: NewsFileCard(media: item, url: url),
+    ),
+  );
+}
+
+Widget _buildNewsImagePreview(
+  String url, {
+  required double maxWidth,
+  required double maxHeight,
+  required double borderRadius,
+  VoidCallback? onTap,
+}) {
+  Widget child = Align(
+    alignment: Alignment.centerLeft,
+    child: ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth, maxHeight: maxHeight),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(borderRadius),
+        child: DecoratedBox(
+          decoration: const BoxDecoration(color: kSecondaryBackground),
+          child: Image.network(
+            url,
+            fit: BoxFit.contain,
+            alignment: Alignment.center,
+            loadingBuilder: (context, image, progress) {
+              if (progress == null) {
+                return image;
+              }
+              return SizedBox(
+                height: 180,
+                child: const Center(
+                  child: BrandLoadingIndicator(logoSize: 40, spacing: 8),
+                ),
+              );
+            },
+            errorBuilder: (context, error, stackTrace) => const SizedBox(
+              height: 120,
+              child: Center(
+                child: Icon(Icons.broken_image_outlined, color: kMutedText),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  if (onTap != null) {
+    child = GestureDetector(onTap: onTap, child: child);
+  }
+  return child;
+}
+
 class NewsComposePage extends StatefulWidget {
-  const NewsComposePage({super.key});
+  const NewsComposePage({super.key, this.existingPost});
+
+  final NewsPost? existingPost;
 
   @override
   State<NewsComposePage> createState() => _NewsComposePageState();
@@ -6317,6 +8718,19 @@ class _NewsComposePageState extends State<NewsComposePage> {
   String _category = 'news';
   bool _pinned = false;
   bool _submitting = false;
+  bool get _isEdit => widget.existingPost != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final existing = widget.existingPost;
+    if (existing != null) {
+      _titleController.text = existing.title;
+      _bodyController.text = existing.body;
+      _category = existing.category;
+      _pinned = existing.pinned;
+    }
+  }
 
   @override
   void dispose() {
@@ -6341,25 +8755,41 @@ class _NewsComposePageState extends State<NewsComposePage> {
   }
 
   Future<void> _submit() async {
-    if (_titleController.text.trim().isEmpty &&
+    if (_titleController.text.trim().isEmpty ||
         _bodyController.text.trim().isEmpty) {
       setState(() {
         _noticeError = true;
-        _noticeMessage = 'Добавьте заголовок или описание.';
+        _noticeMessage = 'Заполните заголовок и текст поста.';
       });
       return;
     }
-    setState(() => _submitting = true);
+    if (_submitting) return;
+    setState(() {
+      _submitting = true;
+      _noticeMessage = null;
+    });
     try {
-      await AppStateScope.of(context).client.createNews(
-        title: _titleController.text.trim(),
-        body: _bodyController.text.trim(),
-        category: _category,
-        pinned: _pinned,
-        media: _media,
-      );
+      final client = AppStateScope.of(context).client;
+      late final NewsPost saved;
+      if (_isEdit) {
+        saved = await client.updateNewsPost(
+          widget.existingPost!.id,
+          title: _titleController.text.trim(),
+          body: _bodyController.text.trim(),
+          category: _category,
+          pinned: _pinned,
+        );
+      } else {
+        saved = await client.createNews(
+          title: _titleController.text.trim(),
+          body: _bodyController.text.trim(),
+          category: _category,
+          pinned: _pinned,
+          media: _media,
+        );
+      }
       if (!mounted) return;
-      Navigator.pop(context, true);
+      Navigator.pop(context, saved);
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -6371,18 +8801,53 @@ class _NewsComposePageState extends State<NewsComposePage> {
     }
   }
 
+  Future<void> _insertInlineImageUrl() async {
+    final controller = TextEditingController();
+    final url = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Вставить изображение в текст'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            labelText: 'URL картинки',
+            hintText: 'https://...',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Вставить'),
+          ),
+        ],
+      ),
+    );
+    if (url == null || url.isEmpty) return;
+    final line = '\n![image]($url)\n';
+    final current = _bodyController.text;
+    _bodyController.text = current + line;
+    _bodyController.selection = TextSelection.collapsed(
+      offset: _bodyController.text.length,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          '\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u043e\u0441\u0442',
-        ),
+        title: Text(_isEdit ? 'Редактировать пост' : 'Создать пост'),
       ),
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
+          if (_noticeMessage != null) ...[
+            InlineNotice(message: _noticeMessage!, isError: _noticeError),
+            const SizedBox(height: 12),
+          ],
           TextField(
             controller: _titleController,
             decoration: const InputDecoration(
@@ -6399,8 +8864,14 @@ class _NewsComposePageState extends State<NewsComposePage> {
             ),
           ),
           const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: _insertInlineImageUrl,
+            icon: const Icon(Icons.image_outlined),
+            label: const Text('Вставить картинку в текст по URL'),
+          ),
+          const SizedBox(height: 12),
           DropdownButtonFormField<String>(
-            value: _category,
+            initialValue: _category,
             items: [
               for (final item in kNewsCategories)
                 DropdownMenuItem(
@@ -6419,27 +8890,39 @@ class _NewsComposePageState extends State<NewsComposePage> {
             onChanged: (value) => setState(() => _pinned = value),
             title: const Text('Pin post'),
           ),
-          const SizedBox(height: 16),
-          OutlinedButton.icon(
-            onPressed: _pickMedia,
-            icon: const Icon(Icons.attach_file),
-            label: const Text(
-              '\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u0444\u0430\u0439\u043b\u044b',
+          if (!_isEdit) ...[
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: _pickMedia,
+              icon: const Icon(Icons.attach_file),
+              label: const Text(
+                '\u0414\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u0444\u0430\u0439\u043b\u044b',
+              ),
             ),
-          ),
-          if (_media.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (int i = 0; i < _media.length; i++)
-                  Chip(
-                    label: Text(_media[i].filename),
-                    onDeleted: () => setState(() => _media.removeAt(i)),
-                  ),
-              ],
-            ),
+            if (_media.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (int i = 0; i < _media.length; i++)
+                    InputChip(
+                      label: Text(_media[i].filename),
+                      avatar: const Icon(Icons.insert_drive_file, size: 16),
+                      onPressed: () {
+                        _bodyController.text =
+                            '${_bodyController.text}\n{{media:${i + 1}}}\n';
+                      },
+                      onDeleted: () => setState(() => _media.removeAt(i)),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Нажмите на файл, чтобы вставить маркер {{media:N}} в текст.',
+                style: TextStyle(color: kSecondaryText, fontSize: 12),
+              ),
+            ],
           ],
           const SizedBox(height: 24),
           FilledButton(
@@ -6450,9 +8933,7 @@ class _NewsComposePageState extends State<NewsComposePage> {
                     width: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Text(
-                    '\u041e\u043f\u0443\u0431\u043b\u0438\u043a\u043e\u0432\u0430\u0442\u044c',
-                  ),
+                : Text(_isEdit ? 'Сохранить изменения' : 'Опубликовать'),
           ),
         ],
       ),
@@ -6474,6 +8955,13 @@ class NewsPostDetailPage extends StatefulWidget {
   State<NewsPostDetailPage> createState() => _NewsPostDetailPageState();
 }
 
+class NewsPostDetailResult {
+  const NewsPostDetailResult({required this.post, required this.deleted});
+
+  final NewsPost post;
+  final bool deleted;
+}
+
 class _NewsPostDetailPageState extends State<NewsPostDetailPage> {
   String? _noticeMessage;
   bool _noticeError = false;
@@ -6482,6 +8970,30 @@ class _NewsPostDetailPageState extends State<NewsPostDetailPage> {
   bool _loading = false;
   bool _sending = false;
   bool _initialized = false;
+  bool _deleted = false;
+
+  bool get _useDialogForRoutes {
+    if (kIsWeb) return true;
+    return defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.linux;
+  }
+
+  Future<T?> _openNewsRoute<T>(Widget child) {
+    if (!_useDialogForRoutes) {
+      return Navigator.of(
+        context,
+      ).push<T>(MaterialPageRoute(builder: (_) => child));
+    }
+    return showDialog<T>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Dialog(
+        insetPadding: const EdgeInsets.all(24),
+        child: SizedBox(width: 980, height: 760, child: child),
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -6531,6 +9043,7 @@ class _NewsPostDetailPageState extends State<NewsPostDetailPage> {
     setState(() {
       _post = _post.copyWith(
         myReaction: nextReaction,
+        clearMyReaction: nextReaction == null,
         likedByMe: nextReaction != null,
         reactionCounts: updatedCounts,
         likesCount: updatedCounts.values.fold<int>(0, (a, b) => a + b),
@@ -6549,6 +9062,7 @@ class _NewsPostDetailPageState extends State<NewsPostDetailPage> {
           likesCount: result.likesCount,
           reactionCounts: result.reactionCounts,
           myReaction: result.myReaction,
+          clearMyReaction: result.myReaction == null,
         );
       });
     } catch (_) {}
@@ -6605,10 +9119,29 @@ class _NewsPostDetailPageState extends State<NewsPostDetailPage> {
 
   Future<void> _share() async {
     try {
-      final count = await AppStateScope.of(context).client.shareNews(_post.id);
+      final result = await AppStateScope.of(context).client.shareNews(_post.id);
       if (!mounted) return;
-      setState(() => _post = _post.copyWith(shareCount: count));
-    } catch (_) {}
+      await Clipboard.setData(
+        ClipboardData(text: publicNewsShareLink(context, _post.id)),
+      );
+      setState(() => _post = _post.copyWith(shareCount: result.shareCount));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            result.shared
+                ? 'Репост сохранен, ссылка скопирована'
+                : 'Репост уже был, ссылка скопирована',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = humanizeError(error);
+      });
+    }
   }
 
   Future<void> _addComment() async {
@@ -6639,7 +9172,7 @@ class _NewsPostDetailPageState extends State<NewsPostDetailPage> {
   }
 
   Future<void> _deleteComment(NewsComment comment) async {
-    if (!widget.canEdit) return;
+    if (!_canManageComment(comment)) return;
     try {
       await AppStateScope.of(
         context,
@@ -6662,8 +9195,68 @@ class _NewsPostDetailPageState extends State<NewsPostDetailPage> {
     }
   }
 
+  bool _canManageComment(NewsComment comment) {
+    final user = AppStateScope.of(context).user;
+    if (user == null) return false;
+    if (user.role == 'admin') return true;
+    return comment.userId == user.id;
+  }
+
+  Future<void> _editComment(NewsComment comment) async {
+    if (!_canManageComment(comment)) return;
+    final client = AppStateScope.of(context).client;
+    final controller = TextEditingController(text: comment.text);
+    final nextText = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Изменить комментарий'),
+        content: TextField(
+          controller: controller,
+          maxLines: 4,
+          decoration: const InputDecoration(labelText: 'Комментарий'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Сохранить'),
+          ),
+        ],
+      ),
+    );
+    if (nextText == null || nextText.isEmpty || nextText == comment.text) {
+      return;
+    }
+    try {
+      final updated = await client.updateNewsComment(
+        postId: _post.id,
+        commentId: comment.id,
+        text: nextText,
+      );
+      if (!mounted) return;
+      setState(() {
+        _post = _post.copyWith(
+          comments: _post.comments.map((item) {
+            if (item.id != updated.id) return item;
+            return updated;
+          }).toList(),
+        );
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = humanizeError(error);
+      });
+    }
+  }
+
   Future<void> _deletePost() async {
     if (!widget.canEdit) return;
+    final client = AppStateScope.of(context).client;
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -6683,9 +9276,10 @@ class _NewsPostDetailPageState extends State<NewsPostDetailPage> {
     );
     if (ok != true) return;
     try {
-      await AppStateScope.of(context).client.deleteNewsPost(_post.id);
+      await client.deleteNewsPost(_post.id);
       if (!mounted) return;
-      Navigator.pop(context);
+      _deleted = true;
+      Navigator.pop(context, NewsPostDetailResult(post: _post, deleted: true));
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -6706,147 +9300,333 @@ class _NewsPostDetailPageState extends State<NewsPostDetailPage> {
     } catch (_) {}
   }
 
+  String _roleLabel(String? role) {
+    final value = (role ?? '').trim().toLowerCase();
+    switch (value) {
+      case 'admin':
+        return 'Админ';
+      case 'teacher':
+        return 'Преподаватель';
+      case 'student':
+        return 'Студент';
+      case 'parent':
+        return 'Родитель';
+      case 'smm':
+        return 'SMM';
+      case 'request_handler':
+        return 'Обработчик';
+      default:
+        return role?.trim().isNotEmpty == true ? role!.trim() : 'Пользователь';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Post'),
-        actions: [
-          if (widget.canEdit)
-            IconButton(
-              onPressed: _togglePinned,
-              icon: Icon(
-                _post.pinned ? Icons.push_pin : Icons.push_pin_outlined,
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || !mounted) return;
+        Navigator.pop(
+          context,
+          NewsPostDetailResult(post: _post, deleted: _deleted),
+        );
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          leading: IconButton(
+            onPressed: () {
+              Navigator.pop(
+                context,
+                NewsPostDetailResult(post: _post, deleted: _deleted),
+              );
+            },
+            icon: const Icon(Icons.arrow_back),
+          ),
+          title: const Text('Пост'),
+          actions: [
+            if (widget.canEdit)
+              IconButton(
+                onPressed: () async {
+                  final updated = await _openNewsRoute<NewsPost>(
+                    NewsComposePage(existingPost: _post),
+                  );
+                  if (updated != null && mounted) {
+                    setState(() => _post = updated);
+                  }
+                },
+                icon: const Icon(Icons.edit_outlined),
               ),
-            ),
-          if (widget.canEdit)
-            IconButton(
-              onPressed: _deletePost,
-              icon: const Icon(Icons.delete_outline),
-            ),
-        ],
+            if (widget.canEdit)
+              IconButton(
+                onPressed: _togglePinned,
+                icon: Icon(
+                  _post.pinned ? Icons.push_pin : Icons.push_pin_outlined,
+                ),
+              ),
+            if (widget.canEdit)
+              IconButton(
+                onPressed: _deletePost,
+                icon: const Icon(Icons.delete_outline),
+              ),
+          ],
+        ),
+        body: _loading
+            ? const Center(child: BrandLoadingIndicator())
+            : ListView(
+                padding: const EdgeInsets.all(20),
+                children: [
+                  if (_noticeMessage != null)
+                    InlineNotice(
+                      message: _noticeMessage!,
+                      isError: _noticeError,
+                    ),
+                  if (_noticeMessage != null) const SizedBox(height: 12),
+                  Text(
+                    _post.title,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 6),
+                  _NewsBodyContent(
+                    body: _post.body,
+                    media: _post.media,
+                    onOpenMedia: (index) =>
+                        _openMediaViewer(_post.media, index),
+                  ),
+                  ...() {
+                    final remainingMedia = _newsRemainingMediaIndices(
+                      _post.body,
+                      _post.media,
+                    );
+                    if (remainingMedia.isEmpty) {
+                      return const <Widget>[SizedBox(height: 12)];
+                    }
+                    return <Widget>[
+                      const SizedBox(height: 12),
+                      Column(
+                        children: [
+                          for (int i = 0; i < remainingMedia.length; i++)
+                            Padding(
+                              padding: EdgeInsets.only(
+                                bottom: i == remainingMedia.length - 1 ? 0 : 10,
+                              ),
+                              child: _buildNewsMediaBlock(
+                                media: _post.media,
+                                mediaIndex: remainingMedia[i],
+                                previewHeight: 240,
+                                onOpen: (mediaIndex) =>
+                                    _openMediaViewer(_post.media, mediaIndex),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ];
+                  }(),
+                  const SizedBox(height: 12),
+                  _buildReactionCounts(),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      TextButton.icon(
+                        onPressed: _openReactionPicker,
+                        icon: Text(
+                          kReactionEmoji[_post.myReaction ?? 'like'] ??
+                              '\ud83d\udc4d',
+                        ),
+                        label: Text(
+                          _post.myReaction == null
+                              ? '\u0420\u0435\u0430\u043a\u0446\u0438\u044f'
+                              : (kReactionLabels[_post.myReaction] ??
+                                    '\u0420\u0435\u0430\u043a\u0446\u0438\u044f'),
+                        ),
+                      ),
+                      const Spacer(),
+                      TextButton.icon(
+                        onPressed: _share,
+                        icon: const Icon(Icons.share),
+                        label: Text('${_post.shareCount}'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    'Комментарии',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  for (final comment in _post.comments)
+                    Card(
+                      child: ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: kSecondaryBackground,
+                          backgroundImage:
+                              (comment.userAvatarUrl != null &&
+                                  comment.userAvatarUrl!.trim().isNotEmpty)
+                              ? NetworkImage(
+                                  _resolveMediaUrl(
+                                    comment.userAvatarUrl!.trim(),
+                                  ),
+                                )
+                              : null,
+                          child:
+                              (comment.userAvatarUrl == null ||
+                                  comment.userAvatarUrl!.trim().isEmpty)
+                              ? Text(
+                                  comment.userName.isEmpty
+                                      ? '?'
+                                      : comment.userName[0].toUpperCase(),
+                                )
+                              : null,
+                        ),
+                        title: Text(comment.userName),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${_roleLabel(comment.userRole)} • ${DateFormat('dd.MM.yyyy HH:mm').format(comment.createdAt)}',
+                              style: const TextStyle(
+                                color: kSecondaryText,
+                                fontSize: 12,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(comment.text),
+                            if (comment.updatedAt != null)
+                              Text(
+                                'изменено ${DateFormat('dd.MM HH:mm').format(comment.updatedAt!)}',
+                                style: const TextStyle(
+                                  color: kMutedText,
+                                  fontSize: 11,
+                                ),
+                              ),
+                          ],
+                        ),
+                        trailing: _canManageComment(comment)
+                            ? PopupMenuButton<String>(
+                                onSelected: (value) {
+                                  if (value == 'edit') {
+                                    _editComment(comment);
+                                    return;
+                                  }
+                                  if (value == 'delete') {
+                                    _deleteComment(comment);
+                                  }
+                                },
+                                itemBuilder: (context) => const [
+                                  PopupMenuItem(
+                                    value: 'edit',
+                                    child: Text('Редактировать'),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'delete',
+                                    child: Text('Удалить'),
+                                  ),
+                                ],
+                              )
+                            : null,
+                      ),
+                    ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _commentController,
+                    decoration: const InputDecoration(
+                      labelText: 'Добавить комментарий',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  FilledButton(
+                    onPressed: _sending ? null : _addComment,
+                    child: _sending
+                        ? const SizedBox(
+                            height: 18,
+                            width: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Отправить'),
+                  ),
+                ],
+              ),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                if (_noticeMessage != null)
-                  InlineNotice(message: _noticeMessage!, isError: _noticeError),
-                if (_noticeMessage != null) const SizedBox(height: 12),
-                Text(
-                  _post.title,
-                  style: Theme.of(context).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 6),
-                Text(_post.body),
-                const SizedBox(height: 12),
-                if (_post.media.isNotEmpty)
-                  SizedBox(
-                    height: 220,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _post.media.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 12),
-                      itemBuilder: (context, index) {
-                        final media = _post.media[index];
-                        final url = _resolveMediaUrl(media.url);
-                        if (_isVideo(media)) {
-                          return GestureDetector(
-                            onTap: () => _openMediaViewer(_post.media, index),
-                            child: SizedBox(
-                              width: 280,
-                              child: NewsVideoPreview(url: url),
-                            ),
-                          );
-                        }
-                        return GestureDetector(
-                          onTap: () => _openMediaViewer(_post.media, index),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(16),
-                            child: Image.network(
-                              url,
-                              width: 280,
-                              height: 220,
-                              fit: BoxFit.cover,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                const SizedBox(height: 12),
-                _buildReactionCounts(),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    TextButton.icon(
-                      onPressed: _openReactionPicker,
-                      icon: Text(
-                        kReactionEmoji[_post.myReaction ?? 'like'] ??
-                            '\ud83d\udc4d',
-                      ),
-                      label: Text(
-                        _post.myReaction == null
-                            ? '\u0420\u0435\u0430\u043a\u0446\u0438\u044f'
-                            : (kReactionLabels[_post.myReaction] ??
-                                  '\u0420\u0435\u0430\u043a\u0446\u0438\u044f'),
-                      ),
-                    ),
-                    const Spacer(),
-                    TextButton.icon(
-                      onPressed: _share,
-                      icon: const Icon(Icons.share),
-                      label: Text('${_post.shareCount}'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  'Comments',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 8),
-                for (final comment in _post.comments)
-                  Card(
-                    child: ListTile(
-                      title: Text(comment.userName),
-                      subtitle: Text(comment.text),
-                      trailing: widget.canEdit
-                          ? IconButton(
-                              onPressed: () => _deleteComment(comment),
-                              icon: const Icon(Icons.delete_outline),
-                            )
-                          : null,
-                    ),
-                  ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _commentController,
-                  decoration: const InputDecoration(labelText: 'Add a comment'),
-                ),
-                const SizedBox(height: 8),
-                FilledButton(
-                  onPressed: _sending ? null : _addComment,
-                  child: _sending
-                      ? const SizedBox(
-                          height: 18,
-                          width: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Send'),
-                ),
-              ],
-            ),
     );
   }
 
   void _openMediaViewer(List<NewsMedia> media, int startIndex) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => MediaViewerPage(media: media, initialIndex: startIndex),
-      ),
+    pushAdaptivePage<void>(
+      context,
+      MediaViewerPage(media: media, initialIndex: startIndex),
+      width: 1180,
+      height: 840,
+    );
+  }
+}
+
+class _NewsBodyContent extends StatelessWidget {
+  const _NewsBodyContent({
+    required this.body,
+    required this.media,
+    required this.onOpenMedia,
+  });
+
+  final String body;
+  final List<NewsMedia> media;
+  final void Function(int mediaIndex) onOpenMedia;
+
+  static final RegExp _mediaToken = RegExp(r'^\s*\{\{media:(\d+)\}\}\s*$');
+  static final RegExp _imageMarkdown = RegExp(r'!\[[^\]]*\]\(([^)]+)\)');
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = body.split('\n');
+    final children = <Widget>[];
+    for (final rawLine in lines) {
+      final line = rawLine.trimRight();
+      if (line.trim().isEmpty) {
+        children.add(const SizedBox(height: 6));
+        continue;
+      }
+      final mediaMatch = _mediaToken.firstMatch(line);
+      if (mediaMatch != null) {
+        final index = int.tryParse(mediaMatch.group(1) ?? '');
+        if (index != null && index > 0 && index <= media.length) {
+          final mediaIndex = index - 1;
+          children.add(
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: _buildNewsMediaBlock(
+                media: media,
+                mediaIndex: mediaIndex,
+                onOpen: onOpenMedia,
+                previewHeight: 220,
+              ),
+            ),
+          );
+          continue;
+        }
+      }
+      final markdownMatch = _imageMarkdown.firstMatch(line);
+      if (markdownMatch != null) {
+        final imageUrl = (markdownMatch.group(1) ?? '').trim();
+        if (imageUrl.isNotEmpty) {
+          children.add(
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: _buildNewsImagePreview(
+                _resolveMediaUrl(imageUrl),
+                maxWidth: kNewsMediaMaxWidth,
+                maxHeight: 220,
+                borderRadius: 14,
+              ),
+            ),
+          );
+          continue;
+        }
+      }
+      children.add(
+        Padding(padding: const EdgeInsets.only(bottom: 4), child: Text(line)),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: children,
     );
   }
 }
@@ -6945,7 +9725,6 @@ class _MediaViewerPageState extends State<MediaViewerPage> {
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context);
     return Scaffold(
       appBar: AppBar(),
       body: PageView.builder(
@@ -6957,8 +9736,18 @@ class _MediaViewerPageState extends State<MediaViewerPage> {
           if (_isVideo(media)) {
             return Center(child: _VideoPlayerFull(url: url));
           }
+          if (_isImage(media)) {
+            return InteractiveViewer(
+              child: Center(child: Image.network(url, fit: BoxFit.contain)),
+            );
+          }
           return InteractiveViewer(
-            child: Center(child: Image.network(url, fit: BoxFit.contain)),
+            child: Center(
+              child: SizedBox(
+                width: 620,
+                child: NewsFileCard(media: media, url: url),
+              ),
+            ),
           );
         },
       ),
@@ -6997,7 +9786,7 @@ class _VideoPlayerFullState extends State<_VideoPlayerFull> {
   @override
   Widget build(BuildContext context) {
     if (!_ready || _controller == null) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(child: BrandLoadingIndicator());
     }
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -7034,13 +9823,180 @@ class _VideoPlayerFullState extends State<_VideoPlayerFull> {
 }
 
 bool _isVideo(NewsMedia media) {
-  final mime = media.mimeType ?? '';
-  if (mime.startsWith('video')) return true;
+  final mime = (media.mimeType ?? '').toLowerCase();
+  if (mime.startsWith('video/')) return true;
   final type = media.mediaType.toLowerCase();
-  return type.contains('video');
+  if (type.contains('video')) return true;
+  final ext = _mediaExtension(media);
+  return <String>{
+    '.mp4',
+    '.mov',
+    '.avi',
+    '.webm',
+    '.mkv',
+    '.m4v',
+  }.contains(ext);
+}
+
+bool _isImage(NewsMedia media) {
+  final mime = (media.mimeType ?? '').toLowerCase();
+  if (mime.startsWith('image/')) return true;
+  final type = media.mediaType.toLowerCase();
+  if (type.contains('image')) return true;
+  final ext = _mediaExtension(media);
+  return <String>{
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.gif',
+    '.webp',
+    '.bmp',
+    '.svg',
+    '.heic',
+    '.heif',
+  }.contains(ext);
+}
+
+String _mediaExtension(NewsMedia media) {
+  String source = media.originalName.trim();
+  if (source.isEmpty) {
+    source = media.url.trim();
+  }
+  if (source.isEmpty) return '';
+  final normalized = source.split('?').first.split('#').first.toLowerCase();
+  final dot = normalized.lastIndexOf('.');
+  if (dot < 0 || dot == normalized.length - 1) {
+    return '';
+  }
+  return normalized.substring(dot);
+}
+
+class NewsFileCard extends StatelessWidget {
+  const NewsFileCard({super.key, required this.media, required this.url});
+
+  final NewsMedia media;
+  final String url;
+
+  @override
+  Widget build(BuildContext context) {
+    final filename = media.originalName.trim().isEmpty
+        ? 'Файл'
+        : media.originalName.trim();
+    final downloadUrl = _resolveNewsDownloadUrl(url);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: kSecondaryBackground,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kBrandPrimary.withValues(alpha: 0.2)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.insert_drive_file_outlined,
+                color: kBrandPrimary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  filename,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              FilledButton.tonalIcon(
+                onPressed: () => _openExternalNewsUrl(context, url),
+                icon: const Icon(Icons.open_in_new, size: 16),
+                label: const Text('Открыть'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _openExternalNewsUrl(context, downloadUrl),
+                icon: const Icon(Icons.download_outlined, size: 16),
+                label: const Text('Скачать'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 String _resolveMediaUrl(String url) {
-  if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  return '$apiBaseUrl$url';
+  var value = url.trim();
+  if (value.isEmpty) return value;
+
+  // Normalize escaped slashes and quoted blobs that can appear in legacy payloads.
+  value = value.replaceAll(r'\/', '/').replaceAll('\\', '');
+  if ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))) {
+    value = value.substring(1, value.length - 1).trim();
+  }
+
+  // If URL was accidentally embedded inside a JSON/error blob, extract media path.
+  final embedded = RegExp(
+    r'(https?://\S+/media/\S+|/media/\S+|media/\S+)',
+    caseSensitive: false,
+  ).firstMatch(value);
+  if (embedded != null) {
+    value = embedded
+        .group(0)!
+        .trim();
+    while (value.isNotEmpty &&
+        '"\'},'.contains(value[value.length - 1])) {
+      value = value.substring(0, value.length - 1);
+    }
+  }
+
+  if (value.startsWith('http://') || value.startsWith('https://')) {
+    return value;
+  }
+  if (!value.startsWith('/')) {
+    value = '/$value';
+  }
+  return '$apiBaseUrl$value';
+}
+
+String _resolveNewsDownloadUrl(String url) {
+  final trimmed = url.trim();
+  if (trimmed.isEmpty) return _resolveMediaUrl(url);
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('/media/news/')) {
+    return '$apiBaseUrl/media/news-download/${trimmed.substring('/media/news/'.length)}';
+  }
+  if (trimmed.startsWith('media/news/')) {
+    return '$apiBaseUrl/media/news-download/${trimmed.substring('media/news/'.length)}';
+  }
+  return _resolveMediaUrl(trimmed);
+}
+
+Future<void> _openExternalNewsUrl(BuildContext context, String url) async {
+  final uri = Uri.tryParse(url.trim());
+  if (uri == null) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Некорректная ссылка')));
+    return;
+  }
+  final ok = await launchUrl(uri, mode: LaunchMode.platformDefault);
+  if (!ok && context.mounted) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Не удалось открыть ссылку')));
+  }
 }
