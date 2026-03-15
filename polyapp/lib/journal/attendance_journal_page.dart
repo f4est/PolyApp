@@ -30,8 +30,6 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
   final JournalService _service = JournalService();
   final DateFormat _dateLabelFormat = DateFormat('dd.MM');
   final ScrollController _gridHorizontalController = ScrollController();
-  final TextEditingController _newGroupController = TextEditingController();
-  final TextEditingController _newStudentController = TextEditingController();
 
   bool _isInitialized = false;
   bool _loading = true;
@@ -72,8 +70,6 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
   void dispose() {
     _retryTimer?.cancel();
     _gridHorizontalController.dispose();
-    _newGroupController.dispose();
-    _newStudentController.dispose();
     super.dispose();
   }
 
@@ -366,62 +362,75 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
     }
   }
 
-  Future<void> _addGroup() async {
-    if (!widget.canManageGroups) return;
-    final name = _newGroupController.text.trim();
+  Future<void> _addStudents() async {
+    if (!widget.canEdit || _group == null) return;
+    final candidates = await widget.client.listConfirmedJournalStudents(
+      _group!.name,
+    );
+    if (!mounted) return;
+    if (candidates.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _tr(
+              'Нет свободных подтвержденных студентов без группы.',
+              'No free approved students without a group.',
+            ),
+          ),
+        ),
+      );
+      return;
+    }
+    var selectedName = candidates.first.fullName.trim();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(_tr('Добавить студента', 'Add student')),
+        content: DropdownButtonFormField<String>(
+          initialValue: selectedName,
+          items: candidates
+              .map(
+                (item) => DropdownMenuItem(
+                  value: item.fullName.trim(),
+                  child: Text(item.fullName.trim()),
+                ),
+              )
+              .toList(),
+          onChanged: (value) => selectedName = value?.trim() ?? selectedName,
+          decoration: InputDecoration(
+            labelText: _tr(
+              'Свободный подтвержденный студент',
+              'Free approved student',
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(_tr('Отмена', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(_tr('Добавить', 'Add')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final name = selectedName.trim();
     if (name.isEmpty) return;
     setState(() => _busy = true);
     try {
-      final existing = _service.getGroupByName(name);
-      final group = existing ?? Group(name: name);
+      await widget.client.upsertJournalStudent(
+        groupName: _group!.name,
+        studentName: name,
+      );
+      final existing = _service.getStudentByNameAndGroup(name, _group!.groupId);
       if (existing == null) {
-        await _service.addGroup(group);
-      }
-      await widget.client.upsertJournalGroup(group.name);
-      _newGroupController.clear();
-      _groups = _service.getAllGroups();
-      _group = _service.getGroupByName(group.name);
-      await _loadGroupData(sync: false);
-      if (mounted) {
-        setState(() => _online = true);
-      }
-    } catch (_) {
-      if (mounted) {
-        setState(() => _online = false);
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-  }
-
-  Future<void> _addStudents() async {
-    if (!widget.canEdit || _group == null) return;
-    final names = _newStudentController.text
-        .split(',')
-        .map((n) => n.trim())
-        .where((n) => n.isNotEmpty)
-        .toList();
-    if (names.isEmpty) return;
-    setState(() => _busy = true);
-    try {
-      for (final name in names) {
-        final existing = _service.getStudentByNameAndGroup(
-          name,
-          _group!.groupId,
-        );
-        if (existing == null) {
-          await _service.addStudent(
-            Student(name: name, groupId: _group!.groupId),
-          );
-        }
-        await widget.client.upsertJournalStudent(
-          groupName: _group!.name,
-          studentName: name,
+        await _service.addStudent(
+          Student(name: name, groupId: _group!.groupId),
         );
       }
-      _newStudentController.clear();
       await _loadGroupData(sync: false);
       if (mounted) {
         setState(() => _online = true);
@@ -825,26 +834,6 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
               ),
             ),
           ),
-          if (widget.canManageGroups)
-            SizedBox(
-              width: compact ? double.infinity : 260,
-              child: TextField(
-                controller: _newGroupController,
-                onSubmitted: (_) => _addGroup(),
-                decoration: InputDecoration(
-                  border: const OutlineInputBorder(),
-                  labelText: _tr('Новая группа', 'New group'),
-                  hintText: _tr('Например: П22-3Е', 'Example: P22-3E'),
-                  isDense: true,
-                ),
-              ),
-            ),
-          if (widget.canManageGroups)
-            FilledButton.icon(
-              onPressed: _busy ? null : _addGroup,
-              icon: const Icon(Icons.group_add_rounded),
-              label: Text(_tr('Добавить группу', 'Add group')),
-            ),
         ],
       ),
     );
@@ -861,27 +850,10 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 if (widget.canEdit)
-                  SizedBox(
-                    width: compact ? double.infinity : 360,
-                    child: TextField(
-                      controller: _newStudentController,
-                      onSubmitted: (_) => _addStudents(),
-                      decoration: InputDecoration(
-                        border: const OutlineInputBorder(),
-                        isDense: true,
-                        labelText: _tr('Новые студенты', 'New students'),
-                        hintText: _tr(
-                          'Через запятую: Ivan, Anna',
-                          'Comma-separated: Ivan, Anna',
-                        ),
-                      ),
-                    ),
-                  ),
-                if (widget.canEdit)
                   FilledButton.icon(
                     onPressed: _busy ? null : _addStudents,
                     icon: const Icon(Icons.person_add_alt_1_rounded),
-                    label: Text(_tr('Добавить студентов', 'Add students')),
+                    label: Text(_tr('Добавить студента', 'Add student')),
                   ),
                 if (widget.canEdit)
                   FilledButton.tonalIcon(
@@ -943,78 +915,106 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
                       'Add class dates for the group.',
                     ),
             )
-          : Scrollbar(
-              controller: _gridHorizontalController,
-              thumbVisibility: true,
-              trackVisibility: true,
-              notificationPredicate: (notification) =>
-                  notification.metrics.axis == Axis.horizontal,
-              child: SingleChildScrollView(
-                controller: _gridHorizontalController,
-                scrollDirection: Axis.horizontal,
-                child: DataTable(
-                  dataRowMinHeight: compact ? 40 : 46,
-                  dataRowMaxHeight: compact ? 56 : 64,
-                  columns: [
-                    DataColumn(label: Text(_tr('Студент', 'Student'))),
-                    ..._dates.map(
-                      (date) => DataColumn(
-                        label: Text(_dateLabelFormat.format(date.date)),
-                      ),
-                    ),
-                  ],
-                  rows: _students.map((student) {
-                    return DataRow(
-                      cells: [
-                        DataCell(
-                          ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 230),
-                            child: Text(
-                              student.name,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: compact ? 160 : 220,
+                  child: DataTable(
+                    dataRowMinHeight: compact ? 40 : 46,
+                    dataRowMaxHeight: compact ? 56 : 64,
+                    columns: [
+                      DataColumn(label: Text(_tr('Студент', 'Student'))),
+                    ],
+                    rows: _students
+                        .map(
+                          (student) => DataRow(
+                            cells: [
+                              DataCell(
+                                ConstrainedBox(
+                                  constraints: const BoxConstraints(
+                                    maxWidth: 210,
+                                  ),
+                                  child: Text(
+                                    student.name,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
                               ),
+                            ],
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Scrollbar(
+                    controller: _gridHorizontalController,
+                    thumbVisibility: true,
+                    trackVisibility: true,
+                    notificationPredicate: (notification) =>
+                        notification.metrics.axis == Axis.horizontal,
+                    child: SingleChildScrollView(
+                      controller: _gridHorizontalController,
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        dataRowMinHeight: compact ? 40 : 46,
+                        dataRowMaxHeight: compact ? 56 : 64,
+                        columns: [
+                          ..._dates.map(
+                            (date) => DataColumn(
+                              label: Text(_dateLabelFormat.format(date.date)),
                             ),
                           ),
-                        ),
-                        ..._dates.map((date) {
-                          final key = '${student.name}|${date.key.toString()}';
-                          final mark = byKey[key];
-                          final text = mark == null
-                              ? '—'
-                              : (mark.present ? 'P' : 'Н');
-                          final color = mark == null
-                              ? const Color(0xFFF8FAFC)
-                              : mark.present
-                              ? const Color(0xFFDCFCE7)
-                              : const Color(0xFFFEE2E2);
-                          return DataCell(
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: color,
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Text(text),
-                            ),
-                            onTap: widget.canEdit
-                                ? () => _editAttendanceCell(
-                                    student.name,
-                                    date,
-                                    mark,
-                                  )
-                                : null,
+                        ],
+                        rows: _students.map((student) {
+                          return DataRow(
+                            cells: [
+                              ..._dates.map((date) {
+                                final key =
+                                    '${student.name}|${date.key.toString()}';
+                                final mark = byKey[key];
+                                final text = mark == null
+                                    ? '—'
+                                    : (mark.present ? 'P' : 'Н');
+                                final color = mark == null
+                                    ? const Color(0xFFF8FAFC)
+                                    : mark.present
+                                    ? const Color(0xFFDCFCE7)
+                                    : const Color(0xFFFEE2E2);
+                                return DataCell(
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: color,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Text(text),
+                                  ),
+                                  onTap: widget.canEdit
+                                      ? () => _editAttendanceCell(
+                                          student.name,
+                                          date,
+                                          mark,
+                                        )
+                                      : null,
+                                );
+                              }),
+                            ],
                           );
-                        }),
-                      ],
-                    );
-                  }).toList(),
+                        }).toList(),
+                      ),
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
     );
   }

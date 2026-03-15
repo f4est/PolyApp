@@ -24,6 +24,10 @@ class ApiClient {
     if (jsonBody) {
       headers['Content-Type'] = 'application/json';
     }
+    final now = DateTime.now();
+    headers['X-Device-Time'] = now.toIso8601String();
+    headers['X-Timezone-Offset-Minutes'] = now.timeZoneOffset.inMinutes
+        .toString();
     if (token != null && token!.isNotEmpty) {
       headers['Authorization'] = 'Bearer $token';
     }
@@ -192,6 +196,15 @@ class ApiClient {
     );
   }
 
+  Future<Map<String, dynamic>> syncDeviceTime() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/time-sync'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    return _decodeJsonObject(response.body);
+  }
+
   Future<UserProfile> updateUser(
     int userId,
     Map<String, dynamic> payload,
@@ -205,6 +218,61 @@ class ApiClient {
     return UserProfile.fromJson(
       jsonDecode(response.body) as Map<String, dynamic>,
     );
+  }
+
+  Future<UserProfile> uploadMyAvatarBytes({
+    required String filename,
+    required List<int> bytes,
+  }) async {
+    Future<UserProfile> doUpload(String path) async {
+      final request = http.MultipartRequest('POST', Uri.parse('$baseUrl$path'));
+      request.headers.addAll(_headers());
+      final safeName = _sanitizeMultipartFilename(filename);
+      final mediaType = _parseMediaType(
+        _guessMimeTypeByFilename(filename) ?? 'application/octet-stream',
+      );
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          bytes,
+          filename: safeName,
+          contentType: mediaType,
+        ),
+      );
+      final response = await request.send();
+      final responseBytes = await response.stream.toBytes();
+      final body = utf8.decode(responseBytes, allowMalformed: true);
+      final wrapped = http.Response(body, response.statusCode);
+      _ensureSuccess(wrapped);
+      return UserProfile.fromJson(_decodeJsonObject(body));
+    }
+
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/users/me/avatar'),
+    );
+    request.headers.addAll(_headers());
+    final safeName = _sanitizeMultipartFilename(filename);
+    final mediaType = _parseMediaType(
+      _guessMimeTypeByFilename(filename) ?? 'application/octet-stream',
+    );
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: safeName,
+        contentType: mediaType,
+      ),
+    );
+    final response = await request.send();
+    final responseBytes = await response.stream.toBytes();
+    final body = utf8.decode(responseBytes, allowMalformed: true);
+    final wrapped = http.Response(body, response.statusCode);
+    if (wrapped.statusCode == 404) {
+      return doUpload('/auth/me/avatar');
+    }
+    _ensureSuccess(wrapped);
+    return UserProfile.fromJson(_decodeJsonObject(body));
   }
 
   Future<List<UserProfile>> listUsers({
@@ -256,6 +324,7 @@ class ApiClient {
     String? teacherName,
     String? childFullName,
     int? parentStudentId,
+    List<String>? adminPermissions,
     bool? isApproved,
     String? deviceId,
   }) async {
@@ -273,6 +342,7 @@ class ApiClient {
         'teacher_name': teacherName,
         'child_full_name': childFullName,
         'parent_student_id': parentStudentId,
+        'admin_permissions': adminPermissions,
         'is_approved': isApproved,
         'device_id': deviceId,
       }),
@@ -291,10 +361,14 @@ class ApiClient {
     _ensureSuccess(response);
   }
 
-  Future<UserProfile> approveUserAsAdmin(int userId) async {
+  Future<UserProfile> approveUserAsAdmin(
+    int userId, {
+    bool approved = true,
+  }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/users/$userId/approve'),
-      headers: _headers(),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({'approved': approved}),
     );
     _ensureSuccess(response);
     return UserProfile.fromJson(
@@ -969,6 +1043,7 @@ class ApiClient {
     int ticketId, {
     String? status,
     String? details,
+    String? comment,
   }) async {
     final response = await http.patch(
       Uri.parse('$baseUrl/requests/$ticketId'),
@@ -976,6 +1051,7 @@ class ApiClient {
       body: jsonEncode({
         if (status != null) 'status': status,
         if (details != null) 'details': details,
+        if (comment != null) 'comment': comment,
       }),
     );
     _ensureSuccess(response);
@@ -1632,10 +1708,15 @@ class ApiClient {
     required DateTime classDate,
     String teacherNote = '',
   }) async {
+    final normalizedDate = DateTime(
+      classDate.year,
+      classDate.month,
+      classDate.day,
+    );
     final body = <String, dynamic>{
       'student_id': studentId,
       'group_name': groupName,
-      'class_date': DateFormat('yyyy-MM-dd').format(classDate.toUtc()),
+      'class_date': DateFormat('yyyy-MM-dd').format(normalizedDate),
       'teacher_note': teacherNote,
     };
     if (teacherId != null && teacherId > 0) {
@@ -2058,6 +2139,7 @@ class UserProfile {
     this.teacherName,
     this.childFullName,
     this.parentStudentId,
+    this.adminPermissions = const [],
     this.isApproved,
     this.approvedAt,
     this.approvedBy,
@@ -2079,6 +2161,7 @@ class UserProfile {
   final String? teacherName;
   final String? childFullName;
   final int? parentStudentId;
+  final List<String> adminPermissions;
   final bool? isApproved;
   final DateTime? approvedAt;
   final int? approvedBy;
@@ -2101,6 +2184,10 @@ class UserProfile {
       teacherName: json['teacher_name'] as String?,
       childFullName: json['child_full_name'] as String?,
       parentStudentId: (json['parent_student_id'] as num?)?.toInt(),
+      adminPermissions:
+          (json['admin_permissions'] as List<dynamic>? ?? const [])
+              .map((item) => item.toString())
+              .toList(),
       isApproved: json['is_approved'] as bool?,
       approvedAt: json['approved_at'] == null
           ? null
@@ -2534,6 +2621,7 @@ class RequestTicket {
     required this.updatedAt,
     required this.studentName,
     this.creatorRole,
+    this.comment,
   });
 
   final int id;
@@ -2545,6 +2633,7 @@ class RequestTicket {
   final DateTime updatedAt;
   final String studentName;
   final String? creatorRole;
+  final String? comment;
 
   factory RequestTicket.fromJson(Map<String, dynamic> json) {
     return RequestTicket(
@@ -2559,6 +2648,7 @@ class RequestTicket {
       ),
       studentName: (json['student_name'] as String?) ?? '',
       creatorRole: json['creator_role'] as String?,
+      comment: json['comment'] as String?,
     );
   }
 }

@@ -127,7 +127,6 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
   final DateFormat _dateFullFormat = DateFormat('dd.MM.yyyy');
   final ScrollController _gridHorizontalController = ScrollController();
 
-  final TextEditingController _newGroupController = TextEditingController();
   final TextEditingController _searchController = TextEditingController();
   final JournalService _legacyService = JournalService();
 
@@ -165,7 +164,6 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
   @override
   void dispose() {
     _gridHorizontalController.dispose();
-    _newGroupController.dispose();
     _searchController.dispose();
     super.dispose();
   }
@@ -292,48 +290,6 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
     }
   }
 
-  Future<void> _addGroup() async {
-    if (!widget.canManageGroups) return;
-    final name = _newGroupController.text.trim();
-    if (name.isEmpty) return;
-    if (_groups.contains(name)) {
-      setState(() => _groupName = name);
-      await _reloadGrid();
-      return;
-    }
-    setState(() => _saving = true);
-    try {
-      await widget.client.upsertJournalGroup(name);
-      if (!mounted) return;
-      setState(() {
-        _newGroupController.clear();
-        _groupName = name;
-        _groups = [..._groups, name]..sort();
-      });
-      await _reloadGrid();
-      if (!mounted) return;
-      _showMessage(_tr('Группа добавлена.', 'Group added.'));
-    } catch (error) {
-      if (!mounted) return;
-      setState(_markOffline);
-      if (error is ApiException && error.statusCode == 403) {
-        _showMessage(
-          _tr(
-            'Недостаточно прав для добавления группы.',
-            'Insufficient role to add group.',
-          ),
-          isError: true,
-        );
-      } else {
-        _showMessage(_readErrorText(error), isError: true);
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _saving = false);
-      }
-    }
-  }
-
   Future<void> _applyPreset() async {
     if (_groupName == null) return;
     final preset = await Navigator.of(context).push<GradingPreset>(
@@ -393,6 +349,34 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
     try {
       await widget.client.recalculateGridV2(_groupName!);
       await _reloadGrid();
+    } catch (error) {
+      if (!mounted) return;
+      setState(_markOffline);
+      _showMessage(_readErrorText(error), isError: true);
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
+  }
+
+  Future<void> _requestGroupAccess() async {
+    final groupName = _groupName;
+    if (groupName == null || groupName.trim().isEmpty) return;
+    setState(() => _saving = true);
+    try {
+      await widget.client.createRequest(
+        requestType: 'Запрос на преподавание группы',
+        groupName: groupName,
+        details: 'Группа: $groupName',
+      );
+      if (!mounted) return;
+      _showMessage(
+        _tr(
+          'Заявка на преподавание группы отправлена админу.',
+          'Group access request has been sent to admin.',
+        ),
+      );
     } catch (error) {
       if (!mounted) return;
       setState(_markOffline);
@@ -490,7 +474,25 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
             const SizedBox(height: 14),
             _buildToolbar(compact),
             const SizedBox(height: 14),
-            if (_error != null) _ErrorCard(message: _error!),
+            if (_error != null)
+              _ErrorCard(
+                message: _error!,
+                action:
+                    (_error!.toLowerCase().contains('forbidden') &&
+                        widget.canEdit &&
+                        !widget.canManageGroups)
+                    ? FilledButton.tonalIcon(
+                        onPressed: _saving ? null : _requestGroupAccess,
+                        icon: const Icon(Icons.send_rounded),
+                        label: Text(
+                          _tr(
+                            'Подать заявку на преподавание',
+                            'Request group teaching access',
+                          ),
+                        ),
+                      )
+                    : null,
+              ),
             if (_error != null) const SizedBox(height: 14),
             _buildPresetBlock(),
             const SizedBox(height: 14),
@@ -596,27 +598,6 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
                     },
             ),
           ),
-          if (widget.canManageGroups)
-            SizedBox(
-              width: compact ? double.infinity : 260,
-              child: TextField(
-                controller: _newGroupController,
-                onSubmitted: (_) => _addGroup(),
-                decoration: InputDecoration(
-                  border: const OutlineInputBorder(),
-                  labelText: _tr('Новая группа', 'New group'),
-                  hintText: _tr('Например: П22-3Е', 'Example: P22-3E'),
-                  isDense: true,
-                ),
-                onTapOutside: (_) {},
-              ),
-            ),
-          if (widget.canManageGroups)
-            FilledButton.icon(
-              onPressed: _saving ? null : _addGroup,
-              icon: const Icon(Icons.group_add_rounded),
-              label: Text(_tr('Добавить группу', 'Add group')),
-            ),
           OutlinedButton.icon(
             onPressed: _loading ? null : _load,
             icon: const Icon(Icons.refresh_rounded),
@@ -869,7 +850,10 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
   }
 
   Widget _buildDateHeaderLabel(DateTime classDate) {
-    final label = Text(_dateLabelFormat.format(classDate));
+    final label = Text(
+      _dateLabelFormat.format(classDate),
+      overflow: TextOverflow.ellipsis,
+    );
     if (!widget.canEdit) {
       return label;
     }
@@ -880,23 +864,23 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       onSecondaryTapDown: (details) {
         _openDateActions(classDate, tapDetails: details);
       },
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          label,
-          const SizedBox(width: 4),
-          const Icon(Icons.more_horiz_rounded, size: 14),
-        ],
+      child: Tooltip(
+        message: _tr(
+          'ПКМ/двойной клик для действий с датой',
+          'Right-click/double-click for date actions',
+        ),
+        child: label,
       ),
     );
   }
 
   Widget _buildStudentHeaderCell(String studentName) {
     final text = ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 220),
+      constraints: const BoxConstraints(maxWidth: 170),
       child: Text(
         studentName,
         overflow: TextOverflow.ellipsis,
+        maxLines: 1,
         style: const TextStyle(fontWeight: FontWeight.w600),
       ),
     );
@@ -910,14 +894,20 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       onSecondaryTapDown: (details) {
         _openStudentActions(studentName, tapDetails: details);
       },
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          text,
-          const SizedBox(width: 4),
-          const Icon(Icons.more_horiz_rounded, size: 14),
-        ],
+      child: Tooltip(
+        message: _tr(
+          'ПКМ/двойной клик для действий со студентом',
+          'Right-click/double-click for student actions',
+        ),
+        child: text,
       ),
+    );
+  }
+
+  Widget _buildColumnLabel(String text) {
+    return SizedBox(
+      width: 96,
+      child: Text(text, overflow: TextOverflow.ellipsis, maxLines: 1),
     );
   }
 
@@ -963,8 +953,8 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
     if (candidates.isEmpty) {
       _showMessage(
         _tr(
-          'Нет подтвержденных студентов в выбранной группе.',
-          'No approved students in selected group.',
+          'Нет свободных подтвержденных студентов без группы.',
+          'No free approved students without a group.',
         ),
         isError: true,
       );
@@ -989,7 +979,10 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
             selectedName = value?.trim() ?? selectedName;
           },
           decoration: InputDecoration(
-            labelText: _tr('Подтвержденный студент', 'Approved student'),
+            labelText: _tr(
+              'Свободный подтвержденный студент',
+              'Free approved student',
+            ),
           ),
         ),
         actions: [
@@ -1417,84 +1410,140 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       computedMap[row.studentName] = row.values;
     }
 
+    final hasRightColumns =
+        grid.dates.isNotEmpty ||
+        manualColumns.isNotEmpty ||
+        computedColumns.isNotEmpty;
     return _Panel(
       title: _tr('Сетка журнала', 'Journal grid'),
-      child: ScrollConfiguration(
-        behavior: const _GridScrollBehavior(),
-        child: Scrollbar(
-          controller: _gridHorizontalController,
-          thumbVisibility: true,
-          trackVisibility: true,
-          notificationPredicate: (notification) =>
-              notification.metrics.axis == Axis.horizontal,
-          child: SingleChildScrollView(
-            controller: _gridHorizontalController,
-            primary: false,
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              dataRowMinHeight: compact ? 40 : 46,
-              dataRowMaxHeight: compact ? 56 : 64,
-              columns: [
-                DataColumn(label: Text(_tr('Студент', 'Student'))),
-                ...grid.dates.map(
-                  (date) => DataColumn(label: _buildDateHeaderLabel(date)),
+      child: !hasRightColumns
+          ? Text(
+              _tr(
+                'Добавьте даты или колонки пресета для отображения таблицы.',
+                'Add dates or preset columns to display the grid.',
+              ),
+            )
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: compact ? 160 : 220,
+                  child: DataTable(
+                    horizontalMargin: 12,
+                    columnSpacing: 20,
+                    dataRowMinHeight: compact ? 40 : 46,
+                    dataRowMaxHeight: compact ? 56 : 64,
+                    columns: [
+                      DataColumn(label: Text(_tr('Студент', 'Student'))),
+                    ],
+                    rows: grid.students
+                        .map(
+                          (student) => DataRow(
+                            cells: [DataCell(_buildStudentHeaderCell(student))],
+                          ),
+                        )
+                        .toList(),
+                  ),
                 ),
-                ...manualColumns.map(
-                  (column) => DataColumn(label: Text(column.title)),
-                ),
-                ...computedColumns.map(
-                  (column) => DataColumn(label: Text(column.title)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ScrollConfiguration(
+                    behavior: const _GridScrollBehavior(),
+                    child: Scrollbar(
+                      controller: _gridHorizontalController,
+                      thumbVisibility: true,
+                      trackVisibility: true,
+                      notificationPredicate: (notification) =>
+                          notification.metrics.axis == Axis.horizontal,
+                      child: SingleChildScrollView(
+                        controller: _gridHorizontalController,
+                        primary: false,
+                        scrollDirection: Axis.horizontal,
+                        child: DataTable(
+                          horizontalMargin: 12,
+                          columnSpacing: 20,
+                          dataRowMinHeight: compact ? 40 : 46,
+                          dataRowMaxHeight: compact ? 56 : 64,
+                          columns: [
+                            ...grid.dates.map(
+                              (date) => DataColumn(
+                                label: SizedBox(
+                                  width: 92,
+                                  child: _buildDateHeaderLabel(date),
+                                ),
+                              ),
+                            ),
+                            ...manualColumns.map(
+                              (column) => DataColumn(
+                                label: _buildColumnLabel(column.title),
+                              ),
+                            ),
+                            ...computedColumns.map(
+                              (column) => DataColumn(
+                                label: _buildColumnLabel(column.title),
+                              ),
+                            ),
+                          ],
+                          rows: grid.students.map((student) {
+                            return DataRow(
+                              cells: [
+                                ...grid.dates.map((date) {
+                                  final key =
+                                      '$student::${_dateKeyFormat.format(date)}';
+                                  final value = dateCellMap[key] ?? '';
+                                  return DataCell(
+                                    Text(value.isEmpty ? '—' : value),
+                                    onTap: widget.canEdit
+                                        ? () => _editDateValue(
+                                            student,
+                                            date,
+                                            value,
+                                          )
+                                        : null,
+                                  );
+                                }),
+                                ...manualColumns.map((column) {
+                                  final key = '$student::${column.key}';
+                                  final value = manualCellMap[key] ?? '';
+                                  return DataCell(
+                                    Text(value.isEmpty ? '—' : value),
+                                    onTap: widget.canEdit
+                                        ? () => _editManualValue(
+                                            student,
+                                            column.key,
+                                            value,
+                                          )
+                                        : null,
+                                  );
+                                }),
+                                ...computedColumns.map((column) {
+                                  final value = _formatComputedValue(
+                                    computedMap[student]?[column.key],
+                                  );
+                                  return DataCell(
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFECFDF5),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Text(value.isEmpty ? '—' : value),
+                                    ),
+                                  );
+                                }),
+                              ],
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ],
-              rows: grid.students.map((student) {
-                return DataRow(
-                  cells: [
-                    DataCell(_buildStudentHeaderCell(student)),
-                    ...grid.dates.map((date) {
-                      final key = '$student::${_dateKeyFormat.format(date)}';
-                      final value = dateCellMap[key] ?? '';
-                      return DataCell(
-                        Text(value.isEmpty ? '—' : value),
-                        onTap: widget.canEdit
-                            ? () => _editDateValue(student, date, value)
-                            : null,
-                      );
-                    }),
-                    ...manualColumns.map((column) {
-                      final key = '$student::${column.key}';
-                      final value = manualCellMap[key] ?? '';
-                      return DataCell(
-                        Text(value.isEmpty ? '—' : value),
-                        onTap: widget.canEdit
-                            ? () => _editManualValue(student, column.key, value)
-                            : null,
-                      );
-                    }),
-                    ...computedColumns.map((column) {
-                      final value = _formatComputedValue(
-                        computedMap[student]?[column.key],
-                      );
-                      return DataCell(
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFECFDF5),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(value.isEmpty ? '—' : value),
-                        ),
-                      );
-                    }),
-                  ],
-                );
-              }).toList(),
             ),
-          ),
-        ),
-      ),
     );
   }
 
@@ -1548,9 +1597,16 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
   String? _validateDateCellValue(String value) {
     final trimmed = value.trim();
     if (trimmed.isEmpty) return null;
-    final numeric = double.tryParse(trimmed.replaceAll(',', '.'));
+    final normalized = trimmed.replaceAll(',', '.');
+    final numeric = double.tryParse(normalized);
     if (numeric == null) {
       return null;
+    }
+    if (!RegExp(r'^[+-]?\d+$').hasMatch(normalized)) {
+      return _tr(
+        'Оценка должна быть целым числом.',
+        'Grade must be an integer.',
+      );
     }
     if (numeric < 0 || numeric > 100) {
       return _tr(
@@ -1610,6 +1666,8 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
           content: TextField(
             controller: controller,
             autofocus: true,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => Navigator.pop(context, controller.text.trim()),
             decoration: InputDecoration(hintText: hint),
           ),
           actions: [
@@ -3645,9 +3703,10 @@ class _Panel extends StatelessWidget {
 }
 
 class _ErrorCard extends StatelessWidget {
-  const _ErrorCard({required this.message});
+  const _ErrorCard({required this.message, this.action});
 
   final String message;
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -3659,13 +3718,17 @@ class _ErrorCard extends StatelessWidget {
         border: Border.all(color: const Color(0xFFFCA5A5)),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Icon(Icons.error_outline_rounded, color: Color(0xFFB91C1C)),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              message,
-              style: const TextStyle(color: Color(0xFF7F1D1D)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(message, style: const TextStyle(color: Color(0xFF7F1D1D))),
+                if (action != null) ...[const SizedBox(height: 10), action!],
+              ],
             ),
           ),
         ],

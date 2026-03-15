@@ -28,7 +28,7 @@ import 'widgets/brand_logo.dart';
 
 const String apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
-  defaultValue: 'http://localhost:8000',
+  defaultValue: 'http://192.168.0.150:8000',
 );
 
 const Color kBrandPrimary = Color(0xFF0F766E);
@@ -333,6 +333,11 @@ String humanizeError(Object error) {
           raw.contains('notifications'))) {
     return 'Failed to load notifications.';
   }
+  if (raw.contains('Failed to fetch') || raw.contains('ClientException')) {
+    return isRu
+        ? 'Сервер недоступен. Проверьте API_BASE_URL и CORS (пример: http://<IP_компьютера>:8000 для телефона).'
+        : 'Server is unavailable. Check API_BASE_URL and CORS (example: http://<your-pc-ip>:8000 for phone).';
+  }
   return raw;
 }
 
@@ -623,6 +628,20 @@ const List<String> kRequestStatuses = [
   '\u0413\u043e\u0442\u043e\u0432\u0430',
 ];
 
+String _resolvedApiBaseUrl() {
+  final trimmed = apiBaseUrl.trim();
+  final uri = Uri.tryParse(trimmed);
+  if (uri == null) {
+    return trimmed;
+  }
+  final isLocalhost = uri.host == 'localhost' || uri.host == '127.0.0.1';
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android && isLocalhost) {
+    final mapped = uri.replace(host: '10.0.2.2');
+    return mapped.toString().replaceFirst(RegExp(r'/+$'), '');
+  }
+  return trimmed.replaceFirst(RegExp(r'/+$'), '');
+}
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
@@ -632,7 +651,7 @@ Future<void> main() async {
   } catch (_) {}
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   await _initLocalNotifications();
-  final state = AppState(apiBaseUrl);
+  final state = AppState(_resolvedApiBaseUrl());
   await state.init();
   await JournalStore.init();
   runApp(PolyApp(state: state));
@@ -657,6 +676,7 @@ class AppState extends ChangeNotifier {
       'teacher_name': user.teacherName,
       'child_full_name': user.childFullName,
       'parent_student_id': user.parentStudentId,
+      'admin_permissions': user.adminPermissions,
       'is_approved': user.isApproved,
       'approved_at': user.approvedAt?.toIso8601String(),
       'approved_by': user.approvedBy,
@@ -688,6 +708,7 @@ class AppState extends ChangeNotifier {
   bool _isReady = false;
   Locale _locale = const Locale('ru');
   bool _pushReady = false;
+  int? _clockDriftSeconds;
 
   ApiClient get client => _client;
   String? get token => _token;
@@ -696,6 +717,17 @@ class AppState extends ChangeNotifier {
   bool get isReady => _isReady;
   String? get deviceId => _deviceId;
   Locale get locale => _locale;
+  int? get clockDriftSeconds => _clockDriftSeconds;
+
+  Future<void> _syncDeviceClock() async {
+    try {
+      final data = await _client.syncDeviceTime();
+      final drift = data['drift_seconds'];
+      if (drift is num) {
+        _clockDriftSeconds = drift.toInt();
+      }
+    } catch (_) {}
+  }
 
   String _platformLabel() {
     if (kIsWeb) return 'web';
@@ -797,6 +829,7 @@ class AppState extends ChangeNotifier {
     }
 
     if (isAuthenticated) {
+      await _syncDeviceClock();
       await _setupPush();
     }
     _isReady = true;
@@ -878,6 +911,7 @@ class AppState extends ChangeNotifier {
     _client = ApiClient(baseUrl: baseUrl, token: response.accessToken);
     _persistAuth(response);
     notifyListeners();
+    unawaited(_syncDeviceClock());
     unawaited(_setupPush());
   }
 }
@@ -1380,6 +1414,8 @@ class _AuthPageState extends State<AuthPage> {
                                 }
                                 return null;
                               },
+                              onFieldSubmitted: (_) =>
+                                  FocusScope.of(context).nextFocus(),
                             ),
                           if (_isRegister && _registerRole == 'student')
                             const SizedBox(height: 12),
@@ -1411,6 +1447,8 @@ class _AuthPageState extends State<AuthPage> {
                                 }
                                 return null;
                               },
+                              onFieldSubmitted: (_) =>
+                                  FocusScope.of(context).nextFocus(),
                             ),
                           if (_isRegister && _registerRole == 'teacher')
                             const SizedBox(height: 12),
@@ -1441,6 +1479,8 @@ class _AuthPageState extends State<AuthPage> {
                                 }
                                 return null;
                               },
+                              onFieldSubmitted: (_) =>
+                                  FocusScope.of(context).nextFocus(),
                             ),
                           if (_isRegister && _registerRole == 'parent')
                             const SizedBox(height: 12),
@@ -1485,6 +1525,13 @@ class _AuthPageState extends State<AuthPage> {
                             ),
                             validator: _validatePassword,
                             onChanged: (_) => setState(() {}),
+                            onFieldSubmitted: (_) {
+                              if (_isRegister) {
+                                FocusScope.of(context).nextFocus();
+                                return;
+                              }
+                              _submit();
+                            },
                           ),
                           if (_isRegister) ...[
                             const SizedBox(height: 8),
@@ -2067,7 +2114,7 @@ final List<RoleDefinition> kRoles = [
   RoleDefinition(
     id: 'teacher',
     title: 'Teacher',
-    subtitle: 'Journals, feed and requests',
+    subtitle: 'Journals and feed',
     color: const Color(0xFF6C3B2A),
     features: [
       FeatureDefinition(
@@ -2101,12 +2148,6 @@ final List<RoleDefinition> kRoles = [
         builder: (context) => const NewsFeedPage(canEdit: false),
       ),
       FeatureDefinition(
-        id: 'requests',
-        title: 'Requests',
-        icon: Icons.receipt_long,
-        builder: (context) => const RequestsPage(canProcess: false),
-      ),
-      FeatureDefinition(
         id: 'makeup',
         title: 'Makeups',
         icon: Icons.assignment_late_outlined,
@@ -2133,6 +2174,9 @@ class RoleHomePage extends StatefulWidget {
 
 class _RoleHomePageState extends State<RoleHomePage> {
   int _index = 0;
+  int _unreadNotifications = 0;
+  int _totalNotifications = 0;
+  Timer? _notificationsTimer;
   static const List<String> _navFeatureOrder = <String>[
     'news',
     'schedule',
@@ -2150,6 +2194,17 @@ class _RoleHomePageState extends State<RoleHomePage> {
   void initState() {
     super.initState();
     _restoreTab();
+    _refreshUnreadNotifications();
+    _notificationsTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (!mounted) return;
+      _refreshUnreadNotifications();
+    });
+  }
+
+  @override
+  void dispose() {
+    _notificationsTimer?.cancel();
+    super.dispose();
   }
 
   String _tabKey() => 'home_tab_${widget.role.id}';
@@ -2184,8 +2239,64 @@ class _RoleHomePageState extends State<RoleHomePage> {
     }
   }
 
-  void _openNotifications() {
-    pushAdaptivePage<void>(context, const NotificationsPage());
+  Future<void> _openNotifications() async {
+    await pushAdaptivePage<void>(context, const NotificationsPage());
+    if (!mounted) return;
+    await _refreshUnreadNotifications();
+  }
+
+  Future<void> _refreshUnreadNotifications() async {
+    try {
+      final rows = await AppStateScope.of(context).client.listNotifications(
+        limit: 50,
+      );
+      if (!mounted) return;
+      setState(() {
+        _totalNotifications = rows.length;
+        _unreadNotifications = rows.where((item) => !item.isRead).length;
+      });
+    } catch (_) {}
+  }
+
+  Widget _buildNotificationButton() {
+    final visibleCount = _unreadNotifications > 0
+        ? _unreadNotifications
+        : _totalNotifications;
+    final icon = IconButton(
+      onPressed: _openNotifications,
+      icon: const Icon(Icons.notifications_none),
+      tooltip: 'Notifications',
+    );
+    if (visibleCount <= 0) {
+      return icon;
+    }
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        icon,
+        Positioned(
+          right: 6,
+          top: 6,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+            decoration: BoxDecoration(
+              color: Colors.red,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              visibleCount > 99 ? '99+' : '$visibleCount',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   bool _isNativeDesktop() {
@@ -2243,8 +2354,45 @@ class _RoleHomePageState extends State<RoleHomePage> {
     return _navFeatureOrder.length + 100;
   }
 
+  bool _adminCanAccessFeature(UserProfile? user, String featureId) {
+    if ((user?.role ?? '') != 'admin') {
+      return true;
+    }
+    final permissions = user?.adminPermissions ?? const <String>[];
+    if (permissions.isEmpty || permissions.contains('all')) {
+      return true;
+    }
+    final permissionSet = permissions.map((item) => item.trim()).toSet();
+    bool has(String code) => permissionSet.contains(code);
+    switch (featureId) {
+      case 'admin_panel':
+        return has('users_manage') ||
+            has('departments_manage') ||
+            has('academic_manage') ||
+            has('schedule_manage') ||
+            has('analytics_view');
+      case 'schedule':
+        return has('schedule_manage');
+      case 'attendance':
+      case 'grades':
+      case 'exams':
+      case 'makeup':
+      case 'requests':
+      case 'news':
+        return has('academic_manage');
+      case 'analytics':
+        return has('analytics_view');
+      case 'profile':
+      case 'home':
+        return true;
+      default:
+        return true;
+    }
+  }
+
   List<_NavItem> _buildTabs() {
     final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    final currentUser = AppStateScope.of(context).user;
     String t(String ru, String en) => isRu ? ru : en;
     final added = <String>{};
     final sortedFeatures = [...widget.role.features]
@@ -2269,6 +2417,9 @@ class _RoleHomePageState extends State<RoleHomePage> {
     ];
     for (final feature in sortedFeatures) {
       if (!added.add(feature.id)) continue;
+      if (!_adminCanAccessFeature(currentUser, feature.id)) {
+        continue;
+      }
       items.add(
         _NavItem(
           id: feature.id,
@@ -2387,11 +2538,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
                     ),
                     child: Row(
                       children: [
-                        IconButton(
-                          onPressed: _openNotifications,
-                          icon: const Icon(Icons.notifications_none),
-                          tooltip: 'Notifications',
-                        ),
+                        _buildNotificationButton(),
                         const Spacer(),
                         IconButton(
                           onPressed: () => AppStateScope.of(context).logout(),
@@ -2466,11 +2613,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
                         ),
                       ),
                     ),
-                    IconButton(
-                      onPressed: _openNotifications,
-                      icon: const Icon(Icons.notifications_none),
-                      tooltip: 'Notifications',
-                    ),
+                    _buildNotificationButton(),
                     IconButton(
                       onPressed: () => AppStateScope.of(context).logout(),
                       icon: const Icon(Icons.logout),
@@ -2520,11 +2663,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
         title: Text(title),
         backgroundColor: color.withValues(alpha: 0.16),
         actions: [
-          IconButton(
-            onPressed: _openNotifications,
-            icon: const Icon(Icons.notifications_none),
-            tooltip: 'Notifications',
-          ),
+          _buildNotificationButton(),
           IconButton(
             onPressed: () => AppStateScope.of(context).logout(),
             icon: const Icon(Icons.logout),
@@ -3271,6 +3410,9 @@ class AttendancePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final role = AppStateScope.of(context).user?.role ?? '';
+    if (role == 'parent') {
+      return const ParentAttendancePage();
+    }
     final canEdit = role == 'teacher' || role == 'admin';
     final canManageGroups = role == 'admin';
     return AttendanceJournalPage(
@@ -3287,12 +3429,179 @@ class GradesPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final role = AppStateScope.of(context).user?.role ?? '';
+    if (role == 'parent') {
+      return const ParentGradesPage();
+    }
     final canEdit = role == 'teacher' || role == 'admin';
     final canManageGroups = role == 'admin';
     return GradesPresetJournalPage(
       canEdit: canEdit,
       canManageGroups: canManageGroups,
       client: AppStateScope.of(context).client,
+    );
+  }
+}
+
+class ParentAttendancePage extends StatefulWidget {
+  const ParentAttendancePage({super.key});
+
+  @override
+  State<ParentAttendancePage> createState() => _ParentAttendancePageState();
+}
+
+class _ParentAttendancePageState extends State<ParentAttendancePage> {
+  Future<List<AttendanceRecord>>? _future;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reload();
+  }
+
+  Future<void> _reload() async {
+    final state = AppStateScope.of(context);
+    setState(() {
+      _future = state.client.listJournalGroups().then((groups) async {
+        if (groups.isEmpty) return const <AttendanceRecord>[];
+        return state.client.listAttendance(groups.first);
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    return ModulePanel(
+      title: isRu ? 'Посещаемость ребёнка' : 'Child attendance',
+      subtitle: isRu
+          ? 'Только записи по подтвержденному ребёнку.'
+          : 'Only records for approved child.',
+      child: FutureBuilder<List<AttendanceRecord>>(
+        future: _future,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: BrandLoadingIndicator());
+          }
+          if (snapshot.hasError) {
+            return InlineNotice(
+              message: humanizeError(snapshot.error!),
+              isError: true,
+            );
+          }
+          final rows = snapshot.data ?? const <AttendanceRecord>[];
+          if (rows.isEmpty) {
+            return Text(isRu ? 'Записей пока нет.' : 'No records yet.');
+          }
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              columns: [
+                DataColumn(label: Text(isRu ? 'Дата' : 'Date')),
+                DataColumn(label: Text(isRu ? 'Группа' : 'Group')),
+                DataColumn(label: Text(isRu ? 'Статус' : 'Status')),
+              ],
+              rows: rows
+                  .map(
+                    (item) => DataRow(
+                      cells: [
+                        DataCell(
+                          Text(DateFormat('dd.MM.yyyy').format(item.classDate)),
+                        ),
+                        DataCell(Text(item.groupName)),
+                        DataCell(
+                          Text(
+                            item.present
+                                ? (isRu ? 'Присутствовал' : 'Present')
+                                : (isRu ? 'Отсутствовал' : 'Absent'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                  .toList(),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class ParentGradesPage extends StatefulWidget {
+  const ParentGradesPage({super.key});
+
+  @override
+  State<ParentGradesPage> createState() => _ParentGradesPageState();
+}
+
+class _ParentGradesPageState extends State<ParentGradesPage> {
+  Future<List<GradeRecord>>? _future;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reload();
+  }
+
+  Future<void> _reload() async {
+    final state = AppStateScope.of(context);
+    setState(() {
+      _future = state.client.listJournalGroups().then((groups) async {
+        if (groups.isEmpty) return const <GradeRecord>[];
+        return state.client.listGrades(groups.first);
+      });
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    return ModulePanel(
+      title: isRu ? 'Оценки ребёнка' : 'Child grades',
+      subtitle: isRu
+          ? 'Только оценки подтвержденного ребёнка.'
+          : 'Only grades for approved child.',
+      child: FutureBuilder<List<GradeRecord>>(
+        future: _future,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: BrandLoadingIndicator());
+          }
+          if (snapshot.hasError) {
+            return InlineNotice(
+              message: humanizeError(snapshot.error!),
+              isError: true,
+            );
+          }
+          final rows = snapshot.data ?? const <GradeRecord>[];
+          if (rows.isEmpty) {
+            return Text(isRu ? 'Оценок пока нет.' : 'No grades yet.');
+          }
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              columns: [
+                DataColumn(label: Text(isRu ? 'Дата' : 'Date')),
+                DataColumn(label: Text(isRu ? 'Группа' : 'Group')),
+                DataColumn(label: Text(isRu ? 'Оценка' : 'Grade')),
+              ],
+              rows: rows
+                  .map(
+                    (item) => DataRow(
+                      cells: [
+                        DataCell(
+                          Text(DateFormat('dd.MM.yyyy').format(item.classDate)),
+                        ),
+                        DataCell(Text(item.groupName)),
+                        DataCell(Text(item.grade.toString())),
+                      ],
+                    ),
+                  )
+                  .toList(),
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -3314,6 +3623,21 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
   Future<List<ExamUpload>>? _uploadsFuture;
   bool _initialized = false;
   bool _showUploads = false;
+
+  List<ExamGrade> _filterGradesByRole(List<ExamGrade> source) {
+    final user = AppStateScope.of(context).user;
+    if (user == null) return source;
+    if (user.role != 'student') return source;
+    final fullName = user.fullName.trim().toLowerCase();
+    final group = (user.studentGroup ?? '').trim().toLowerCase();
+    return source.where((item) {
+      final sameName = item.studentName.trim().toLowerCase() == fullName;
+      final sameGroup = group.isEmpty
+          ? true
+          : item.groupName.trim().toLowerCase() == group;
+      return sameName && sameGroup;
+    }).toList();
+  }
 
   bool get _canUpload {
     final role = AppStateScope.of(context).user?.role ?? '';
@@ -3392,7 +3716,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                       labelText: 'Exam name',
                       border: OutlineInputBorder(),
                     ),
-                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                    onSubmitted: (_) => FocusScope.of(context).unfocus(),
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -3505,7 +3829,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
         if (snapshot.hasError) {
           return Text('Failed to load exam grades: ${snapshot.error}');
         }
-        final items = snapshot.data ?? [];
+        final items = _filterGradesByRole(snapshot.data ?? []);
         if (items.isEmpty) {
           return const Text('No exam grades yet');
         }
@@ -3530,6 +3854,58 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                 ),
               ),
           ],
+        );
+      },
+    );
+  }
+
+  Widget _buildParentExamTable() {
+    final future = _gradesFuture;
+    final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    if (future == null) return const SizedBox.shrink();
+    return FutureBuilder<List<ExamGrade>>(
+      future: future,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: BrandLoadingIndicator());
+        }
+        if (snapshot.hasError) {
+          return InlineNotice(
+            message: humanizeError(snapshot.error!),
+            isError: true,
+          );
+        }
+        final rows = snapshot.data ?? const <ExamGrade>[];
+        final filteredRows = _filterGradesByRole(rows);
+        if (filteredRows.isEmpty) {
+          return Text(
+            isRu ? 'Экзаменационных оценок пока нет.' : 'No exam grades yet.',
+          );
+        }
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: DataTable(
+            columns: [
+              DataColumn(label: Text(isRu ? 'Экзамен' : 'Exam')),
+              DataColumn(label: Text(isRu ? 'Дата' : 'Date')),
+              DataColumn(label: Text(isRu ? 'Группа' : 'Group')),
+              DataColumn(label: Text(isRu ? 'Оценка' : 'Grade')),
+            ],
+            rows: filteredRows
+                .map(
+                  (item) => DataRow(
+                    cells: [
+                      DataCell(Text(item.examName)),
+                      DataCell(
+                        Text(DateFormat('dd.MM.yyyy').format(item.createdAt)),
+                      ),
+                      DataCell(Text(item.groupName)),
+                      DataCell(Text(item.grade.toString())),
+                    ],
+                  ),
+                )
+                .toList(),
+          ),
         );
       },
     );
@@ -3561,6 +3937,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                 labelText: 'Exam name',
                 border: OutlineInputBorder(),
               ),
+              onSubmitted: (_) => Navigator.pop(context, true),
             ),
           ],
         ),
@@ -3695,6 +4072,19 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
 
   @override
   Widget build(BuildContext context) {
+    final role = AppStateScope.of(context).user?.role ?? '';
+    final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    if (role == 'parent') {
+      return FeatureScaffold(
+        title: isRu ? 'Экзаменационные оценки ребёнка' : 'Child exam grades',
+        subtitle: isRu
+            ? 'Только оценки подтвержденного ребёнка.'
+            : 'Only grades for approved child.',
+        actionLabel: isRu ? 'Обновить' : 'Refresh',
+        onAction: _reload,
+        child: _buildParentExamTable(),
+      );
+    }
     return FeatureScaffold(
       title: 'Exam grades',
       subtitle: _canUpload
@@ -3728,7 +4118,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                       labelText: 'Exam name',
                       border: OutlineInputBorder(),
                     ),
-                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                    onSubmitted: (_) => _reload(),
                   ),
                   const SizedBox(height: 12),
                   Align(
@@ -4617,14 +5007,45 @@ class _RequestDetailPageState extends State<RequestDetailPage> {
   late RequestTicket _ticket;
   String? _status;
   bool _saving = false;
+  final _commentController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _ticket = widget.ticket;
-    _status = kRequestStatuses.contains(_ticket.status)
-        ? _ticket.status
-        : kRequestStatuses.first;
+    _commentController.text = (_ticket.comment ?? '').trim();
+    if (_isTeachingGroupRequest(_ticket.requestType)) {
+      _status = _normalizeTeachingDecisionStatus(_ticket.status);
+    } else {
+      _status = kRequestStatuses.contains(_ticket.status)
+          ? _ticket.status
+          : kRequestStatuses.first;
+    }
+  }
+
+  @override
+  void dispose() {
+    _commentController.dispose();
+    super.dispose();
+  }
+
+  bool _isTeachingGroupRequest(String value) {
+    final text = value.toLowerCase();
+    return text.contains('преподавание группы') ||
+        (text.contains('teacher') && text.contains('group'));
+  }
+
+  String _normalizeTeachingDecisionStatus(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized == 'approved' ||
+        normalized == 'одобрена' ||
+        normalized == 'принята') {
+      return 'approved';
+    }
+    if (normalized == 'rejected' || normalized == 'отклонена') {
+      return 'rejected';
+    }
+    return 'approved';
   }
 
   Future<void> _save() async {
@@ -4633,7 +5054,11 @@ class _RequestDetailPageState extends State<RequestDetailPage> {
     try {
       final updated = await AppStateScope.of(
         context,
-      ).client.updateRequest(_ticket.id, status: _status);
+      ).client.updateRequest(
+        _ticket.id,
+        status: _status,
+        comment: _commentController.text.trim(),
+      );
       if (!mounted) return;
       setState(() => _ticket = updated);
       setState(() {
@@ -4667,22 +5092,45 @@ class _RequestDetailPageState extends State<RequestDetailPage> {
               subtitle: Text(
                 "${_ticket.studentName}\n"
                 "${DateFormat("dd.MM.yyyy HH:mm").format(_ticket.createdAt)}\n"
-                "Status: ${_ticket.status}",
+                "Status: ${_ticket.status}"
+                "${(_ticket.comment ?? '').trim().isEmpty ? '' : '\nКомментарий: ${_ticket.comment!.trim()}'}",
               ),
             ),
           ),
           const SizedBox(height: 12),
           if (widget.canProcess) ...[
-            DropdownButtonFormField<String>(
-              initialValue: kRequestStatuses.contains(_status)
-                  ? _status
-                  : kRequestStatuses.first,
-              items: [
-                for (final status in kRequestStatuses)
-                  DropdownMenuItem(value: status, child: Text(status)),
-              ],
-              onChanged: (value) => setState(() => _status = value),
-              decoration: const InputDecoration(labelText: 'Status'),
+            if (_isTeachingGroupRequest(_ticket.requestType))
+              DropdownButtonFormField<String>(
+                initialValue: _status == 'rejected' ? 'rejected' : 'approved',
+                items: const [
+                  DropdownMenuItem(value: 'approved', child: Text('Принять')),
+                  DropdownMenuItem(value: 'rejected', child: Text('Отклонить')),
+                ],
+                onChanged: (value) => setState(() => _status = value),
+                decoration: const InputDecoration(labelText: 'Решение'),
+              )
+            else
+              DropdownButtonFormField<String>(
+                initialValue: kRequestStatuses.contains(_status)
+                    ? _status
+                    : kRequestStatuses.first,
+                items: [
+                  for (final status in kRequestStatuses)
+                    DropdownMenuItem(value: status, child: Text(status)),
+                ],
+                onChanged: (value) => setState(() => _status = value),
+                decoration: const InputDecoration(labelText: 'Status'),
+              ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _commentController,
+              minLines: 2,
+              maxLines: 4,
+              decoration: const InputDecoration(
+                labelText: 'Комментарий к решению (опционально)',
+              ),
+              textInputAction: TextInputAction.done,
+              onSubmitted: (_) => _save(),
             ),
             const SizedBox(height: 12),
             FilledButton(
@@ -4713,7 +5161,6 @@ class _ProfilePageState extends State<ProfilePage> {
   String? _noticeMessage;
   bool _noticeError = false;
   final _fullNameController = TextEditingController();
-  final _avatarUrlController = TextEditingController();
   final _phoneController = TextEditingController();
   final _birthController = TextEditingController();
   final _groupController = TextEditingController();
@@ -4722,11 +5169,13 @@ class _ProfilePageState extends State<ProfilePage> {
   bool _initialized = false;
   bool _notifySchedule = true;
   bool _notifyRequests = true;
+  bool get _isRu => AppStateScope.of(
+    context,
+  ).locale.languageCode.toLowerCase().startsWith('ru');
 
   @override
   void dispose() {
     _fullNameController.dispose();
-    _avatarUrlController.dispose();
     _phoneController.dispose();
     _birthController.dispose();
     _groupController.dispose();
@@ -4743,7 +5192,6 @@ class _ProfilePageState extends State<ProfilePage> {
     _notifyRequests = user?.notifyRequests ?? true;
     if (_initialized) return;
     _fullNameController.text = user?.fullName ?? '';
-    _avatarUrlController.text = user?.avatarUrl ?? '';
     _phoneController.text = user?.phone ?? '';
     _birthController.text = user?.birthDate == null
         ? ''
@@ -4775,15 +5223,6 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
-  void _scrollTo(double offset) {
-    if (!_scrollController.hasClients) return;
-    _scrollController.animateTo(
-      offset,
-      duration: const Duration(milliseconds: 450),
-      curve: Curves.easeOutCubic,
-    );
-  }
-
   Future<void> _saveProfile() async {
     final state = AppStateScope.of(context);
     final user = state.user;
@@ -4794,10 +5233,6 @@ class _ProfilePageState extends State<ProfilePage> {
     }
     if (_phoneController.text.trim().isNotEmpty) {
       payload['phone'] = _phoneController.text.trim();
-    }
-    final avatarUrl = _avatarUrlController.text.trim();
-    if ((user.avatarUrl ?? '').trim() != avatarUrl) {
-      payload['avatar_url'] = avatarUrl;
     }
     if (_birthController.text.trim().isNotEmpty) {
       final birth = _birthController.text.trim();
@@ -4829,6 +5264,174 @@ class _ProfilePageState extends State<ProfilePage> {
         _noticeMessage = humanizeError(error);
       });
     }
+  }
+
+  Future<void> _pickAndUploadAvatar() async {
+    final state = AppStateScope.of(context);
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final file = result.files.first;
+    final bytes = file.bytes;
+    if (bytes == null || bytes.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = _isRu
+            ? 'Не удалось прочитать выбранный файл.'
+            : 'Failed to read selected file.';
+      });
+      return;
+    }
+    try {
+      final uploaded = await state.client.uploadMyAvatarBytes(
+        filename: file.name,
+        bytes: bytes,
+      );
+      final avatarUrl = uploaded.avatarUrl;
+      if (avatarUrl != null && avatarUrl.trim().isNotEmpty) {
+        await state.updateProfile({'avatar_url': avatarUrl.trim()});
+      }
+      if (!mounted) return;
+      setState(() {
+        _noticeError = false;
+        _noticeMessage = _isRu ? 'Аватар обновлён.' : 'Avatar updated.';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = humanizeError(error);
+      });
+    }
+  }
+
+  Future<void> _openEditProfileDialog() async {
+    final l10n = AppLocalizations.of(context);
+    final user = AppStateScope.of(context).user;
+    if (user == null) return;
+    _fullNameController.text = user.fullName;
+    _phoneController.text = user.phone ?? '';
+    _birthController.text = user.birthDate == null
+        ? ''
+        : DateFormat('yyyy-MM-dd').format(user.birthDate!);
+    _teacherController.text = user.teacherName ?? '';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        bool uploadingAvatar = false;
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final currentUser = AppStateScope.of(context).user;
+            final avatarUrl = currentUser?.avatarUrl?.trim();
+            final hasAvatar = avatarUrl != null && avatarUrl.isNotEmpty;
+            return AlertDialog(
+              title: Text(_isRu ? 'Редактировать профиль' : 'Edit profile'),
+              content: SingleChildScrollView(
+                child: SizedBox(
+                  width: 520,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          CircleAvatar(
+                            radius: 26,
+                            backgroundImage: hasAvatar
+                                ? NetworkImage(_resolveMediaUrl(avatarUrl))
+                                : null,
+                            child: hasAvatar
+                                ? null
+                                : const Icon(Icons.person_outline_rounded),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: uploadingAvatar
+                                  ? null
+                                  : () async {
+                                      setDialogState(() {
+                                        uploadingAvatar = true;
+                                      });
+                                      await _pickAndUploadAvatar();
+                                      if (!mounted) return;
+                                      setDialogState(() {
+                                        uploadingAvatar = false;
+                                      });
+                                    },
+                              icon: uploadingAvatar
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.upload_file_rounded),
+                              label: Text(
+                                _isRu ? 'Загрузить аватар' : 'Upload avatar',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _fullNameController,
+                        decoration: InputDecoration(
+                          labelText: l10n.t('full_name'),
+                        ),
+                        onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _phoneController,
+                        decoration: InputDecoration(
+                          labelText: l10n.t('phone_label'),
+                        ),
+                        keyboardType: TextInputType.phone,
+                        onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _birthController,
+                        decoration: InputDecoration(
+                          labelText: l10n.t('birth_date_label'),
+                        ),
+                        onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                      ),
+                      if (user.role == 'teacher') ...[
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _teacherController,
+                          decoration: InputDecoration(
+                            labelText: l10n.t('teacher_name_label'),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: Text(_isRu ? 'Отмена' : 'Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: Text(_isRu ? 'Сохранить' : 'Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    if (ok != true) return;
+    await _saveProfile();
   }
 
   Widget _buildRoleContextCard({
@@ -4949,6 +5552,7 @@ class _ProfilePageState extends State<ProfilePage> {
           ),
         );
       case 'admin':
+        final permissions = user.adminPermissions;
         return _ProfileSectionCard(
           title: isRu ? 'Профиль администратора' : 'Admin profile',
           child: Column(
@@ -4964,6 +5568,14 @@ class _ProfilePageState extends State<ProfilePage> {
                       isRu ? 'Полный CRUD по системе' : 'Full system CRUD',
                     ),
                   ),
+                  if (permissions.isNotEmpty)
+                    ...permissions.map(
+                      (item) => Chip(
+                        label: Text(
+                          isRu ? 'Право: $item' : 'Permission: $item',
+                        ),
+                      ),
+                    ),
                 ],
               ),
               const SizedBox(height: 8),
@@ -5085,13 +5697,8 @@ class _ProfilePageState extends State<ProfilePage> {
                   _ProfileActionButton(
                     label: l10n.t('profile_edit'),
                     icon: Icons.edit,
-                    onPressed: () => _scrollTo(320),
-                  ),
-                  _ProfileActionButton(
-                    label: l10n.t('save_profile'),
-                    icon: Icons.check_circle_outline,
                     isPrimary: true,
-                    onPressed: _saveProfile,
+                    onPressed: _openEditProfileDialog,
                   ),
                 ],
               ),
@@ -5150,79 +5757,66 @@ class _ProfilePageState extends State<ProfilePage> {
                 title: l10n.t('account_info'),
                 child: Column(
                   children: [
-                    TextField(
-                      controller: _fullNameController,
-                      decoration: InputDecoration(
-                        labelText: l10n.t('full_name'),
-                      ),
-                      onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                    ListTile(
+                      leading: const Icon(Icons.badge_outlined),
+                      title: Text(l10n.t('full_name')),
+                      subtitle: Text(displayName),
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _phoneController,
-                      decoration: InputDecoration(
-                        labelText: l10n.t('phone_label'),
-                      ),
-                      keyboardType: TextInputType.phone,
-                      onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.email_outlined),
+                      title: const Text('Email'),
+                      subtitle: Text(user?.email ?? '-'),
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _avatarUrlController,
-                      decoration: const InputDecoration(
-                        labelText: 'Avatar URL',
-                        hintText: 'https://...',
-                      ),
-                      onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.phone_outlined),
+                      title: Text(l10n.t('phone_label')),
+                      subtitle: Text(phoneValue),
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _birthController,
-                      decoration: InputDecoration(
-                        labelText: l10n.t('birth_date_label'),
+                    const Divider(height: 1),
+                    ListTile(
+                      leading: const Icon(Icons.cake_outlined),
+                      title: Text(l10n.t('birth_date_label')),
+                      subtitle: Text(
+                        (user?.birthDate == null)
+                            ? (isRu ? 'Не указан' : 'Not set')
+                            : DateFormat('yyyy-MM-dd').format(user!.birthDate!),
                       ),
-                      onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                     ),
-                    const SizedBox(height: 12),
-                    if (user?.role == 'student') ...[
-                      TextField(
-                        controller: _groupController,
-                        enabled: false,
-                        decoration: InputDecoration(
-                          labelText: l10n.t('group_label'),
-                        ),
-                      ),
-                    ],
                     if (user?.role == 'teacher') ...[
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: _teacherController,
-                        decoration: InputDecoration(
-                          labelText: l10n.t('teacher_name_label'),
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.co_present_outlined),
+                        title: Text(l10n.t('teacher_name_label')),
+                        subtitle: Text(
+                          (user?.teacherName ?? '').trim().isEmpty
+                              ? (isRu ? 'Не указан' : 'Not set')
+                              : user!.teacherName!,
                         ),
                       ),
                     ],
                     if (user?.role == 'parent') ...[
-                      const SizedBox(height: 12),
-                      InputDecorator(
-                        decoration: InputDecoration(
-                          labelText: isRu
-                              ? 'Подтвержденный ребенок'
-                              : 'Approved child',
+                      const Divider(height: 1),
+                      ListTile(
+                        leading: const Icon(Icons.family_restroom_outlined),
+                        title: Text(
+                          isRu ? 'Подтвержденный ребенок' : 'Approved child',
                         ),
-                        child: Text(
+                        subtitle: Text(
                           (user?.childFullName ?? '').trim().isEmpty
                               ? (isRu ? 'Не указан' : 'Not set')
                               : user!.childFullName!,
                         ),
                       ),
                     ],
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed: _saveProfile,
-                        child: Text(l10n.t('save_profile')),
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton.icon(
+                        onPressed: _openEditProfileDialog,
+                        icon: const Icon(Icons.edit_rounded),
+                        label: Text(l10n.t('profile_edit')),
                       ),
                     ),
                   ],
@@ -5420,7 +6014,33 @@ class _NotificationsPageState extends State<NotificationsPage> {
   }
 
   Future<List<AppNotification>> _load() async {
-    return AppStateScope.of(context).client.listNotifications();
+    final state = AppStateScope.of(context);
+    final rows = await state.client.listNotifications();
+    final role = (state.user?.role ?? '').trim().toLowerCase();
+    if (role != 'request_handler') {
+      return rows;
+    }
+    return rows
+        .where((item) {
+          final type = (item.data?['type'] ?? '')
+              .toString()
+              .trim()
+              .toLowerCase();
+          if (type != 'request_created' && type != 'request_updated') {
+            return true;
+          }
+          final title = item.title.toLowerCase();
+          final body = item.body.toLowerCase();
+          final text = '$title $body';
+          if (text.contains('преподав') && text.contains('груп')) {
+            return false;
+          }
+          if (text.contains('teacher') && text.contains('group')) {
+            return false;
+          }
+          return true;
+        })
+        .toList(growable: false);
   }
 
   Future<void> _refresh() async {
@@ -5438,14 +6058,72 @@ class _NotificationsPageState extends State<NotificationsPage> {
     } catch (_) {}
   }
 
+  Future<void> _openNotification(AppNotification notification) async {
+    await _consumeNotification(notification);
+    if (!mounted) return;
+    final type = (notification.data?['type'] ?? '').toString().trim();
+    final state = AppStateScope.of(context);
+    final role = state.user?.role ?? '';
+    Widget? target;
+    switch (type) {
+      case 'schedule_updated':
+        target = const SchedulePage();
+        break;
+      case 'exam_grades':
+        target = const ExamGradesPage();
+        break;
+      case 'request_created':
+      case 'request_updated':
+        target = RequestsPage(
+          canProcess: role == 'admin' || role == 'request_handler',
+        );
+        break;
+      case 'makeup_created':
+      case 'makeup_updated':
+      case 'makeup_message':
+      case 'makeup_graded':
+        if (state.user != null) {
+          target = MakeupWorkspacePage(
+            client: state.client,
+            currentUser: state.user!,
+            locale: state.locale,
+            baseUrl: state.baseUrl,
+            errorText: humanizeError,
+          );
+        }
+        break;
+      case 'attendance_updated':
+        target = const AttendancePage();
+        break;
+      case 'grade_updated':
+        target = const GradesPage();
+        break;
+      case 'news_created':
+      case 'news_updated':
+        target = NewsFeedPage(canEdit: role == 'admin' || role == 'smm');
+        break;
+      default:
+        break;
+    }
+    if (target != null && mounted) {
+      await pushAdaptivePage<void>(context, target);
+    }
+  }
+
   Future<void> _deleteNotification(AppNotification notification) async {
+    setState(() {
+      _future = _future.then(
+        (items) => items.where((item) => item.id != notification.id).toList(),
+      );
+    });
     try {
       await AppStateScope.of(
         context,
       ).client.deleteNotification(notification.id);
+    } catch (_) {
       if (!mounted) return;
       await _refresh();
-    } catch (_) {}
+    }
   }
 
   String _notificationBody(AppNotification item) {
@@ -5534,7 +6212,7 @@ class _NotificationsPageState extends State<NotificationsPage> {
               itemBuilder: (context, index) {
                 final item = items[index];
                 return GestureDetector(
-                  onTap: () => _consumeNotification(item),
+                  onTap: () => _openNotification(item),
                   child: Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
@@ -5589,15 +6267,6 @@ class _NotificationsPageState extends State<NotificationsPage> {
                         const SizedBox(height: 10),
                         Row(
                           children: [
-                            if (!item.isRead)
-                              FilledButton.tonalIcon(
-                                onPressed: () => _consumeNotification(item),
-                                icon: const Icon(Icons.done_all_rounded),
-                                label: Text(
-                                  l10n.t('notifications_read_action'),
-                                ),
-                              ),
-                            if (!item.isRead) const SizedBox(width: 8),
                             OutlinedButton.icon(
                               onPressed: () => _deleteNotification(item),
                               icon: const Icon(Icons.delete_outline_rounded),
@@ -9267,8 +9936,38 @@ class NewsFileCard extends StatelessWidget {
 }
 
 String _resolveMediaUrl(String url) {
-  if (url.startsWith('http://') || url.startsWith('https://')) return url;
-  return '$apiBaseUrl$url';
+  var value = url.trim();
+  if (value.isEmpty) return value;
+
+  // Normalize escaped slashes and quoted blobs that can appear in legacy payloads.
+  value = value.replaceAll(r'\/', '/').replaceAll('\\', '');
+  if ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))) {
+    value = value.substring(1, value.length - 1).trim();
+  }
+
+  // If URL was accidentally embedded inside a JSON/error blob, extract media path.
+  final embedded = RegExp(
+    r'(https?://\S+/media/\S+|/media/\S+|media/\S+)',
+    caseSensitive: false,
+  ).firstMatch(value);
+  if (embedded != null) {
+    value = embedded
+        .group(0)!
+        .trim();
+    while (value.isNotEmpty &&
+        '"\'},'.contains(value[value.length - 1])) {
+      value = value.substring(0, value.length - 1);
+    }
+  }
+
+  if (value.startsWith('http://') || value.startsWith('https://')) {
+    return value;
+  }
+  if (!value.startsWith('/')) {
+    value = '/$value';
+  }
+  return '$apiBaseUrl$value';
 }
 
 String _resolveNewsDownloadUrl(String url) {

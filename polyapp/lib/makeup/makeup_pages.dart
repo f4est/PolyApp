@@ -427,6 +427,8 @@ class _MakeupWorkspacePageState extends State<MakeupWorkspacePage> {
                       width: 320,
                       child: TextField(
                         controller: _noteController,
+                        textInputAction: TextInputAction.send,
+                        onSubmitted: (_) => _createCase(),
                         decoration: InputDecoration(
                           labelText: _t('Комментарий', 'Note'),
                         ),
@@ -571,7 +573,6 @@ class _MakeupCaseDetailScreenState extends State<MakeupCaseDetailScreen> {
   final _noteController = TextEditingController();
   final _gradeController = TextEditingController();
   final _gradeCommentController = TextEditingController();
-  final _proofCommentController = TextEditingController();
   final _messageController = TextEditingController();
 
   final _dateFormat = DateFormat('dd.MM.yyyy');
@@ -630,7 +631,6 @@ class _MakeupCaseDetailScreenState extends State<MakeupCaseDetailScreen> {
     _noteController.dispose();
     _gradeController.dispose();
     _gradeCommentController.dispose();
-    _proofCommentController.dispose();
     _messageController.dispose();
     super.dispose();
   }
@@ -899,11 +899,14 @@ class _MakeupCaseDetailScreenState extends State<MakeupCaseDetailScreen> {
             const SizedBox(height: 8),
             ClipRRect(
               borderRadius: BorderRadius.circular(10),
-              child: AspectRatio(
-                aspectRatio: compact ? 16 / 10 : 16 / 9,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: compact ? 180 : 260,
+                  minHeight: compact ? 120 : 160,
+                ),
                 child: Image.network(
                   url,
-                  fit: BoxFit.cover,
+                  fit: BoxFit.contain,
                   errorBuilder: (context, error, stackTrace) => Container(
                     color: const Color(0xFFE5E7EB),
                     alignment: Alignment.center,
@@ -1025,7 +1028,6 @@ class _MakeupCaseDetailScreenState extends State<MakeupCaseDetailScreen> {
         caseId: item.id,
         filename: picked.files.first.name,
         bytes: picked.files.first.bytes!,
-        comment: _proofCommentController.text.trim(),
       );
       if (!mounted) return;
       setState(() {
@@ -1062,6 +1064,8 @@ class _MakeupCaseDetailScreenState extends State<MakeupCaseDetailScreen> {
                 TextField(
                   controller: textController,
                   maxLines: 4,
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: (_) => Navigator.of(context).pop(true),
                   decoration: InputDecoration(
                     labelText: _t('Комментарий', 'Comment'),
                   ),
@@ -1566,16 +1570,6 @@ class _MakeupCaseDetailScreenState extends State<MakeupCaseDetailScreen> {
                                   color: Color(0xFF4B5563),
                                 ),
                               ),
-                              const SizedBox(height: 8),
-                              TextField(
-                                controller: _proofCommentController,
-                                decoration: InputDecoration(
-                                  labelText: _t(
-                                    'Комментарий к справке',
-                                    'Proof comment',
-                                  ),
-                                ),
-                              ),
                               const SizedBox(height: 10),
                               Wrap(
                                 spacing: 8,
@@ -1727,7 +1721,9 @@ class _MakeupCaseDetailScreenState extends State<MakeupCaseDetailScreen> {
                             const SizedBox(height: 8),
                             TextField(
                               controller: _messageController,
-                              maxLines: 2,
+                              maxLines: 1,
+                              textInputAction: TextInputAction.send,
+                              onSubmitted: (_) => _sendMessage(),
                               decoration: InputDecoration(
                                 labelText: _t('Сообщение', 'Message'),
                               ),
@@ -1879,6 +1875,15 @@ class AdminWorkspacePage extends StatefulWidget {
 }
 
 class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
+  static const List<String> _availableAdminPermissions = [
+    'users_manage',
+    'schedule_manage',
+    'academic_manage',
+    'departments_manage',
+    'analytics_view',
+    'all',
+  ];
+
   int _tab = 0;
   String _userRole = 'all';
   String _userApproval = 'all';
@@ -1910,6 +1915,29 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
   bool get _isRu => widget.locale.languageCode == 'ru';
   String _t(String ru, String en) => _isRu ? ru : en;
   String _readError(Object error) => widget.errorText(error);
+  bool get _isSuperAdmin =>
+      widget.currentUser.adminPermissions.isEmpty ||
+      widget.currentUser.adminPermissions.contains('all');
+  bool _hasAdminPermission(String permission) =>
+      _isSuperAdmin || widget.currentUser.adminPermissions.contains(permission);
+  String _adminPermLabel(String key) {
+    switch (key) {
+      case 'users_manage':
+        return _t('Пользователи', 'Users');
+      case 'schedule_manage':
+        return _t('Расписание', 'Schedule');
+      case 'academic_manage':
+        return _t('Учебные данные', 'Academic');
+      case 'departments_manage':
+        return _t('Отделения', 'Departments');
+      case 'analytics_view':
+        return _t('Аналитика', 'Analytics');
+      case 'all':
+        return _t('Полный доступ', 'Full access');
+      default:
+        return key;
+    }
+  }
 
   @override
   void initState() {
@@ -1918,24 +1946,50 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
   }
 
   void _reloadAll() {
-    _usersFuture = widget.client.listUsers(
-      role: _userRole == 'all' ? null : _userRole,
-      approved: _userApproval == 'all' ? null : (_userApproval == 'approved'),
-      sort: _userSort,
-    );
-    _requestsFuture = widget.client.listRequests();
-    _makeupsFuture = widget.client.listMakeups(
-      status: _makeupStatus == 'all' ? null : _makeupStatus,
-    );
-    _assignmentsFuture = widget.client.listTeacherAssignments();
-    _teachersFuture = widget.client.listUsers(role: 'teacher', approved: true);
-    _newsFuture = widget.client.listNews(limit: 100);
-    _examUploadsFuture = widget.client.listExamUploads();
-    _departmentsFuture = widget.client.listDepartments();
-    _curatorGroupsFuture = widget.client.listCuratorGroups();
-    _scheduleUploadsFuture = widget.client.listScheduleUploads();
-    _analyticsGroupsFuture = widget.client.listAnalyticsGroups();
-    _journalGroupsFuture = widget.client.listJournalGroups();
+    _usersFuture = _hasAdminPermission('users_manage')
+        ? widget.client.listUsers(
+            role: _userRole == 'all' ? null : _userRole,
+            approved: _userApproval == 'all'
+                ? null
+                : (_userApproval == 'approved'),
+            sort: _userSort,
+          )
+        : Future.value(const <UserProfile>[]);
+    _requestsFuture = _hasAdminPermission('users_manage')
+        ? widget.client.listRequests()
+        : Future.value(const <RequestTicket>[]);
+    _makeupsFuture = _hasAdminPermission('academic_manage')
+        ? widget.client.listMakeups(
+            status: _makeupStatus == 'all' ? null : _makeupStatus,
+          )
+        : Future.value(const <MakeupCaseDto>[]);
+    _assignmentsFuture = _hasAdminPermission('academic_manage')
+        ? widget.client.listTeacherAssignments()
+        : Future.value(const <TeacherGroupAssignment>[]);
+    _teachersFuture = _hasAdminPermission('academic_manage')
+        ? widget.client.listUsers(role: 'teacher', approved: true)
+        : Future.value(const <UserProfile>[]);
+    _newsFuture = _hasAdminPermission('users_manage')
+        ? widget.client.listNews(limit: 100)
+        : Future.value(const <NewsPost>[]);
+    _examUploadsFuture = _hasAdminPermission('academic_manage')
+        ? widget.client.listExamUploads()
+        : Future.value(const <ExamUpload>[]);
+    _departmentsFuture = _hasAdminPermission('departments_manage')
+        ? widget.client.listDepartments()
+        : Future.value(const <DepartmentDto>[]);
+    _curatorGroupsFuture = _hasAdminPermission('departments_manage')
+        ? widget.client.listCuratorGroups()
+        : Future.value(const <CuratorGroupAssignmentDto>[]);
+    _scheduleUploadsFuture = _hasAdminPermission('schedule_manage')
+        ? widget.client.listScheduleUploads()
+        : Future.value(const <ScheduleUpload>[]);
+    _analyticsGroupsFuture = _hasAdminPermission('analytics_view')
+        ? widget.client.listAnalyticsGroups()
+        : Future.value(const <GroupAnalytics>[]);
+    _journalGroupsFuture = _hasAdminPermission('academic_manage')
+        ? widget.client.listJournalGroups()
+        : Future.value(const <String>[]);
     _setJournalGroupSelection(_journalGroup);
     setState(() {});
   }
@@ -1955,6 +2009,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     }
     String role = 'student';
     bool isApproved = true;
+    final selectedAdminPermissions = <String>{};
     final fullNameController = TextEditingController();
     final emailController = TextEditingController();
     final passwordController = TextEditingController();
@@ -1964,7 +2019,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     int? selectedParentStudentId = approvedStudents.isNotEmpty
         ? approvedStudents.first.id
         : null;
-    if (selectedParentStudentId != null) {
+    if (role == 'parent' && selectedParentStudentId != null) {
       final first = approvedStudents.first;
       childController.text = first.fullName;
       groupController.text = first.studentGroup ?? '';
@@ -1993,8 +2048,20 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                       child: Text('request_handler'),
                     ),
                   ],
-                  onChanged: (value) =>
-                      setDialogState(() => role = value ?? role),
+                  onChanged: (value) => setDialogState(() {
+                    role = value ?? role;
+                    if (role == 'parent' && approvedStudents.isEmpty) {
+                      isApproved = false;
+                    }
+                    if (role == 'parent' &&
+                        approvedStudents.isNotEmpty &&
+                        selectedParentStudentId == null) {
+                      selectedParentStudentId = approvedStudents.first.id;
+                      childController.text = approvedStudents.first.fullName;
+                      groupController.text =
+                          approvedStudents.first.studentGroup ?? '';
+                    }
+                  }),
                 ),
                 const SizedBox(height: 8),
                 TextField(
@@ -2031,6 +2098,46 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                       labelText: _t('ФИО преподавателя', 'Teacher name'),
                     ),
                   ),
+                if (role == 'admin') ...[
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      _t('Права администратора', 'Admin permissions'),
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final permission in _availableAdminPermissions)
+                        FilterChip(
+                          label: Text(_adminPermLabel(permission)),
+                          selected: selectedAdminPermissions.contains(
+                            permission,
+                          ),
+                          onSelected: (value) {
+                            setDialogState(() {
+                              if (value) {
+                                if (permission == 'all') {
+                                  selectedAdminPermissions
+                                    ..clear()
+                                    ..add('all');
+                                } else {
+                                  selectedAdminPermissions.remove('all');
+                                  selectedAdminPermissions.add(permission);
+                                }
+                              } else {
+                                selectedAdminPermissions.remove(permission);
+                              }
+                            });
+                          },
+                        ),
+                    ],
+                  ),
+                ],
                 if (role == 'parent') ...[
                   DropdownButtonFormField<int>(
                     initialValue:
@@ -2132,24 +2239,49 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
       }
       return;
     }
-    await widget.client.createUserAsAdmin(
-      role: role,
-      fullName: fullNameController.text.trim(),
-      email: emailController.text.trim(),
-      password: passwordController.text.trim(),
-      studentGroup: role == 'student' ? groupController.text.trim() : null,
-      teacherName: role == 'teacher' ? teacherController.text.trim() : null,
-      childFullName: role == 'parent' ? childController.text.trim() : null,
-      parentStudentId: role == 'parent' ? selectedParentStudentId : null,
-      isApproved: isApproved,
-    );
-    if (mounted) {
+    if (fullNameController.text.trim().isEmpty ||
+        emailController.text.trim().isEmpty ||
+        passwordController.text.trim().isEmpty) {
+      if (mounted) {
+        setState(() {
+          _noticeError = true;
+          _noticeMessage = _t(
+            'Заполните ФИО, email и пароль.',
+            'Fill full name, email and password.',
+          );
+        });
+      }
+      return;
+    }
+    try {
+      await widget.client.createUserAsAdmin(
+        role: role,
+        fullName: fullNameController.text.trim(),
+        email: emailController.text.trim(),
+        password: passwordController.text.trim(),
+        studentGroup: role == 'student' ? groupController.text.trim() : null,
+        teacherName: role == 'teacher' ? teacherController.text.trim() : null,
+        childFullName: role == 'parent' ? childController.text.trim() : null,
+        parentStudentId: role == 'parent' ? selectedParentStudentId : null,
+        adminPermissions: role == 'admin'
+            ? selectedAdminPermissions.toList(growable: false)
+            : const [],
+        isApproved: isApproved,
+      );
+      if (mounted) {
+        setState(() {
+          _noticeError = false;
+          _noticeMessage = _t('Пользователь создан.', 'User created.');
+        });
+      }
+      _reloadAll();
+    } catch (error) {
+      if (!mounted) return;
       setState(() {
-        _noticeError = false;
-        _noticeMessage = _t('Пользователь создан.', 'User created.');
+        _noticeError = true;
+        _noticeMessage = _readError(error);
       });
     }
-    _reloadAll();
   }
 
   Future<void> _editUser(UserProfile user) async {
@@ -2191,6 +2323,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     }
     final aboutController = TextEditingController(text: user.about ?? '');
     bool isApproved = user.isApproved ?? true;
+    final selectedAdminPermissions = <String>{...user.adminPermissions};
     if (!mounted) return;
     final ok = await showDialog<bool>(
       context: context,
@@ -2264,6 +2397,46 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                     decoration: InputDecoration(
                       labelText: _t('ФИО преподавателя', 'Teacher name'),
                     ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                if (role == 'admin') ...[
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      _t('Права администратора', 'Admin permissions'),
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final permission in _availableAdminPermissions)
+                        FilterChip(
+                          label: Text(_adminPermLabel(permission)),
+                          selected: selectedAdminPermissions.contains(
+                            permission,
+                          ),
+                          onSelected: (value) {
+                            setDialogState(() {
+                              if (value) {
+                                if (permission == 'all') {
+                                  selectedAdminPermissions
+                                    ..clear()
+                                    ..add('all');
+                                } else {
+                                  selectedAdminPermissions.remove('all');
+                                  selectedAdminPermissions.add(permission);
+                                }
+                              } else {
+                                selectedAdminPermissions.remove(permission);
+                              }
+                            });
+                          },
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 8),
                 ],
@@ -2384,6 +2557,9 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
       'teacher_name': role == 'teacher' ? teacherController.text.trim() : '',
       'child_full_name': role == 'parent' ? childController.text.trim() : '',
       'parent_student_id': role == 'parent' ? selectedParentStudentId ?? 0 : 0,
+      'admin_permissions': role == 'admin'
+          ? selectedAdminPermissions.toList(growable: false)
+          : const <String>[],
       'is_approved': isApproved,
       'about': aboutController.text.trim(),
     });
@@ -2419,12 +2595,45 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     _reloadAll();
   }
 
-  Future<void> _approveUser(UserProfile user) async {
-    await widget.client.approveUserAsAdmin(user.id);
+  Future<void> _approveUser(UserProfile user, {required bool approved}) async {
+    await widget.client.approveUserAsAdmin(user.id, approved: approved);
+    _reloadAll();
+  }
+
+  Future<void> _moveStudentToGroup({
+    required UserProfile student,
+    required String groupName,
+  }) async {
+    await widget.client.updateUser(student.id, {'student_group': groupName});
     _reloadAll();
   }
 
   Future<void> _updateRequestStatus(RequestTicket item) async {
+    final isTeachingGroupRequest = item.requestType.toLowerCase().contains(
+      'преподавание группы',
+    );
+    if (isTeachingGroupRequest) {
+      final accepted = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(_t('Решение по заявке', 'Request decision')),
+          content: Text(item.requestType),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(_t('Отклонить', 'Reject')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(_t('Принять', 'Approve')),
+            ),
+          ],
+        ),
+      );
+      if (accepted == null) return;
+      await _setRequestStatusQuick(item, accepted ? 'approved' : 'rejected');
+      return;
+    }
     final statuses = const [
       'Отправлена',
       'На рассмотрении',
@@ -2461,6 +2670,20 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     );
     if (ok != true) return;
     await widget.client.updateRequest(item.id, status: value);
+    _reloadAll();
+  }
+
+  Future<void> _setRequestStatusQuick(RequestTicket item, String status) async {
+    await widget.client.updateRequest(item.id, status: status);
+    if (mounted) {
+      setState(() {
+        _noticeError = false;
+        _noticeMessage = _t(
+          'Статус заявки обновлен.',
+          'Request status updated.',
+        );
+      });
+    }
     _reloadAll();
   }
 
@@ -4070,10 +4293,21 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        FilledButton.tonalIcon(
-          onPressed: _createCuratorGroupAssignment,
-          icon: const Icon(Icons.how_to_reg),
-          label: Text(_t('Назначить куратора', 'Assign curator')),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilledButton.icon(
+              onPressed: _createJournalGroup,
+              icon: const Icon(Icons.group_add_rounded),
+              label: Text(_t('Создать группу', 'Create group')),
+            ),
+            FilledButton.tonalIcon(
+              onPressed: _createCuratorGroupAssignment,
+              icon: const Icon(Icons.how_to_reg),
+              label: Text(_t('Назначить куратора', 'Assign curator')),
+            ),
+          ],
         ),
         const SizedBox(height: 10),
         Card(
@@ -4357,6 +4591,265 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                         ],
                       ),
                     const SizedBox(height: 12),
+                    if (_hasAdminPermission('users_manage')) ...[
+                      Text(
+                        _t(
+                          'Подтвержденные студенты: drag & drop по группам',
+                          'Approved students: drag & drop by groups',
+                        ),
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 8),
+                      FutureBuilder<List<UserProfile>>(
+                        future: widget.client.listUsers(
+                          role: 'student',
+                          approved: true,
+                          sort: 'name_asc',
+                        ),
+                        builder: (context, studentsSnapshot) {
+                          if (studentsSnapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return const Center(
+                              child: CircularProgressIndicator(),
+                            );
+                          }
+                          if (studentsSnapshot.hasError) {
+                            return Text(
+                              widget.errorText(studentsSnapshot.error!),
+                            );
+                          }
+                          final students = studentsSnapshot.data ?? const [];
+                          final byGroup = <String, List<UserProfile>>{};
+                          for (final student in students) {
+                            final key = (student.studentGroup ?? '').trim();
+                            byGroup.putIfAbsent(key, () => []).add(student);
+                          }
+                          final allGroups = <String>{
+                            for (final department in departments)
+                              ...department.groups
+                                  .map((item) => item.trim())
+                                  .where((item) => item.isNotEmpty),
+                            for (final student in students)
+                              (student.studentGroup ?? '').trim(),
+                          }.where((item) => item.isNotEmpty).toList()..sort();
+                          if (allGroups.isEmpty) {
+                            return Text(
+                              _t(
+                                'Нет групп в отделениях. Сначала добавьте группы.',
+                                'No department groups yet. Add groups first.',
+                              ),
+                            );
+                          }
+
+                          Widget groupDropZone(String groupName) {
+                            final grouped = byGroup[groupName] ?? const [];
+                            return DragTarget<int>(
+                              onWillAcceptWithDetails: (details) => true,
+                              onAcceptWithDetails: (details) {
+                                UserProfile? student;
+                                for (final item in students) {
+                                  if (item.id == details.data) {
+                                    student = item;
+                                    break;
+                                  }
+                                }
+                                if (student != null) {
+                                  _moveStudentToGroup(
+                                    student: student,
+                                    groupName: groupName,
+                                  );
+                                }
+                              },
+                              builder: (context, candidate, rejected) {
+                                return AnimatedContainer(
+                                  duration: const Duration(milliseconds: 140),
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: candidate.isNotEmpty
+                                          ? const Color(0xFF0F766E)
+                                          : const Color(0xFFCBD5E1),
+                                    ),
+                                    color: candidate.isNotEmpty
+                                        ? const Color(0xFFECFEFF)
+                                        : const Color(0xFFF8FAFC),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        groupName,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      if (grouped.isEmpty)
+                                        Text(
+                                          _t(
+                                            'Перетащите студента сюда',
+                                            'Drag student here',
+                                          ),
+                                        )
+                                      else
+                                        Wrap(
+                                          spacing: 6,
+                                          runSpacing: 6,
+                                          children: [
+                                            for (final student in grouped)
+                                              Draggable<int>(
+                                                data: student.id,
+                                                feedback: Material(
+                                                  color: Colors.transparent,
+                                                  child: Chip(
+                                                    label: Text(
+                                                      student.fullName,
+                                                    ),
+                                                  ),
+                                                ),
+                                                childWhenDragging: Opacity(
+                                                  opacity: 0.35,
+                                                  child: Chip(
+                                                    label: Text(
+                                                      student.fullName,
+                                                    ),
+                                                  ),
+                                                ),
+                                                child: Chip(
+                                                  label: Text(student.fullName),
+                                                  avatar: const Icon(
+                                                    Icons.drag_indicator,
+                                                    size: 16,
+                                                  ),
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            );
+                          }
+
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Wrap(
+                                spacing: 10,
+                                runSpacing: 10,
+                                children: [
+                                  for (final group in allGroups)
+                                    SizedBox(
+                                      width: 300,
+                                      child: groupDropZone(group),
+                                    ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              DragTarget<int>(
+                                onWillAcceptWithDetails: (details) => true,
+                                onAcceptWithDetails: (details) {
+                                  UserProfile? student;
+                                  for (final item in students) {
+                                    if (item.id == details.data) {
+                                      student = item;
+                                      break;
+                                    }
+                                  }
+                                  if (student != null) {
+                                    _moveStudentToGroup(
+                                      student: student,
+                                      groupName: '',
+                                    );
+                                  }
+                                },
+                                builder: (context, candidate, rejected) {
+                                  final ungrouped = byGroup[''] ?? const [];
+                                  return AnimatedContainer(
+                                    duration: const Duration(milliseconds: 140),
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: candidate.isNotEmpty
+                                            ? const Color(0xFFE11D48)
+                                            : const Color(0xFFCBD5E1),
+                                      ),
+                                      color: candidate.isNotEmpty
+                                          ? const Color(0xFFFFF1F2)
+                                          : const Color(0xFFF8FAFC),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          _t(
+                                            'Без группы (перетащите сюда, чтобы снять привязку)',
+                                            'Unassigned group (drop here to clear binding)',
+                                          ),
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        if (ungrouped.isEmpty)
+                                          Text(
+                                            _t(
+                                              'Студентов без группы нет.',
+                                              'No unassigned students.',
+                                            ),
+                                          )
+                                        else
+                                          Wrap(
+                                            spacing: 6,
+                                            runSpacing: 6,
+                                            children: [
+                                              for (final student in ungrouped)
+                                                Draggable<int>(
+                                                  data: student.id,
+                                                  feedback: Material(
+                                                    color: Colors.transparent,
+                                                    child: Chip(
+                                                      label: Text(
+                                                        student.fullName,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  childWhenDragging: Opacity(
+                                                    opacity: 0.35,
+                                                    child: Chip(
+                                                      label: Text(
+                                                        student.fullName,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  child: Chip(
+                                                    label: Text(
+                                                      student.fullName,
+                                                    ),
+                                                    avatar: const Icon(
+                                                      Icons.drag_indicator,
+                                                      size: 16,
+                                                    ),
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                    ],
                     Text(
                       _t('Кураторство групп', 'Group curator mapping'),
                       style: const TextStyle(fontWeight: FontWeight.w700),
@@ -4420,20 +4913,63 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
         child: Text(_t('Доступ запрещен.', 'Access denied.')),
       );
     }
-    final tabs = <String>[
-      _t('Пользователи', 'Users'),
-      _t('Заявки', 'Requests'),
-      _t('Отработки', 'Makeups'),
-      _t('Назначения', 'Assignments'),
-      _t('Журнал', 'Journal'),
-      _t('Новости', 'News'),
-      _t('Экзамены', 'Exams'),
-      _t('Отделения', 'Departments'),
-      _t('Расписание', 'Schedule'),
-      _t('Посещаемость', 'Attendance'),
-      _t('Оценки', 'Grades'),
-      _t('Аналитика', 'Analytics'),
+    final tabDefs = <Map<String, dynamic>>[
+      {
+        'index': 0,
+        'label': _t('Пользователи', 'Users'),
+        'perm': 'users_manage',
+      },
+      {'index': 1, 'label': _t('Заявки', 'Requests'), 'perm': 'users_manage'},
+      {
+        'index': 2,
+        'label': _t('Отработки', 'Makeups'),
+        'perm': 'academic_manage',
+      },
+      {
+        'index': 3,
+        'label': _t('Назначения', 'Assignments'),
+        'perm': 'academic_manage',
+      },
+      {'index': 4, 'label': _t('Журнал', 'Journal'), 'perm': 'academic_manage'},
+      {'index': 5, 'label': _t('Новости', 'News'), 'perm': 'users_manage'},
+      {'index': 6, 'label': _t('Экзамены', 'Exams'), 'perm': 'academic_manage'},
+      {
+        'index': 7,
+        'label': _t('Отделения', 'Departments'),
+        'perm': 'departments_manage',
+      },
+      {
+        'index': 8,
+        'label': _t('Расписание', 'Schedule'),
+        'perm': 'schedule_manage',
+      },
+      {
+        'index': 9,
+        'label': _t('Посещаемость', 'Attendance'),
+        'perm': 'academic_manage',
+      },
+      {'index': 10, 'label': _t('Оценки', 'Grades'), 'perm': 'academic_manage'},
+      {
+        'index': 11,
+        'label': _t('Аналитика', 'Analytics'),
+        'perm': 'analytics_view',
+      },
     ];
+    final visibleTabs = tabDefs
+        .where((item) {
+          final perm = item['perm'] as String;
+          return _hasAdminPermission(perm);
+        })
+        .toList(growable: false);
+    if (visibleTabs.isNotEmpty &&
+        !visibleTabs.any((item) => item['index'] == _tab)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          _tab = visibleTabs.first['index'] as int;
+        });
+      });
+    }
     return ModulePanel(
       title: _t('Админ панель', 'Admin panel'),
       subtitle: _t(
@@ -4453,13 +4989,6 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
             onPressed: _createAssignment,
             icon: const Icon(Icons.add_task),
             label: Text(_t('Назначение', 'Assignment')),
-          );
-        }
-        if (_tab == 4) {
-          return FilledButton.icon(
-            onPressed: _createJournalGroup,
-            icon: const Icon(Icons.group_add),
-            label: Text(_t('Группа', 'Group')),
           );
         }
         if (_tab == 5) {
@@ -4514,11 +5043,28 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
           Card(
             child: Padding(
               padding: const EdgeInsets.all(12),
-              child: Text(
-                _t(
-                  'CRUD доступ: пользователи, отделения, кураторство, расписание, посещаемость, аналитика и академические сущности.',
-                  'CRUD scope: users, departments, curator mapping, schedule, attendance, analytics and academic entities.',
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _t(
+                      'CRUD доступ: пользователи, отделения, кураторство, расписание, посещаемость, аналитика и академические сущности.',
+                      'CRUD scope: users, departments, curator mapping, schedule, attendance, analytics and academic entities.',
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      for (final permission
+                          in (_isSuperAdmin
+                              ? const <String>['all']
+                              : widget.currentUser.adminPermissions))
+                        Chip(label: Text(_adminPermLabel(permission))),
+                    ],
+                  ),
+                ],
               ),
             ),
           ),
@@ -4527,11 +5073,12 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
             spacing: 8,
             runSpacing: 8,
             children: [
-              for (final entry in tabs)
+              for (final item in visibleTabs)
                 ChoiceChip(
-                  selected: _tab == tabs.indexOf(entry),
-                  label: Text(entry),
-                  onSelected: (_) => setState(() => _tab = tabs.indexOf(entry)),
+                  selected: _tab == (item['index'] as int),
+                  label: Text(item['label'] as String),
+                  onSelected: (_) =>
+                      setState(() => _tab = item['index'] as int),
                 ),
             ],
           ),
@@ -4696,7 +5243,9 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                                   } else if (action == 'edit') {
                                     await _editUser(user);
                                   } else if (action == 'approve') {
-                                    await _approveUser(user);
+                                    await _approveUser(user, approved: true);
+                                  } else if (action == 'unapprove') {
+                                    await _approveUser(user, approved: false);
                                   } else if (action == 'delete') {
                                     await _deleteUser(user);
                                   }
@@ -4714,6 +5263,16 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                                     PopupMenuItem(
                                       value: 'approve',
                                       child: Text(_t('Подтвердить', 'Approve')),
+                                    ),
+                                  if (user.isApproved ?? true)
+                                    PopupMenuItem(
+                                      value: 'unapprove',
+                                      child: Text(
+                                        _t(
+                                          'Снять подтверждение',
+                                          'Remove approval',
+                                        ),
+                                      ),
                                     ),
                                   PopupMenuItem(
                                     value: 'delete',
@@ -4749,24 +5308,50 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                           subtitle: Text(
                             '${item.studentName} / ${item.status}',
                           ),
-                          trailing: PopupMenuButton<String>(
-                            onSelected: (value) {
-                              if (value == 'status') {
-                                _updateRequestStatus(item);
-                              } else if (value == 'delete') {
-                                _deleteRequest(item);
-                              }
-                            },
-                            itemBuilder: (context) => [
-                              PopupMenuItem(
-                                value: 'status',
-                                child: Text(
-                                  _t('Изменить статус', 'Change status'),
+                          trailing: Wrap(
+                            spacing: 4,
+                            children: [
+                              if (item.requestType.toLowerCase().contains(
+                                'преподавание группы',
+                              )) ...[
+                                IconButton(
+                                  tooltip: _t('Одобрить', 'Approve'),
+                                  onPressed: () =>
+                                      _setRequestStatusQuick(item, 'approved'),
+                                  icon: const Icon(
+                                    Icons.check_circle_outline_rounded,
+                                  ),
                                 ),
-                              ),
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Text(_t('Удалить', 'Delete')),
+                                IconButton(
+                                  tooltip: _t('Отклонить', 'Reject'),
+                                  onPressed: () =>
+                                      _setRequestStatusQuick(item, 'rejected'),
+                                  icon: const Icon(Icons.highlight_off_rounded),
+                                ),
+                              ],
+                              PopupMenuButton<String>(
+                                onSelected: (value) {
+                                  if (value == 'status') {
+                                    _updateRequestStatus(item);
+                                  } else if (value == 'delete') {
+                                    _deleteRequest(item);
+                                  }
+                                },
+                                itemBuilder: (context) => [
+                                  if (!item.requestType.toLowerCase().contains(
+                                    'преподавание группы',
+                                  ))
+                                    PopupMenuItem(
+                                      value: 'status',
+                                      child: Text(
+                                        _t('Изменить статус', 'Change status'),
+                                      ),
+                                    ),
+                                  PopupMenuItem(
+                                    value: 'delete',
+                                    child: Text(_t('Удалить', 'Delete')),
+                                  ),
+                                ],
                               ),
                             ],
                           ),

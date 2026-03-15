@@ -41,6 +41,7 @@ type requestPayload struct {
 type requestUpdatePayload struct {
 	Status  *string `json:"status"`
 	Details *string `json:"details"`
+	Comment *string `json:"comment"`
 }
 
 type journalGroupPayload struct {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,22 +19,24 @@ import (
 	"polyapp/server-go/internal/usecase"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 type authRegisterPayload struct {
-	Role            string `json:"role"`
-	FullName        string `json:"full_name"`
-	Email           string `json:"email"`
-	Password        string `json:"password"`
-	DeviceID        string `json:"device_id"`
-	NotifySchedule  *bool  `json:"notify_schedule"`
-	NotifyRequests  *bool  `json:"notify_requests"`
-	StudentGroup    string `json:"student_group"`
-	TeacherName     string `json:"teacher_name"`
-	ChildFullName   string `json:"child_full_name"`
-	ParentStudentID *uint  `json:"parent_student_id"`
-	IsApproved      *bool  `json:"is_approved"`
+	Role             string   `json:"role"`
+	FullName         string   `json:"full_name"`
+	Email            string   `json:"email"`
+	Password         string   `json:"password"`
+	DeviceID         string   `json:"device_id"`
+	NotifySchedule   *bool    `json:"notify_schedule"`
+	NotifyRequests   *bool    `json:"notify_requests"`
+	StudentGroup     string   `json:"student_group"`
+	TeacherName      string   `json:"teacher_name"`
+	ChildFullName    string   `json:"child_full_name"`
+	ParentStudentID  *uint    `json:"parent_student_id"`
+	AdminPermissions []string `json:"admin_permissions"`
+	IsApproved       *bool    `json:"is_approved"`
 }
 
 type authLoginPayload struct {
@@ -42,21 +46,22 @@ type authLoginPayload struct {
 }
 
 type userUpdatePayload struct {
-	Role            *string `json:"role"`
-	FullName        *string `json:"full_name"`
-	Email           *string `json:"email"`
-	Phone           *string `json:"phone"`
-	AvatarURL       *string `json:"avatar_url"`
-	About           *string `json:"about"`
-	NotifySchedule  *bool   `json:"notify_schedule"`
-	NotifyRequests  *bool   `json:"notify_requests"`
-	StudentGroup    *string `json:"student_group"`
-	TeacherName     *string `json:"teacher_name"`
-	ChildFullName   *string `json:"child_full_name"`
-	ParentStudentID *uint   `json:"parent_student_id"`
-	IsApproved      *bool   `json:"is_approved"`
-	Password        *string `json:"password"`
-	BirthDate       *string `json:"birth_date"`
+	Role             *string   `json:"role"`
+	FullName         *string   `json:"full_name"`
+	Email            *string   `json:"email"`
+	Phone            *string   `json:"phone"`
+	AvatarURL        *string   `json:"avatar_url"`
+	About            *string   `json:"about"`
+	NotifySchedule   *bool     `json:"notify_schedule"`
+	NotifyRequests   *bool     `json:"notify_requests"`
+	StudentGroup     *string   `json:"student_group"`
+	TeacherName      *string   `json:"teacher_name"`
+	ChildFullName    *string   `json:"child_full_name"`
+	ParentStudentID  *uint     `json:"parent_student_id"`
+	AdminPermissions *[]string `json:"admin_permissions"`
+	IsApproved       *bool     `json:"is_approved"`
+	Password         *string   `json:"password"`
+	BirthDate        *string   `json:"birth_date"`
 }
 
 type deviceTokenPayload struct {
@@ -74,6 +79,9 @@ func (h *Handler) RegisterAuthRoutes(router *gin.Engine, auth *httpMiddleware.Au
 	{
 		secured.GET("/auth/me", h.me)
 		secured.POST("/auth/logout", h.logout)
+		secured.POST("/users/me/avatar", h.uploadMyAvatar)
+		// Compatibility alias for clients using auth-prefixed self routes.
+		secured.POST("/auth/me/avatar", h.uploadMyAvatar)
 		secured.POST("/devices/register", h.registerDeviceToken)
 		secured.GET("/notifications", h.listNotifications)
 		secured.POST("/notifications/:id/read", h.markNotificationRead)
@@ -102,6 +110,11 @@ func (h *Handler) register(c *gin.Context) {
 	var payload authRegisterPayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
+		return
+	}
+	role := strings.ToLower(strings.TrimSpace(payload.Role))
+	if role != "" && role != "student" && role != "teacher" && role != "parent" {
+		c.JSON(http.StatusForbidden, gin.H{"detail": "Role is not allowed for self registration"})
 		return
 	}
 	result, err := h.authUC.Register(c.Request.Context(), usecase.RegisterInput{
@@ -182,6 +195,52 @@ func (h *Handler) me(c *gin.Context) {
 	c.JSON(http.StatusOK, toUserPublic(*user))
 }
 
+func (h *Handler) uploadMyAvatar(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Missing file"})
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".webp", ".gif":
+		// allowed
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Only image files are allowed"})
+		return
+	}
+	dir := filepath.Join(h.cfg.MediaDir, "avatars")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to prepare media dir"})
+		return
+	}
+	stored := uuid.NewString() + ext
+	dst := filepath.Join(dir, stored)
+	if err := c.SaveUploadedFile(file, dst); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save file"})
+		return
+	}
+	publicURL := "/media/avatars/" + stored
+	if err := h.db.WithContext(c.Request.Context()).
+		Model(&persistence.DBUser{}).
+		Where("id = ?", user.ID).
+		Update("avatar_url", publicURL).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to update avatar"})
+		return
+	}
+	updated, err := h.userRepo.GetByID(c.Request.Context(), user.ID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load user"})
+		return
+	}
+	c.JSON(http.StatusOK, toUserPublic(*updated))
+}
+
 func (h *Handler) logout(c *gin.Context) {
 	claims := httpMiddleware.CurrentClaims(c)
 	if claims == nil {
@@ -196,12 +255,19 @@ func (h *Handler) logout(c *gin.Context) {
 }
 
 func (h *Handler) createUser(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermUsersManage) {
+		return
+	}
 	var payload authRegisterPayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
 		return
 	}
 	role := strings.ToLower(strings.TrimSpace(payload.Role))
+	adminPermissions := normalizeAdminPermissions(payload.AdminPermissions)
+	if role != "admin" {
+		adminPermissions = nil
+	}
 	autoApprove := payload.IsApproved == nil || *payload.IsApproved
 	if role == "parent" {
 		if payload.IsApproved == nil {
@@ -236,18 +302,19 @@ func (h *Handler) createUser(c *gin.Context) {
 		}
 	}
 	result, err := h.authUC.Register(c.Request.Context(), usecase.RegisterInput{
-		Role:            payload.Role,
-		FullName:        payload.FullName,
-		Email:           payload.Email,
-		Password:        payload.Password,
-		DeviceID:        payload.DeviceID,
-		NotifySchedule:  payload.NotifySchedule,
-		NotifyRequests:  payload.NotifyRequests,
-		StudentGroup:    payload.StudentGroup,
-		TeacherName:     payload.TeacherName,
-		ChildFullName:   payload.ChildFullName,
-		ParentStudentID: payload.ParentStudentID,
-		AutoApprove:     autoApprove,
+		Role:             payload.Role,
+		FullName:         payload.FullName,
+		Email:            payload.Email,
+		Password:         payload.Password,
+		DeviceID:         payload.DeviceID,
+		NotifySchedule:   payload.NotifySchedule,
+		NotifyRequests:   payload.NotifyRequests,
+		StudentGroup:     payload.StudentGroup,
+		TeacherName:      payload.TeacherName,
+		ChildFullName:    payload.ChildFullName,
+		ParentStudentID:  payload.ParentStudentID,
+		AdminPermissions: adminPermissions,
+		AutoApprove:      autoApprove,
 	})
 	if err != nil {
 		switch {
@@ -290,6 +357,9 @@ func (h *Handler) checkEmailExists(c *gin.Context) {
 }
 
 func (h *Handler) listUsers(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermUsersManage) {
+		return
+	}
 	role := strings.TrimSpace(c.Query("role"))
 	approvedRaw := strings.TrimSpace(c.Query("approved"))
 	sortBy := strings.TrimSpace(c.DefaultQuery("sort", "id_asc"))
@@ -349,6 +419,9 @@ func (h *Handler) listUsers(c *gin.Context) {
 }
 
 func (h *Handler) listApprovedStudents(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermUsersManage) {
+		return
+	}
 	var students []persistence.DBUser
 	if err := h.db.WithContext(c.Request.Context()).
 		Where("role = ? AND is_approved = ?", "student", true).
@@ -396,6 +469,18 @@ func (h *Handler) getUser(c *gin.Context) {
 }
 
 func (h *Handler) approveUser(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermUsersManage) {
+		return
+	}
+	var payload struct {
+		Approved *bool `json:"approved"`
+	}
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&payload); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
+			return
+		}
+	}
 	currentUser := httpMiddleware.CurrentUser(c)
 	if currentUser == nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
@@ -415,7 +500,11 @@ func (h *Handler) approveUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load user"})
 		return
 	}
-	if user.Role == "parent" {
+	approved := true
+	if payload.Approved != nil {
+		approved = *payload.Approved
+	}
+	if approved && user.Role == "parent" {
 		if user.ParentStudentID == nil || *user.ParentStudentID == 0 {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"detail": "parent_student_id is required to approve parent account",
@@ -442,10 +531,16 @@ func (h *Handler) approveUser(c *gin.Context) {
 		user.ChildFullName = linkedStudent.FullName
 		user.StudentGroup = linkedStudent.StudentGroup
 	}
-	now := time.Now().UTC()
-	user.IsApproved = true
-	user.ApprovedAt = &now
-	user.ApprovedBy = &currentUser.ID
+	if approved {
+		now := time.Now().UTC()
+		user.IsApproved = true
+		user.ApprovedAt = &now
+		user.ApprovedBy = &currentUser.ID
+	} else {
+		user.IsApproved = false
+		user.ApprovedAt = nil
+		user.ApprovedBy = nil
+	}
 	if err := h.userRepo.Update(c.Request.Context(), user); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to approve user"})
 		return
@@ -486,6 +581,9 @@ func (h *Handler) getUserPublic(c *gin.Context) {
 }
 
 func (h *Handler) deleteUser(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermUsersManage) {
+		return
+	}
 	currentUser := httpMiddleware.CurrentUser(c)
 	if currentUser == nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
@@ -527,6 +625,11 @@ func (h *Handler) updateUser(c *gin.Context) {
 	if currentUser.Role != "admin" && currentUser.ID != userID {
 		c.JSON(http.StatusForbidden, gin.H{"detail": "Insufficient role"})
 		return
+	}
+	if currentUser.Role == "admin" && currentUser.ID != userID {
+		if !h.requireAdminPermission(c, AdminPermUsersManage) {
+			return
+		}
 	}
 	var payload userUpdatePayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
@@ -574,6 +677,13 @@ func (h *Handler) updateUser(c *gin.Context) {
 	}
 	if payload.ChildFullName != nil && currentUser.Role == "admin" {
 		user.ChildFullName = strings.TrimSpace(*payload.ChildFullName)
+	}
+	if payload.AdminPermissions != nil && currentUser.Role == "admin" {
+		if strings.EqualFold(strings.TrimSpace(user.Role), "admin") {
+			user.AdminPermissions = normalizeAdminPermissions(*payload.AdminPermissions)
+		} else {
+			user.AdminPermissions = nil
+		}
 	}
 	if payload.ParentStudentID != nil && currentUser.Role == "admin" {
 		if *payload.ParentStudentID == 0 {

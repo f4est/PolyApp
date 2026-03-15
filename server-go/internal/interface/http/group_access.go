@@ -32,6 +32,27 @@ func normalizeGroupName(value string) string {
 	return strings.TrimSpace(value)
 }
 
+func groupsMatch(accessGroup, requestedGroup string) bool {
+	a := normalizeGroupName(accessGroup)
+	b := normalizeGroupName(requestedGroup)
+	if a == "" || b == "" {
+		return false
+	}
+	if strings.EqualFold(a, b) {
+		return true
+	}
+	return groupIncludesToken(a, b) || groupIncludesToken(b, a)
+}
+
+func mapHasGroup(groups map[string]struct{}, target string) bool {
+	for group := range groups {
+		if groupsMatch(group, target) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *groupAccessScope) addTeaching(group string) {
 	group = normalizeGroupName(group)
 	if group == "" {
@@ -64,8 +85,7 @@ func (s groupAccessScope) canView(group string) bool {
 	if group == "" {
 		return false
 	}
-	_, ok := s.All[group]
-	return ok
+	return mapHasGroup(s.All, group)
 }
 
 func (s groupAccessScope) canEditAttendance(group string) bool {
@@ -73,13 +93,13 @@ func (s groupAccessScope) canEditAttendance(group string) bool {
 	if group == "" {
 		return false
 	}
-	if _, ok := s.Teaching[group]; ok {
+	if mapHasGroup(s.Teaching, group) {
 		return true
 	}
-	if _, ok := s.Curator[group]; ok {
+	if mapHasGroup(s.Curator, group) {
 		return true
 	}
-	if _, ok := s.Department[group]; ok {
+	if mapHasGroup(s.Department, group) {
 		return true
 	}
 	return false
@@ -90,8 +110,7 @@ func (s groupAccessScope) canEditGrades(group string) bool {
 	if group == "" {
 		return false
 	}
-	_, ok := s.Teaching[group]
-	return ok
+	return mapHasGroup(s.Teaching, group)
 }
 
 func (s groupAccessScope) asList() []string {

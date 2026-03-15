@@ -44,6 +44,9 @@ func (h *Handler) listTeacherAssignments(c *gin.Context) {
 }
 
 func (h *Handler) createTeacherAssignment(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermAcademicManage) {
+		return
+	}
 	var payload teacherAssignmentPayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
@@ -72,6 +75,9 @@ func (h *Handler) createTeacherAssignment(c *gin.Context) {
 }
 
 func (h *Handler) updateTeacherAssignment(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermAcademicManage) {
+		return
+	}
 	id, err := parseUintParam(c, "id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid assignment id"})
@@ -110,6 +116,9 @@ func (h *Handler) updateTeacherAssignment(c *gin.Context) {
 }
 
 func (h *Handler) deleteTeacherAssignment(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermAcademicManage) {
+		return
+	}
 	id, err := parseUintParam(c, "id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid assignment id"})
@@ -131,6 +140,9 @@ func (h *Handler) analyticsGroups(c *gin.Context) {
 	user := httpMiddleware.CurrentUser(c)
 	if user == nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	if user.Role == "admin" && !h.requireAdminPermission(c, AdminPermAnalyticsView) {
 		return
 	}
 	var rows []persistence.DBTeacherGroupAssignment

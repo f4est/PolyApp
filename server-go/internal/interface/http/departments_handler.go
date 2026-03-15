@@ -30,6 +30,9 @@ type curatorGroupPayload struct {
 }
 
 func (h *Handler) listDepartments(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermDepartmentsManage) {
+		return
+	}
 	var rows []persistence.DBDepartment
 	if err := h.db.WithContext(c.Request.Context()).
 		Order("name asc").
@@ -97,6 +100,9 @@ func (h *Handler) listDepartments(c *gin.Context) {
 }
 
 func (h *Handler) createDepartment(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermDepartmentsManage) {
+		return
+	}
 	var payload departmentPayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
@@ -128,6 +134,9 @@ func (h *Handler) createDepartment(c *gin.Context) {
 }
 
 func (h *Handler) patchDepartment(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermDepartmentsManage) {
+		return
+	}
 	id, err := parseUintParam(c, "id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid department id"})
@@ -168,6 +177,9 @@ func (h *Handler) patchDepartment(c *gin.Context) {
 }
 
 func (h *Handler) deleteDepartment(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermDepartmentsManage) {
+		return
+	}
 	id, err := parseUintParam(c, "id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid department id"})
@@ -186,6 +198,9 @@ func (h *Handler) deleteDepartment(c *gin.Context) {
 }
 
 func (h *Handler) listDepartmentGroups(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermDepartmentsManage) {
+		return
+	}
 	id, err := parseUintParam(c, "id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid department id"})
@@ -204,6 +219,9 @@ func (h *Handler) listDepartmentGroups(c *gin.Context) {
 }
 
 func (h *Handler) addDepartmentGroup(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermDepartmentsManage) {
+		return
+	}
 	id, err := parseUintParam(c, "id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid department id"})
@@ -248,6 +266,9 @@ func (h *Handler) addDepartmentGroup(c *gin.Context) {
 }
 
 func (h *Handler) removeDepartmentGroup(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermDepartmentsManage) {
+		return
+	}
 	id, err := parseUintParam(c, "id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid department id"})
@@ -268,6 +289,9 @@ func (h *Handler) removeDepartmentGroup(c *gin.Context) {
 }
 
 func (h *Handler) listCuratorGroups(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermDepartmentsManage) {
+		return
+	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBCuratorGroupAssignment{})
 	if raw := strings.TrimSpace(c.Query("curator_id")); raw != "" {
 		value, err := strconv.ParseUint(raw, 10, 64)
@@ -313,6 +337,9 @@ func (h *Handler) listCuratorGroups(c *gin.Context) {
 }
 
 func (h *Handler) createCuratorGroup(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermDepartmentsManage) {
+		return
+	}
 	var payload curatorGroupPayload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
@@ -343,6 +370,9 @@ func (h *Handler) createCuratorGroup(c *gin.Context) {
 }
 
 func (h *Handler) deleteCuratorGroup(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermDepartmentsManage) {
+		return
+	}
 	id, err := parseUintParam(c, "id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid curator group id"})

@@ -59,18 +59,19 @@ func NewAuthUseCase(
 }
 
 type RegisterInput struct {
-	Role            string
-	FullName        string
-	Email           string
-	Password        string
-	DeviceID        string
-	NotifySchedule  *bool
-	NotifyRequests  *bool
-	StudentGroup    string
-	TeacherName     string
-	ChildFullName   string
-	ParentStudentID *uint
-	AutoApprove     bool
+	Role             string
+	FullName         string
+	Email            string
+	Password         string
+	DeviceID         string
+	NotifySchedule   *bool
+	NotifyRequests   *bool
+	StudentGroup     string
+	TeacherName      string
+	ChildFullName    string
+	ParentStudentID  *uint
+	AdminPermissions []string
+	AutoApprove      bool
 }
 
 type LoginInput struct {
@@ -135,6 +136,9 @@ func (u *AuthUseCase) Register(ctx context.Context, in RegisterInput) (*AuthResu
 		return nil, err
 	}
 	isApproved := in.AutoApprove || role == "admin"
+	if role == "parent" {
+		isApproved = false
+	}
 	notifySchedule := true
 	if in.NotifySchedule != nil {
 		notifySchedule = *in.NotifySchedule
@@ -145,19 +149,20 @@ func (u *AuthUseCase) Register(ctx context.Context, in RegisterInput) (*AuthResu
 	}
 	now := u.now().UTC()
 	user := &entity.User{
-		Role:            role,
-		FullName:        fullName,
-		Email:           email,
-		PasswordHash:    hash,
-		NotifySchedule:  notifySchedule,
-		NotifyRequests:  notifyRequests,
-		StudentGroup:    studentGroup,
-		TeacherName:     teacherName,
-		ChildFullName:   childFullName,
-		ParentStudentID: in.ParentStudentID,
-		IsApproved:      isApproved,
-		ApprovedAt:      nil,
-		ApprovedBy:      nil,
+		Role:             role,
+		FullName:         fullName,
+		Email:            email,
+		PasswordHash:     hash,
+		NotifySchedule:   notifySchedule,
+		NotifyRequests:   notifyRequests,
+		StudentGroup:     studentGroup,
+		TeacherName:      teacherName,
+		ChildFullName:    childFullName,
+		ParentStudentID:  in.ParentStudentID,
+		AdminPermissions: in.AdminPermissions,
+		IsApproved:       isApproved,
+		ApprovedAt:       nil,
+		ApprovedBy:       nil,
 	}
 	if teacherName == "" && role == "teacher" {
 		user.TeacherName = fullName

@@ -27,6 +27,14 @@ type scheduleUploadUpdatePayload struct {
 }
 
 func (h *Handler) uploadSchedule(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	if user.Role == "admin" && !h.requireAdminPermission(c, AdminPermScheduleManage) {
+		return
+	}
 	file, err := c.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Missing file"})
@@ -172,6 +180,14 @@ func (h *Handler) uploadSchedule(c *gin.Context) {
 }
 
 func (h *Handler) updateScheduleUpload(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	if user.Role == "admin" && !h.requireAdminPermission(c, AdminPermScheduleManage) {
+		return
+	}
 	id, err := parseUintParam(c, "id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid schedule id"})
@@ -262,6 +278,14 @@ func (h *Handler) updateScheduleUpload(c *gin.Context) {
 }
 
 func (h *Handler) deleteScheduleUpload(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	if user.Role == "admin" && !h.requireAdminPermission(c, AdminPermScheduleManage) {
+		return
+	}
 	id, err := parseUintParam(c, "id")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid schedule id"})
@@ -801,9 +825,11 @@ func (h *Handler) listConfirmedStudentsForGroup(c *gin.Context) {
 			return
 		}
 	}
+	// Only free (unbound) approved students can be added into a group.
 	var students []persistence.DBUser
 	if err := h.db.WithContext(c.Request.Context()).
-		Where("role = ? AND is_approved = ? AND student_group = ?", "student", true, groupName).
+		Where("role = ? AND is_approved = ?", "student", true).
+		Where("student_group IS NULL OR btrim(student_group) = ''").
 		Order("full_name asc").
 		Find(&students).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load students"})
@@ -843,18 +869,18 @@ func (h *Handler) upsertJournalStudent(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save student"})
 			return
 		}
-		if !scope.canEditGrades(group) {
+		if !scope.canEditGrades(group) && !h.teacherHasDirectAssignment(c.Request.Context(), user.ID, group) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
 	}
 	var approvedStudent persistence.DBUser
 	if err := h.db.WithContext(c.Request.Context()).
-		Where("role = ? AND is_approved = ? AND student_group = ? AND lower(full_name) = lower(?)", "student", true, group, name).
+		Where("role = ? AND is_approved = ? AND lower(full_name) = lower(?)", "student", true, name).
 		First(&approvedStudent).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"detail": "Only approved students from this group can be added",
+				"detail": "Only approved students can be added",
 			})
 			return
 		}
@@ -862,6 +888,23 @@ func (h *Handler) upsertJournalStudent(c *gin.Context) {
 		return
 	}
 	name = strings.TrimSpace(approvedStudent.FullName)
+	currentGroup := strings.TrimSpace(approvedStudent.StudentGroup)
+	if currentGroup != "" && !groupsMatch(currentGroup, group) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"detail": "Only students without a group can be added",
+		})
+		return
+	}
+	if currentGroup == "" {
+		approvedStudent.StudentGroup = group
+		if err := h.db.WithContext(c.Request.Context()).
+			Model(&persistence.DBUser{}).
+			Where("id = ?", approvedStudent.ID).
+			Update("student_group", group).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to bind student to group"})
+			return
+		}
+	}
 	row := persistence.DBJournalStudent{GroupName: group, StudentName: name}
 	if err := h.db.WithContext(c.Request.Context()).
 		Where("group_name = ? AND student_name = ?", group, name).
@@ -874,6 +917,26 @@ func (h *Handler) upsertJournalStudent(c *gin.Context) {
 		"group_name":   row.GroupName,
 		"student_name": row.StudentName,
 	})
+}
+
+func (h *Handler) teacherHasDirectAssignment(ctx context.Context, teacherID uint, groupName string) bool {
+	if teacherID == 0 || strings.TrimSpace(groupName) == "" {
+		return false
+	}
+	var assigned []string
+	if err := h.db.WithContext(ctx).
+		Model(&persistence.DBTeacherGroupAssignment{}).
+		Where("teacher_id = ?", teacherID).
+		Distinct("group_name").
+		Pluck("group_name", &assigned).Error; err != nil {
+		return false
+	}
+	for _, group := range assigned {
+		if groupsMatch(group, groupName) {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) deleteJournalStudent(c *gin.Context) {
@@ -894,7 +957,7 @@ func (h *Handler) deleteJournalStudent(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete student"})
 			return
 		}
-		if !scope.canEditGrades(group) {
+		if !scope.canEditGrades(group) && !h.teacherHasDirectAssignment(c.Request.Context(), user.ID, group) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
@@ -986,7 +1049,7 @@ func (h *Handler) upsertJournalDate(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save date"})
 			return
 		}
-		if !scope.canEditGrades(group) {
+		if !scope.canEditGrades(group) && !h.teacherHasDirectAssignment(c.Request.Context(), user.ID, group) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
@@ -1026,7 +1089,7 @@ func (h *Handler) deleteJournalDate(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete date"})
 			return
 		}
-		if !scope.canEditGrades(group) {
+		if !scope.canEditGrades(group) && !h.teacherHasDirectAssignment(c.Request.Context(), user.ID, group) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}

@@ -22,11 +22,12 @@ func (h *Handler) createRequest(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
 		return
 	}
-	if user.Role == "parent" {
+	role := strings.ToLower(strings.TrimSpace(user.Role))
+	if role == "parent" {
 		c.JSON(http.StatusForbidden, gin.H{"detail": "Insufficient role"})
 		return
 	}
-	if user.Role != "student" && user.Role != "teacher" && user.Role != "admin" {
+	if role != "student" && role != "teacher" && role != "admin" {
 		c.JSON(http.StatusForbidden, gin.H{"detail": "Insufficient role"})
 		return
 	}
@@ -37,7 +38,7 @@ func (h *Handler) createRequest(c *gin.Context) {
 	}
 	requestType := strings.TrimSpace(payload.RequestType)
 	details := strings.TrimSpace(payload.Details)
-	if user.Role == "teacher" {
+	if role == "teacher" {
 		groupName := strings.TrimSpace(payload.GroupName)
 		if groupName == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name is required for teacher request"})
@@ -69,9 +70,13 @@ func (h *Handler) createRequest(c *gin.Context) {
 		return
 	}
 	out := h.mapRequestTicket(c, ticket)
-	if recipients, err := h.requestHandlerRecipientIDs(c.Request.Context()); err == nil && len(recipients) > 0 {
+	recipientLoader := h.requestHandlerRecipientIDs
+	if isTeacherGroupAccessRequest(requestType) {
+		recipientLoader = h.adminRecipientIDs
+	}
+	if recipients, err := recipientLoader(c.Request.Context()); err == nil && len(recipients) > 0 {
 		title := "Новая заявка"
-		if user.Role == "teacher" {
+		if role == "teacher" {
 			title = "Новая заявка преподавателя"
 		}
 		body := "Поступила новая заявка от " + strings.TrimSpace(user.FullName)
@@ -97,9 +102,17 @@ func (h *Handler) listRequests(c *gin.Context) {
 		return
 	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBRequestTicket{})
-	switch user.Role {
-	case "admin", "request_handler":
+	role := strings.ToLower(strings.TrimSpace(user.Role))
+	switch role {
+	case "admin":
 		// Full access.
+	case "request_handler", "request-handler":
+		query = query.Where(
+			`NOT ((lower(request_type) LIKE ? AND lower(request_type) LIKE ?) OR lower(request_type) LIKE ?)`,
+			"%преподаван%",
+			"%груп%",
+			"%teacher%group%",
+		)
 	case "student", "teacher":
 		query = query.Where("student_id = ?", user.ID)
 	case "parent":
@@ -141,7 +154,12 @@ func (h *Handler) deleteRequest(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load ticket"})
 		return
 	}
-	if user.Role != "admin" && user.Role != "request_handler" && ticket.StudentID != user.ID {
+	role := strings.ToLower(strings.TrimSpace(user.Role))
+	if role != "admin" && role != "request_handler" && role != "request-handler" && ticket.StudentID != user.ID {
+		c.JSON(http.StatusForbidden, gin.H{"detail": "Insufficient role"})
+		return
+	}
+	if (role == "request_handler" || role == "request-handler") && isTeacherGroupAccessRequest(ticket.RequestType) {
 		c.JSON(http.StatusForbidden, gin.H{"detail": "Insufficient role"})
 		return
 	}
@@ -177,15 +195,31 @@ func (h *Handler) updateRequest(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load ticket"})
 		return
 	}
-	if user.Role != "admin" && user.Role != "request_handler" {
+	role := strings.ToLower(strings.TrimSpace(user.Role))
+	if role != "admin" && role != "request_handler" && role != "request-handler" {
+		c.JSON(http.StatusForbidden, gin.H{"detail": "Insufficient role"})
+		return
+	}
+	if (role == "request_handler" || role == "request-handler") && isTeacherGroupAccessRequest(ticket.RequestType) {
 		c.JSON(http.StatusForbidden, gin.H{"detail": "Insufficient role"})
 		return
 	}
 	if payload.Status != nil {
-		ticket.Status = strings.TrimSpace(*payload.Status)
+		next := strings.TrimSpace(*payload.Status)
+		if isTeacherGroupAccessRequest(ticket.RequestType) {
+			if !isTeacherGroupDecisionStatus(next) {
+				c.JSON(http.StatusBadRequest, gin.H{"detail": "Only approve/reject is allowed for teacher group request"})
+				return
+			}
+			next = normalizeTeacherGroupDecisionStatus(next)
+		}
+		ticket.Status = next
 	}
 	if payload.Details != nil {
 		ticket.Details = strings.TrimSpace(*payload.Details)
+	}
+	if payload.Comment != nil {
+		ticket.Comment = strings.TrimSpace(*payload.Comment)
 	}
 	now := time.Now().UTC()
 	ticket.UpdatedAt = &now
@@ -193,10 +227,39 @@ func (h *Handler) updateRequest(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to update ticket"})
 		return
 	}
+	if shouldGrantTeacherGroupAccess(ticket.RequestType, ticket.Status) {
+		groupName := extractGroupNameFromRequestDetails(ticket.Details)
+		if groupName != "" {
+			var canonicalGroup string
+			_ = h.db.WithContext(c.Request.Context()).
+				Model(&persistence.DBJournalGroup{}).
+				Where("lower(name) = lower(?)", groupName).
+				Limit(1).
+				Pluck("name", &canonicalGroup).Error
+			if strings.TrimSpace(canonicalGroup) != "" {
+				groupName = strings.TrimSpace(canonicalGroup)
+			}
+			assignment := persistence.DBTeacherGroupAssignment{
+				TeacherID: ticket.StudentID,
+				GroupName: groupName,
+				Subject:   "Назначено администратором",
+				CreatedAt: time.Now().UTC(),
+			}
+			if err := h.db.WithContext(c.Request.Context()).
+				Where("teacher_id = ? AND group_name = ?", assignment.TeacherID, assignment.GroupName).
+				FirstOrCreate(&assignment).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to grant group access"})
+				return
+			}
+		}
+	}
 	out := h.mapRequestTicket(c, ticket)
 	if ticket.StudentID > 0 {
 		title := "Статус заявки изменён"
 		body := "Заявка #" + strconv.FormatUint(uint64(ticket.ID), 10) + ": " + ticket.Status
+		if strings.TrimSpace(ticket.Comment) != "" {
+			body += "\nКомментарий: " + strings.TrimSpace(ticket.Comment)
+		}
 		recipients := []uint{ticket.StudentID}
 		if parentIDs, parentErr := h.parentUserIDsForStudents(c.Request.Context(), []uint{ticket.StudentID}); parentErr == nil {
 			recipients = append(recipients, parentIDs...)
@@ -225,7 +288,76 @@ func (h *Handler) updateRequest(c *gin.Context) {
 			},
 		)
 	}
+	if isTeacherGroupAccessRequest(ticket.RequestType) && shouldCloseTeacherGroupRequest(ticket.Status) {
+		if err := h.db.WithContext(c.Request.Context()).Delete(&ticket).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to close ticket"})
+			return
+		}
+		payload := h.mapRequestTicket(c, ticket)
+		payload["deleted"] = true
+		payload["resolved"] = true
+		c.JSON(http.StatusOK, payload)
+		return
+	}
 	c.JSON(http.StatusOK, out)
+}
+
+func shouldGrantTeacherGroupAccess(requestType, status string) bool {
+	if !isTeacherGroupAccessRequest(requestType) {
+		return false
+	}
+	normalized := strings.ToLower(strings.TrimSpace(status))
+	return normalized == "approved"
+}
+
+func shouldCloseTeacherGroupRequest(status string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(status))
+	return normalized == "approved" || normalized == "rejected"
+}
+
+func isTeacherGroupAccessRequest(requestType string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(requestType))
+	return (strings.Contains(normalized, "преподаван") &&
+		strings.Contains(normalized, "груп")) ||
+		(strings.Contains(normalized, "teacher") &&
+			strings.Contains(normalized, "group"))
+}
+
+func isTeacherGroupDecisionStatus(status string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(status))
+	return normalized == "approved" ||
+		normalized == "rejected" ||
+		normalized == strings.ToLower("Принята") ||
+		normalized == strings.ToLower("Одобрена") ||
+		normalized == strings.ToLower("Отклонена")
+}
+
+func normalizeTeacherGroupDecisionStatus(status string) string {
+	normalized := strings.ToLower(strings.TrimSpace(status))
+	if normalized == "approved" ||
+		normalized == strings.ToLower("Принята") ||
+		normalized == strings.ToLower("Одобрена") {
+		return "approved"
+	}
+	return "rejected"
+}
+
+func extractGroupNameFromRequestDetails(details string) string {
+	lines := strings.Split(details, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		if strings.HasPrefix(lower, strings.ToLower("Группа:")) {
+			return strings.TrimSpace(strings.TrimPrefix(trimmed, "Группа:"))
+		}
+		if strings.HasPrefix(lower, strings.ToLower("group:")) {
+			return strings.TrimSpace(strings.TrimPrefix(trimmed, "Group:"))
+		}
+	}
+	return ""
 }
 
 func (h *Handler) upsertAttendance(c *gin.Context) {
@@ -282,6 +414,7 @@ func (h *Handler) upsertAttendance(c *gin.Context) {
 		if syncErr := h.syncAttendanceToJournalV2(c.Request.Context(), actor, existing); syncErr != nil {
 			// keep attendance write successful even if v2 sync fails
 		}
+		_ = h.notifyAttendanceChanged(c.Request.Context(), existing)
 		c.JSON(http.StatusOK, mapAttendance(existing))
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		if err := tx.Create(&row).Error; err != nil {
@@ -291,6 +424,7 @@ func (h *Handler) upsertAttendance(c *gin.Context) {
 		if syncErr := h.syncAttendanceToJournalV2(c.Request.Context(), actor, row); syncErr != nil {
 			// keep attendance write successful even if v2 sync fails
 		}
+		_ = h.notifyAttendanceChanged(c.Request.Context(), row)
 		c.JSON(http.StatusOK, mapAttendance(row))
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save attendance"})
@@ -519,6 +653,7 @@ func (h *Handler) upsertGrade(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to synchronize attendance"})
 			return
 		}
+		_ = h.notifyGradeChanged(c.Request.Context(), existing)
 		c.JSON(http.StatusOK, mapGrade(existing))
 	case errors.Is(err, gorm.ErrRecordNotFound):
 		if err := tx.Create(&row).Error; err != nil {
@@ -529,6 +664,7 @@ func (h *Handler) upsertGrade(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to synchronize attendance"})
 			return
 		}
+		_ = h.notifyGradeChanged(c.Request.Context(), row)
 		c.JSON(http.StatusOK, mapGrade(row))
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save grade"})
@@ -713,6 +849,9 @@ func (h *Handler) analyticsAttendance(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
 		return
 	}
+	if user.Role == "admin" && !h.requireAdminPermission(c, AdminPermAnalyticsView) {
+		return
+	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBAttendanceRecord{})
 	if group != "" {
@@ -753,6 +892,9 @@ func (h *Handler) analyticsGrades(c *gin.Context) {
 	user := httpMiddleware.CurrentUser(c)
 	if user == nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	if user.Role == "admin" && !h.requireAdminPermission(c, AdminPermAnalyticsView) {
 		return
 	}
 	group := strings.TrimSpace(c.Query("group_name"))
@@ -810,6 +952,7 @@ func (h *Handler) mapRequestTicket(c *gin.Context, ticket persistence.DBRequestT
 		"request_type": ticket.RequestType,
 		"status":       ticket.Status,
 		"details":      nullOrString(ticket.Details),
+		"comment":      nullOrString(ticket.Comment),
 		"creator_role": creatorRole,
 		"created_at":   ticket.CreatedAt.Format(time.RFC3339),
 		"updated_at":   updatedAt.Format(time.RFC3339),
@@ -834,6 +977,101 @@ func mapGrade(row persistence.DBGradeRecord) gin.H {
 		"student_name": row.StudentName,
 		"grade":        row.Grade,
 	}
+}
+
+func (h *Handler) notifyAttendanceChanged(ctx context.Context, row persistence.DBAttendanceRecord) error {
+	studentIDs, err := h.findStudentIDsByNameAndGroup(ctx, row.StudentName, row.GroupName)
+	if err != nil || len(studentIDs) == 0 {
+		return err
+	}
+	recipients := append([]uint{}, studentIDs...)
+	if parentIDs, parentErr := h.parentUserIDsForStudents(ctx, studentIDs); parentErr == nil {
+		recipients = append(recipients, parentIDs...)
+	}
+	recipients = uniqueUintIDs(recipients)
+	if len(recipients) == 0 {
+		return nil
+	}
+	status := "отсутствует"
+	if row.Present {
+		status = "присутствует"
+	}
+	return h.createNotifications(
+		ctx,
+		recipients,
+		"Обновлена посещаемость",
+		"Студент "+row.StudentName+": "+status+" ("+row.GroupName+")",
+		map[string]any{
+			"type":         "attendance_updated",
+			"group_name":   row.GroupName,
+			"class_date":   dateOnly(row.ClassDate),
+			"student_name": row.StudentName,
+			"present":      row.Present,
+		},
+	)
+}
+
+func (h *Handler) notifyGradeChanged(ctx context.Context, row persistence.DBGradeRecord) error {
+	studentIDs, err := h.findStudentIDsByNameAndGroup(ctx, row.StudentName, row.GroupName)
+	if err != nil || len(studentIDs) == 0 {
+		return err
+	}
+	recipients := append([]uint{}, studentIDs...)
+	if parentIDs, parentErr := h.parentUserIDsForStudents(ctx, studentIDs); parentErr == nil {
+		recipients = append(recipients, parentIDs...)
+	}
+	recipients = uniqueUintIDs(recipients)
+	if len(recipients) == 0 {
+		return nil
+	}
+	return h.createNotifications(
+		ctx,
+		recipients,
+		"Обновлена оценка",
+		"Студент "+row.StudentName+": "+strconv.Itoa(row.Grade)+" ("+row.GroupName+")",
+		map[string]any{
+			"type":         "grade_updated",
+			"group_name":   row.GroupName,
+			"class_date":   dateOnly(row.ClassDate),
+			"student_name": row.StudentName,
+			"grade":        row.Grade,
+		},
+	)
+}
+
+func (h *Handler) findStudentIDsByNameAndGroup(ctx context.Context, studentName, groupName string) ([]uint, error) {
+	name := strings.TrimSpace(studentName)
+	group := strings.TrimSpace(groupName)
+	if name == "" {
+		return nil, nil
+	}
+	query := h.db.WithContext(ctx).
+		Model(&persistence.DBUser{}).
+		Where("role = ? AND full_name = ? AND is_approved = ?", "student", name, true)
+	if group != "" {
+		query = query.Where("student_group = ?", group)
+	}
+	var ids []uint
+	if err := query.Pluck("id", &ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func uniqueUintIDs(ids []uint) []uint {
+	seen := map[uint]struct{}{}
+	out := make([]uint, 0, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 func (h *Handler) allowedGroupsForTeacher(c *gin.Context, teacherID uint) ([]string, error) {
@@ -944,6 +1182,18 @@ func (h *Handler) requestHandlerRecipientIDs(ctx context.Context) ([]uint, error
 	if err := h.db.WithContext(ctx).
 		Model(&persistence.DBUser{}).
 		Where("role IN ?", []string{"admin", "request_handler"}).
+		Where("is_approved = ?", true).
+		Pluck("id", &ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func (h *Handler) adminRecipientIDs(ctx context.Context) ([]uint, error) {
+	var ids []uint
+	if err := h.db.WithContext(ctx).
+		Model(&persistence.DBUser{}).
+		Where("role = ?", "admin").
 		Where("is_approved = ?", true).
 		Pluck("id", &ids).Error; err != nil {
 		return nil, err

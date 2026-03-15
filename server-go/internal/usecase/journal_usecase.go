@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -620,8 +621,14 @@ func normalizeRawValue(
 		return "", nil, "", nil
 	}
 	if number, err := strconvToFloat(trimmed); err == nil {
-		if enforceGradeRange && (number < 0 || number > 100) {
-			return "", nil, "", fmt.Errorf("%w: value must be in range 0..100", domainErrors.ErrInvalidInput)
+		if enforceGradeRange {
+			if number < 0 || number > 100 {
+				return "", nil, "", fmt.Errorf("%w: value must be in range 0..100", domainErrors.ErrInvalidInput)
+			}
+			// Journal date cells represent grades and must be integer values only.
+			if math.Mod(number, 1) != 0 {
+				return "", nil, "", fmt.Errorf("%w: grade must be an integer", domainErrors.ErrInvalidInput)
+			}
 		}
 		return trimmed, &number, "", nil
 	}
