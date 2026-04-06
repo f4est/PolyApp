@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/api_client.dart';
+import '../i18n/ui_text.dart';
 import '../widgets/brand_logo.dart';
 import 'journal_date_picker.dart';
 import 'models/journal_models.dart';
@@ -57,7 +58,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
     }
   }
 
-  String _tr(String ru, String en) => _isRu ? ru : en;
+  String _tr(String ru, String en) => trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
 
   @override
   void initState() {
@@ -979,7 +980,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
                                     '${student.name}|${date.key.toString()}';
                                 final mark = byKey[key];
                                 final text = mark == null
-                                    ? '—'
+                                    ? '-'
                                     : (mark.present ? 'P' : 'Н');
                                 final color = mark == null
                                     ? const Color(0xFFF8FAFC)
@@ -1094,3 +1095,4 @@ class _AttendancePanel extends StatelessWidget {
     );
   }
 }
+

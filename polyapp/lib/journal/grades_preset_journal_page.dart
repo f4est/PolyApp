@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../api/api_client.dart';
+import '../i18n/ui_text.dart';
 import '../widgets/brand_logo.dart';
 import 'journal_date_picker.dart';
 import 'services/journal_service.dart';
@@ -144,7 +145,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
     context,
   ).languageCode.toLowerCase().startsWith('ru');
   bool get _syncing => _loading || _saving;
-  String _tr(String ru, String en) => _isRu ? ru : en;
+  String _tr(String ru, String en) => trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
 
   void _markOnline() {
     _online = true;
@@ -1492,7 +1493,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
                                       '$student::${_dateKeyFormat.format(date)}';
                                   final value = dateCellMap[key] ?? '';
                                   return DataCell(
-                                    Text(value.isEmpty ? '—' : value),
+                                    Text(value.isEmpty ? '-' : value),
                                     onTap: widget.canEdit
                                         ? () => _editDateValue(
                                             student,
@@ -1506,7 +1507,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
                                   final key = '$student::${column.key}';
                                   final value = manualCellMap[key] ?? '';
                                   return DataCell(
-                                    Text(value.isEmpty ? '—' : value),
+                                    Text(value.isEmpty ? '-' : value),
                                     onTap: widget.canEdit
                                         ? () => _editManualValue(
                                             student,
@@ -1530,7 +1531,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
                                         color: const Color(0xFFECFDF5),
                                         borderRadius: BorderRadius.circular(8),
                                       ),
-                                      child: Text(value.isEmpty ? '—' : value),
+                                      child: Text(value.isEmpty ? '-' : value),
                                     ),
                                   );
                                 }),
@@ -1711,7 +1712,7 @@ class _PresetLibraryPageState extends State<PresetLibraryPage> {
   bool get _isRu => Localizations.localeOf(
     context,
   ).languageCode.toLowerCase().startsWith('ru');
-  String _tr(String ru, String en) => _isRu ? ru : en;
+  String _tr(String ru, String en) => trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
 
   @override
   void initState() {
@@ -1978,7 +1979,7 @@ class _PresetDetailsPageState extends State<PresetDetailsPage> {
   bool get _isRu => Localizations.localeOf(
     context,
   ).languageCode.toLowerCase().startsWith('ru');
-  String _tr(String ru, String en) => _isRu ? ru : en;
+  String _tr(String ru, String en) => trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
 
   GradingPresetVersion? get _version => _preset?.currentVersion;
 
@@ -2103,7 +2104,7 @@ class _PresetDetailsPageState extends State<PresetDetailsPage> {
                           _MetaChip(
                             label: _tr('Версия', 'Version'),
                             value: version == null
-                                ? '—'
+                                ? '-'
                                 : 'v${version.version}',
                           ),
                         ],
@@ -2132,7 +2133,7 @@ class _PresetDetailsPageState extends State<PresetDetailsPage> {
                                   title: Text(variable.title),
                                   subtitle: Text(variable.key),
                                   trailing: Text(
-                                    variable.defaultValue?.toString() ?? '—',
+                                    variable.defaultValue?.toString() ?? '-',
                                   ),
                                 ),
                               )
@@ -2175,7 +2176,7 @@ class _PresetDetailsPageState extends State<PresetDetailsPage> {
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
-                                        '${_tr('Числовой эквивалент', 'Numeric value')}: ${status.numericValue?.toString() ?? '—'}',
+                                        '${_tr('Числовой эквивалент', 'Numeric value')}: ${status.numericValue?.toString() ?? '-'}',
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
@@ -2307,7 +2308,7 @@ class _PresetEditorPageState extends State<PresetEditorPage> {
   bool get _isRu => Localizations.localeOf(
     context,
   ).languageCode.toLowerCase().startsWith('ru');
-  String _tr(String ru, String en) => _isRu ? ru : en;
+  String _tr(String ru, String en) => trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
 
   @override
   void initState() {
@@ -3455,7 +3456,7 @@ class _PresetEditorPageState extends State<PresetEditorPage> {
           for (final item in items)
             Padding(
               padding: const EdgeInsets.only(bottom: 5),
-              child: Text('• $item'),
+              child: Text('- $item'),
             ),
           const SizedBox(height: 8),
           Text(
@@ -3736,3 +3737,4 @@ class _ErrorCard extends StatelessWidget {
     );
   }
 }
+

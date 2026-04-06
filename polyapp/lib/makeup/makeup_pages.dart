@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../api/api_client.dart';
 import '../journal/journal_date_picker.dart';
+import '../i18n/ui_text.dart';
 
 const List<String> kMakeupStatuses = [
   'awaiting_proof',
@@ -18,20 +19,20 @@ const List<String> kMakeupStatuses = [
   'rejected',
 ];
 
-String makeupStatusLabel(String status, bool isRu) {
+String makeupStatusLabel(String status, String localeCode) {
   switch (status) {
     case 'awaiting_proof':
-      return isRu ? 'Ожидает справку' : 'Awaiting proof';
+      return trTextByCode(localeCode, 'Ожидает справку', 'Awaiting proof');
     case 'proof_submitted':
-      return isRu ? 'Справка отправлена' : 'Proof submitted';
+      return trTextByCode(localeCode, 'Справка отправлена', 'Proof submitted');
     case 'task_assigned':
-      return isRu ? 'Задание назначено' : 'Task assigned';
+      return trTextByCode(localeCode, 'Задание назначено', 'Task assigned');
     case 'submission_sent':
-      return isRu ? 'Работа отправлена' : 'Submission sent';
+      return trTextByCode(localeCode, 'Работа отправлена', 'Submission sent');
     case 'graded':
-      return isRu ? 'Оценено' : 'Graded';
+      return trTextByCode(localeCode, 'Оценено', 'Graded');
     case 'rejected':
-      return isRu ? 'Отклонено' : 'Rejected';
+      return trTextByCode(localeCode, 'Отклонено', 'Rejected');
     default:
       return status;
   }
@@ -174,7 +175,7 @@ class _MakeupWorkspacePageState extends State<MakeupWorkspacePage> {
   bool get _canManage =>
       widget.currentUser.role == 'teacher' ||
       widget.currentUser.role == 'admin';
-  String _t(String ru, String en) => _isRu ? ru : en;
+  String _t(String ru, String en) => trTextByCode(widget.locale.languageCode, ru, en);
 
   @override
   void initState() {
@@ -459,7 +460,7 @@ class _MakeupWorkspacePageState extends State<MakeupWorkspacePage> {
                         for (final status in kMakeupStatuses)
                           DropdownMenuItem(
                             value: status,
-                            child: Text(makeupStatusLabel(status, _isRu)),
+                            child: Text(makeupStatusLabel(status, widget.locale.languageCode)),
                           ),
                       ],
                       onChanged: (value) {
@@ -517,7 +518,7 @@ class _MakeupWorkspacePageState extends State<MakeupWorkspacePage> {
                         ),
                         title: Text('${item.groupName} - ${item.studentName}'),
                         subtitle: Text(
-                          '${_dateFormat.format(item.classDate)}\n${makeupStatusLabel(item.status, _isRu)}',
+                          '${_dateFormat.format(item.classDate)}\n${makeupStatusLabel(item.status, widget.locale.languageCode)}',
                         ),
                         trailing: IconButton(
                           icon: const Icon(Icons.open_in_new),
@@ -589,7 +590,7 @@ class _MakeupCaseDetailScreenState extends State<MakeupCaseDetailScreen> {
   Timer? _autoRefreshTimer;
 
   bool get _isRu => widget.locale.languageCode == 'ru';
-  String _t(String ru, String en) => _isRu ? ru : en;
+  String _t(String ru, String en) => trTextByCode(widget.locale.languageCode, ru, en);
   bool get _canTeacherEdit =>
       widget.currentUser.role == 'teacher' ||
       widget.currentUser.role == 'admin';
@@ -1192,7 +1193,7 @@ class _MakeupCaseDetailScreenState extends State<MakeupCaseDetailScreen> {
         border: Border.all(color: color.withValues(alpha: 0.35)),
       ),
       child: Text(
-        makeupStatusLabel(status, _isRu),
+        makeupStatusLabel(status, widget.locale.languageCode),
         style: TextStyle(color: color, fontWeight: FontWeight.w700),
       ),
     );
@@ -1486,7 +1487,7 @@ class _MakeupCaseDetailScreenState extends State<MakeupCaseDetailScreen> {
                                     DropdownMenuItem(
                                       value: status,
                                       child: Text(
-                                        makeupStatusLabel(status, _isRu),
+                                        makeupStatusLabel(status, widget.locale.languageCode),
                                       ),
                                     ),
                                 ],
@@ -1788,7 +1789,7 @@ class UserPublicProfileScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isRu = locale.languageCode == 'ru';
-    String t(String ru, String en) => isRu ? ru : en;
+    String t(String ru, String en) => trTextByCode(locale.languageCode, ru, en);
     return ModulePanel(
       title: t('Профиль пользователя', 'User profile'),
       subtitle: t('Публичная информация пользователя.', 'Public user info.'),
@@ -1913,7 +1914,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
   String? _journalGroup;
 
   bool get _isRu => widget.locale.languageCode == 'ru';
-  String _t(String ru, String en) => _isRu ? ru : en;
+  String _t(String ru, String en) => trTextByCode(widget.locale.languageCode, ru, en);
   String _readError(Object error) => widget.errorText(error);
   bool get _isSuperAdmin =>
       widget.currentUser.adminPermissions.isEmpty ||
@@ -5377,7 +5378,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                       for (final status in kMakeupStatuses)
                         DropdownMenuItem(
                           value: status,
-                          child: Text(makeupStatusLabel(status, _isRu)),
+                          child: Text(makeupStatusLabel(status, widget.locale.languageCode)),
                         ),
                     ],
                     onChanged: (value) {
@@ -5410,7 +5411,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                                 '${item.groupName} - ${item.studentName}',
                               ),
                               subtitle: Text(
-                                '${DateFormat('dd.MM.yyyy').format(item.classDate)} / ${makeupStatusLabel(item.status, _isRu)}',
+                                '${DateFormat('dd.MM.yyyy').format(item.classDate)} / ${makeupStatusLabel(item.status, widget.locale.languageCode)}',
                               ),
                               onTap: () {
                                 Navigator.of(context).push(
@@ -5866,3 +5867,4 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     );
   }
 }
+

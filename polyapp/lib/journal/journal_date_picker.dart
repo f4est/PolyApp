@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:table_calendar/table_calendar.dart';
+import '../i18n/ui_text.dart';
 
 Future<List<DateTime>?> showJournalMultiDatePicker(
   BuildContext context, {
@@ -60,7 +61,17 @@ class _JournalDatePickerDialogState extends State<JournalDatePickerDialog> {
   String _selectionMode = 'single'; // 'single', 'multiple', 'range'
 
   bool get _isRu => (widget.locale?.languageCode ?? 'ru') == 'ru';
-  String _t(String ru, String en) => _isRu ? ru : en;
+  String _t(String ru, String en) => trTextByCode(widget.locale?.languageCode ?? 'ru', ru, en);
+  String _intlLocale() {
+    final code = (widget.locale?.languageCode ?? 'ru').toLowerCase();
+    if (code == 'ru') return 'ru_RU';
+    if (code == 'kk') return 'kk_KZ';
+    if (code == 'fr') return 'fr_FR';
+    if (code == 'de') return 'de_DE';
+    if (code == 'hi') return 'hi_IN';
+    if (code == 'zh') return 'zh_CN';
+    return 'en_US';
+  }
 
   @override
   void initState() {
@@ -243,7 +254,7 @@ class _JournalDatePickerDialogState extends State<JournalDatePickerDialog> {
                             : null,
                         calendarFormat: CalendarFormat.month,
                         startingDayOfWeek: StartingDayOfWeek.monday,
-                        locale: _isRu ? 'ru_RU' : 'en_US',
+                        locale: _intlLocale(),
                       )
                     : KeyboardListener(
                         focusNode: FocusNode()..requestFocus(),
@@ -306,7 +317,7 @@ class _JournalDatePickerDialogState extends State<JournalDatePickerDialog> {
                           onDaySelected: _onDaySelected,
                           calendarFormat: CalendarFormat.month,
                           startingDayOfWeek: StartingDayOfWeek.monday,
-                          locale: _isRu ? 'ru_RU' : 'en_US',
+                          locale: _intlLocale(),
                         ),
                       ),
               ),
@@ -399,3 +410,4 @@ class _JournalDatePickerDialogState extends State<JournalDatePickerDialog> {
     });
   }
 }
+

@@ -25,10 +25,11 @@ import 'journal/grades_preset_journal_page.dart';
 import 'makeup/makeup_pages.dart';
 import 'analytics/analytics_workspace_page.dart';
 import 'widgets/brand_logo.dart';
+import 'i18n/ui_text.dart';
 
 const String apiBaseUrl = String.fromEnvironment(
   'API_BASE_URL',
-  defaultValue: 'http://192.168.0.150:8000',
+  defaultValue: 'http://localhost:8000',
 );
 
 const Color kBrandPrimary = Color(0xFF0F766E);
@@ -410,7 +411,15 @@ class AppLocalizations {
 
   final Locale locale;
 
-  static const supportedLocales = [Locale('ru'), Locale('en')];
+  static const supportedLocales = [
+    Locale('ru'),
+    Locale('en'),
+    Locale('kk'),
+    Locale('fr'),
+    Locale('de'),
+    Locale('hi'),
+    Locale('zh'),
+  ];
 
   static const Map<String, Map<String, String>> _strings = {
     'ru': {
@@ -445,6 +454,12 @@ class AppLocalizations {
       'language_ru': '\u0420\u0443\u0441\u0441\u043a\u0438\u0439',
       'language_en':
           '\u0410\u043d\u0433\u043b\u0438\u0439\u0441\u043a\u0438\u0439',
+      'language_kk': '\u041a\u0430\u0437\u0430\u0445\u0441\u043a\u0438\u0439',
+      'language_fr':
+          '\u0424\u0440\u0430\u043d\u0446\u0443\u0437\u0441\u043a\u0438\u0439',
+      'language_de': '\u041d\u0435\u043c\u0435\u0446\u043a\u0438\u0439',
+      'language_hi': '\u0425\u0438\u043d\u0434\u0438',
+      'language_zh': '\u041a\u0438\u0442\u0430\u0439\u0441\u043a\u0438\u0439',
       'settings': '\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438',
       'password_strength_weak':
           '\u0421\u043b\u0430\u0431\u044b\u0439 \u043f\u0430\u0440\u043e\u043b\u044c',
@@ -535,6 +550,11 @@ class AppLocalizations {
       'language': 'Language',
       'language_ru': 'Russian',
       'language_en': 'English',
+      'language_kk': 'Kazakh',
+      'language_fr': 'French',
+      'language_de': 'German',
+      'language_hi': 'Hindi',
+      'language_zh': 'Chinese',
       'settings': 'Settings',
       'password_strength_weak': 'Weak password',
       'password_strength_medium': 'Medium password',
@@ -576,6 +596,417 @@ class AppLocalizations {
       'notifications_read_action': 'Read',
       'notifications_delete': 'Delete',
       'notifications_unread': 'New',
+    },
+    'kk': {
+      'auth_title_login': '\u041a\u0456\u0440\u0443',
+      'auth_title_register': '\u0422\u0456\u0440\u043a\u0435\u043b\u0443',
+      'auth_subtitle_login':
+          '\u049a\u0430\u0439\u0442\u0430 \u043a\u0435\u043b\u0434\u0456\u04a3\u0456\u0437',
+      'auth_subtitle_register':
+          '\u0421\u0442\u0443\u0434\u0435\u043d\u0442 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u044b\u043d \u0436\u0430\u0441\u0430\u04a3\u044b\u0437',
+      'full_name':
+          '\u0422\u043e\u043b\u044b\u049b \u0430\u0442\u044b-\u0436\u04e9\u043d\u0456',
+      'email': 'Email',
+      'password': '\u049a\u04b1\u043f\u0438\u044f \u0441\u04e9\u0437',
+      'confirm_password':
+          '\u049a\u04b1\u043f\u0438\u044f \u0441\u04e9\u0437\u0434\u0456 \u0440\u0430\u0441\u0442\u0430\u04a3\u044b\u0437',
+      'sign_in': '\u041a\u0456\u0440\u0443',
+      'create_account':
+          '\u0410\u043a\u043a\u0430\u0443\u043d\u0442 \u0436\u0430\u0441\u0430\u0443',
+      'have_account':
+          '\u041c\u0435\u043d\u0434\u0435 \u0430\u043a\u043a\u0430\u0443\u043d\u0442 \u0431\u0430\u0440',
+      'create_new_account':
+          '\u0416\u0430\u04a3\u0430 \u0430\u043a\u043a\u0430\u0443\u043d\u0442 \u0436\u0430\u0441\u0430\u0443',
+      'forgot_password':
+          '\u049a\u04b1\u043f\u0438\u044f \u0441\u04e9\u0437\u0434\u0456 \u04b1\u043c\u044b\u0442\u0442\u044b\u04a3\u044b\u0437 \u0431\u0430?',
+      'reset_password':
+          '\u049a\u04b1\u043f\u0438\u044f \u0441\u04e9\u0437\u0434\u0456 \u049b\u0430\u0439\u0442\u0430 \u043e\u0440\u043d\u0430\u0442\u0443',
+      'reset_desc':
+          'Email \u043f\u043e\u0448\u0442\u0430\u04a3\u044b\u0437\u0493\u0430 \u049b\u0430\u043b\u043f\u044b\u043d\u0430 \u043a\u0435\u043b\u0442\u0456\u0440\u0443 \u0441\u0456\u043b\u0442\u0435\u043c\u0435\u0441\u0456\u043d \u0436\u0456\u0431\u0435\u0440\u0435\u043c\u0456\u0437.',
+      'send_reset':
+          '\u049a\u0430\u043b\u043f\u044b\u043d\u0430 \u043a\u0435\u043b\u0442\u0456\u0440\u0443 \u0445\u0430\u0442\u044b\u043d \u0436\u0456\u0431\u0435\u0440\u0443',
+      'language': '\u0422\u0456\u043b',
+      'language_ru': '\u041e\u0440\u044b\u0441 \u0442\u0456\u043b\u0456',
+      'language_en':
+          '\u0410\u0493\u044b\u043b\u0448\u044b\u043d \u0442\u0456\u043b\u0456',
+      'language_kk': '\u049a\u0430\u0437\u0430\u049b \u0442\u0456\u043b\u0456',
+      'language_fr':
+          '\u0424\u0440\u0430\u043d\u0446\u0443\u0437 \u0442\u0456\u043b\u0456',
+      'language_de': '\u041d\u0435\u043c\u0456\u0441 \u0442\u0456\u043b\u0456',
+      'language_hi': '\u0425\u0438\u043d\u0434\u0438',
+      'language_zh': '\u049a\u044b\u0442\u0430\u0439 \u0442\u0456\u043b\u0456',
+      'settings': '\u0411\u0430\u043f\u0442\u0430\u0443\u043b\u0430\u0440',
+      'password_strength_weak':
+          '\u04d8\u043b\u0441\u0456\u0437 \u049b\u04b1\u043f\u0438\u044f \u0441\u04e9\u0437',
+      'password_strength_medium':
+          '\u041e\u0440\u0442\u0430\u0448\u0430 \u049b\u04b1\u043f\u0438\u044f \u0441\u04e9\u0437',
+      'password_strength_strong':
+          '\u041a\u04af\u0448\u0442\u0456 \u049b\u04b1\u043f\u0438\u044f \u0441\u04e9\u0437',
+      'password_hint':
+          '\u041a\u0435\u043c\u0456\u043d\u0434\u0435 8 \u0431\u0435\u043b\u0433\u0456, \u04d9\u0440\u0456\u043f\u0442\u0435\u0440 \u043c\u0435\u043d \u0441\u0430\u043d\u0434\u0430\u0440',
+      'passwords_mismatch':
+          '\u049a\u04b1\u043f\u0438\u044f \u0441\u04e9\u0437\u0434\u0435\u0440 \u0441\u04d9\u0439\u043a\u0435\u0441 \u0435\u043c\u0435\u0441',
+      'email_required':
+          'Email \u043c\u0456\u043d\u0434\u0435\u0442\u0442\u0456',
+      'password_required':
+          '\u049a\u04b1\u043f\u0438\u044f \u0441\u04e9\u0437 \u043c\u0456\u043d\u0434\u0435\u0442\u0442\u0456',
+      'name_required':
+          '\u0422\u043e\u043b\u044b\u049b \u0430\u0442\u044b-\u0436\u04e9\u043d\u0456 \u043c\u0456\u043d\u0434\u0435\u0442\u0442\u0456',
+      'auth_error':
+          '\u041a\u0456\u0440\u0443 \u0441\u04d9\u0442\u0441\u0456\u0437. Email \u043c\u0435\u043d \u049b\u04b1\u043f\u0438\u044f \u0441\u04e9\u0437\u0434\u0456 \u0442\u0435\u043a\u0441\u0435\u0440\u0456\u04a3\u0456\u0437.',
+      'reset_sent':
+          '\u049a\u0430\u043b\u043f\u044b\u043d\u0430 \u043a\u0435\u043b\u0442\u0456\u0440\u0443 \u0445\u0430\u0442\u044b \u0436\u0456\u0431\u0435\u0440\u0456\u043b\u0434\u0456.',
+      'profile_title': '\u041f\u0440\u043e\u0444\u0438\u043b\u044c',
+      'save_profile': '\u0421\u0430\u049b\u0442\u0430\u0443',
+      'profile_edit': '\u04e8\u04a3\u0434\u0435\u0443',
+      'role_label': '\u0420\u04e9\u043b',
+      'contact_info': '\u0411\u0430\u0439\u043b\u0430\u043d\u044b\u0441',
+      'account_info': '\u0410\u043a\u043a\u0430\u0443\u043d\u0442',
+      'preferences': '\u049b\u0430\u043b\u0430\u0443\u043b\u0430\u0440',
+      'notifications':
+          '\u0425\u0430\u0431\u0430\u0440\u043b\u0430\u043c\u0430\u043b\u0430\u0440',
+      'schedule_updates':
+          '\u041a\u0435\u0441\u0442\u0435 \u0436\u0430\u04a3\u0430\u0440\u0442\u0443\u043b\u0430\u0440\u044b',
+      'request_updates':
+          '\u04e8\u0442\u0456\u043d\u0456\u0448 \u0436\u0430\u04a3\u0430\u0440\u0442\u0443\u043b\u0430\u0440\u044b',
+      'security':
+          '\u049a\u0430\u0443\u0456\u043f\u0441\u0456\u0437\u0434\u0456\u043a',
+      'logout': '\u0428\u044b\u0493\u0443',
+      'birth_date_label':
+          '\u0422\u0443\u0493\u0430\u043d \u043a\u04af\u043d\u0456 (YYYY-MM-DD)',
+      'group_label': '\u0422\u043e\u043f',
+      'phone_label': '\u0422\u0435\u043b\u0435\u0444\u043e\u043d',
+      'teacher_name_label':
+          '\u041e\u049b\u044b\u0442\u0443\u0448\u044b \u0430\u0442\u044b-\u0436\u04e9\u043d\u0456',
+      'profile_saved':
+          '\u041f\u0440\u043e\u0444\u0438\u043b\u044c \u0436\u0430\u04a3\u0430\u0440\u0442\u044b\u043b\u0434\u044b.',
+      'birth_date_invalid':
+          '\u0422\u0443\u0493\u0430\u043d \u043a\u04af\u043d\u0456 YYYY-MM-DD \u0444\u043e\u0440\u043c\u0430\u0442\u044b\u043d\u0434\u0430 \u0431\u043e\u043b\u0443\u044b \u043a\u0435\u0440\u0435\u043a.',
+      'profile_stats_group': '\u0422\u043e\u043f',
+      'profile_stats_role': '\u0420\u04e9\u043b',
+      'profile_stats_phone': '\u0422\u0435\u043b\u0435\u0444\u043e\u043d',
+      'group_not_set':
+          '\u041a\u04e9\u0440\u0441\u0435\u0442\u0456\u043b\u043c\u0435\u0433\u0435\u043d',
+      'teacher_not_set':
+          '\u041a\u04e9\u0440\u0441\u0435\u0442\u0456\u043b\u043c\u0435\u0433\u0435\u043d',
+      'reset_password_action':
+          '\u049a\u04b1\u043f\u0438\u044f \u0441\u04e9\u0437\u0434\u0456 \u049b\u0430\u0439\u0442\u0430 \u043e\u0440\u043d\u0430\u0442\u0443',
+      'notifications_title':
+          '\u0425\u0430\u0431\u0430\u0440\u043b\u0430\u043c\u0430\u043b\u0430\u0440',
+      'notifications_empty':
+          '\u04d8\u0437\u0456\u0440\u0433\u0435 \u0445\u0430\u0431\u0430\u0440\u043b\u0430\u043c\u0430 \u0436\u043e\u049b',
+      'notifications_mark_read':
+          '\u041e\u049b\u044b\u043b\u0493\u0430\u043d \u0434\u0435\u043f \u0431\u0435\u043b\u0433\u0456\u043b\u0435\u0443',
+      'notifications_read_action': '\u041e\u049b\u0443',
+      'notifications_delete': '\u04e8\u0448\u0456\u0440\u0443',
+      'notifications_unread': '\u0416\u0430\u04a3\u0430',
+    },
+    'fr': {
+      'auth_title_login': 'Connexion',
+      'auth_title_register': 'Creer un compte',
+      'auth_subtitle_login': 'Bon retour',
+      'auth_subtitle_register': 'Creez un compte etudiant',
+      'full_name': 'Nom complet',
+      'email': 'E-mail',
+      'password': 'Mot de passe',
+      'confirm_password': 'Confirmer le mot de passe',
+      'sign_in': 'Se connecter',
+      'create_account': 'Creer un compte',
+      'have_account': 'J ai deja un compte',
+      'create_new_account': 'Creer un nouveau compte',
+      'forgot_password': 'Mot de passe oublie ?',
+      'reset_password': 'Reinitialiser le mot de passe',
+      'reset_desc':
+          'Nous enverrons un lien de reinitialisation a votre e-mail.',
+      'send_reset': 'Envoyer l e-mail de reinitialisation',
+      'language': 'Langue',
+      'language_ru': 'Russe',
+      'language_en': 'Anglais',
+      'language_kk': 'Kazakh',
+      'language_fr': 'Francais',
+      'language_de': 'Allemand',
+      'language_hi': 'Hindi',
+      'language_zh': 'Chinois',
+      'settings': 'Parametres',
+      'password_strength_weak': 'Mot de passe faible',
+      'password_strength_medium': 'Mot de passe moyen',
+      'password_strength_strong': 'Mot de passe fort',
+      'password_hint': 'Au moins 8 caracteres, lettres et chiffres',
+      'passwords_mismatch': 'Les mots de passe ne correspondent pas',
+      'email_required': 'L e-mail est requis',
+      'password_required': 'Le mot de passe est requis',
+      'name_required': 'Le nom complet est requis',
+      'auth_error': 'Echec de connexion. Verifiez l e-mail et le mot de passe.',
+      'reset_sent':
+          'E-mail de reinitialisation envoye. Verifiez votre boite de reception.',
+      'profile_title': 'Profil',
+      'save_profile': 'Enregistrer',
+      'profile_edit': 'Modifier',
+      'role_label': 'Role',
+      'contact_info': 'Contact',
+      'account_info': 'Compte',
+      'preferences': 'Preferences',
+      'notifications': 'Notifications',
+      'schedule_updates': 'Mises a jour de l emploi du temps',
+      'request_updates': 'Mises a jour des demandes',
+      'security': 'Securite',
+      'logout': 'Se deconnecter',
+      'birth_date_label': 'Date de naissance (YYYY-MM-DD)',
+      'group_label': 'Groupe',
+      'phone_label': 'Telephone',
+      'teacher_name_label': 'Nom de l enseignant',
+      'profile_saved': 'Profil mis a jour.',
+      'birth_date_invalid':
+          'La date de naissance doit etre au format YYYY-MM-DD.',
+      'profile_stats_group': 'Groupe',
+      'profile_stats_role': 'Role',
+      'profile_stats_phone': 'Telephone',
+      'group_not_set': 'Non defini',
+      'teacher_not_set': 'Non defini',
+      'reset_password_action': 'Reinitialiser le mot de passe',
+      'notifications_title': 'Notifications',
+      'notifications_empty': 'Aucune notification pour le moment',
+      'notifications_mark_read': 'Marquer comme lu',
+      'notifications_read_action': 'Lire',
+      'notifications_delete': 'Supprimer',
+      'notifications_unread': 'Nouveau',
+    },
+    'de': {
+      'auth_title_login': 'Anmelden',
+      'auth_title_register': 'Konto erstellen',
+      'auth_subtitle_login': 'Willkommen zuruck',
+      'auth_subtitle_register': 'Erstelle ein Studenten-Konto',
+      'full_name': 'Vollstandiger Name',
+      'email': 'E-Mail',
+      'password': 'Passwort',
+      'confirm_password': 'Passwort bestatigen',
+      'sign_in': 'Anmelden',
+      'create_account': 'Konto erstellen',
+      'have_account': 'Ich habe bereits ein Konto',
+      'create_new_account': 'Neues Konto erstellen',
+      'forgot_password': 'Passwort vergessen?',
+      'reset_password': 'Passwort zurucksetzen',
+      'reset_desc': 'Wir senden einen Link zum Zurucksetzen an deine E-Mail.',
+      'send_reset': 'Zurucksetzungs-E-Mail senden',
+      'language': 'Sprache',
+      'language_ru': 'Russisch',
+      'language_en': 'Englisch',
+      'language_kk': 'Kasachisch',
+      'language_fr': 'Franzosisch',
+      'language_de': 'Deutsch',
+      'language_hi': 'Hindi',
+      'language_zh': 'Chinesisch',
+      'settings': 'Einstellungen',
+      'password_strength_weak': 'Schwaches Passwort',
+      'password_strength_medium': 'Mittleres Passwort',
+      'password_strength_strong': 'Starkes Passwort',
+      'password_hint': 'Mindestens 8 Zeichen, Buchstaben und Zahlen',
+      'passwords_mismatch': 'Passworter stimmen nicht uberein',
+      'email_required': 'E-Mail ist erforderlich',
+      'password_required': 'Passwort ist erforderlich',
+      'name_required': 'Vollstandiger Name ist erforderlich',
+      'auth_error': 'Anmeldung fehlgeschlagen. E-Mail und Passwort prufen.',
+      'reset_sent': 'Zurucksetzungs-E-Mail gesendet. Posteingang prufen.',
+      'profile_title': 'Profil',
+      'save_profile': 'Speichern',
+      'profile_edit': 'Bearbeiten',
+      'role_label': 'Rolle',
+      'contact_info': 'Kontakt',
+      'account_info': 'Konto',
+      'preferences': 'Einstellungen',
+      'notifications': 'Benachrichtigungen',
+      'schedule_updates': 'Stundenplan-Updates',
+      'request_updates': 'Anfrage-Updates',
+      'security': 'Sicherheit',
+      'logout': 'Abmelden',
+      'birth_date_label': 'Geburtsdatum (YYYY-MM-DD)',
+      'group_label': 'Gruppe',
+      'phone_label': 'Telefon',
+      'teacher_name_label': 'Name des Lehrers',
+      'profile_saved': 'Profil aktualisiert.',
+      'birth_date_invalid': 'Geburtsdatum muss im Format YYYY-MM-DD sein.',
+      'profile_stats_group': 'Gruppe',
+      'profile_stats_role': 'Rolle',
+      'profile_stats_phone': 'Telefon',
+      'group_not_set': 'Nicht gesetzt',
+      'teacher_not_set': 'Nicht gesetzt',
+      'reset_password_action': 'Passwort zurucksetzen',
+      'notifications_title': 'Benachrichtigungen',
+      'notifications_empty': 'Noch keine Benachrichtigungen',
+      'notifications_mark_read': 'Als gelesen markieren',
+      'notifications_read_action': 'Lesen',
+      'notifications_delete': 'Loschen',
+      'notifications_unread': 'Neu',
+    },
+    'hi': {
+      'auth_title_login': '\u0932\u0949\u0917 \u0907\u0928',
+      'auth_title_register':
+          '\u0916\u093e\u0924\u093e \u092c\u0928\u093e\u090f\u0902',
+      'auth_subtitle_login':
+          '\u0935\u093e\u092a\u0938 \u0938\u094d\u0935\u093e\u0917\u0924 \u0939\u0948',
+      'auth_subtitle_register':
+          '\u090f\u0915 \u091b\u093e\u0924\u094d\u0930 \u0916\u093e\u0924\u093e \u092c\u0928\u093e\u090f\u0902',
+      'full_name': '\u092a\u0942\u0930\u093e \u0928\u093e\u092e',
+      'email': '\u0908\u092e\u0947\u0932',
+      'password': '\u092a\u093e\u0938\u0935\u0930\u094d\u0921',
+      'confirm_password':
+          '\u092a\u093e\u0938\u0935\u0930\u094d\u0921 \u0915\u0940 \u092a\u0941\u0937\u094d\u091f\u093f \u0915\u0930\u0947\u0902',
+      'sign_in': '\u0932\u0949\u0917 \u0907\u0928',
+      'create_account':
+          '\u0916\u093e\u0924\u093e \u092c\u0928\u093e\u090f\u0902',
+      'have_account':
+          '\u092e\u0947\u0930\u0947 \u092a\u093e\u0938 \u092a\u0939\u0932\u0947 \u0938\u0947 \u0916\u093e\u0924\u093e \u0939\u0948',
+      'create_new_account':
+          '\u0928\u092f\u093e \u0916\u093e\u0924\u093e \u092c\u0928\u093e\u090f\u0902',
+      'forgot_password':
+          '\u092a\u093e\u0938\u0935\u0930\u094d\u0921 \u092d\u0942\u0932 \u0917\u090f?',
+      'reset_password':
+          '\u092a\u093e\u0938\u0935\u0930\u094d\u0921 \u0930\u0940\u0938\u0947\u091f \u0915\u0930\u0947\u0902',
+      'reset_desc':
+          '\u0939\u092e \u0906\u092a\u0915\u0947 \u0908\u092e\u0947\u0932 \u092a\u0930 \u092a\u093e\u0938\u0935\u0930\u094d\u0921 \u0930\u0940\u0938\u0947\u091f \u0932\u093f\u0902\u0915 \u092d\u0947\u091c\u0947\u0902\u0917\u0947\u0964',
+      'send_reset':
+          '\u0930\u0940\u0938\u0947\u091f \u0908\u092e\u0947\u0932 \u092d\u0947\u091c\u0947\u0902',
+      'language': '\u092d\u093e\u0937\u093e',
+      'language_ru': '\u0930\u0942\u0938\u0940',
+      'language_en': '\u0905\u0902\u0917\u094d\u0930\u0947\u091c\u093c\u0940',
+      'language_kk': '\u0915\u091c\u093c\u093e\u0916',
+      'language_fr': '\u092b\u093c\u094d\u0930\u0947\u0902\u091a',
+      'language_de': '\u091c\u0930\u094d\u092e\u0928',
+      'language_hi': '\u0939\u093f\u0902\u0926\u0940',
+      'language_zh': '\u091a\u0940\u0928\u0940',
+      'settings': '\u0938\u0947\u091f\u093f\u0902\u0917\u094d\u0938',
+      'password_strength_weak':
+          '\u0915\u092e\u091c\u094b\u0930 \u092a\u093e\u0938\u0935\u0930\u094d\u0921',
+      'password_strength_medium':
+          '\u092e\u0927\u094d\u092f\u092e \u092a\u093e\u0938\u0935\u0930\u094d\u0921',
+      'password_strength_strong':
+          '\u092e\u091c\u092c\u0942\u0924 \u092a\u093e\u0938\u0935\u0930\u094d\u0921',
+      'password_hint':
+          '\u0915\u092e \u0938\u0947 \u0915\u092e 8 \u0905\u0915\u094d\u0937\u0930, \u0905\u0915\u094d\u0937\u0930 \u0914\u0930 \u0905\u0902\u0915',
+      'passwords_mismatch':
+          '\u092a\u093e\u0938\u0935\u0930\u094d\u0921 \u092e\u0947\u0932 \u0928\u0939\u0940\u0902 \u0916\u093e\u0924\u0947',
+      'email_required':
+          '\u0908\u092e\u0947\u0932 \u0906\u0935\u0936\u094d\u092f\u0915 \u0939\u0948',
+      'password_required':
+          '\u092a\u093e\u0938\u0935\u0930\u094d\u0921 \u0906\u0935\u0936\u094d\u092f\u0915 \u0939\u0948',
+      'name_required':
+          '\u092a\u0942\u0930\u093e \u0928\u093e\u092e \u0906\u0935\u0936\u094d\u092f\u0915 \u0939\u0948',
+      'auth_error':
+          '\u0932\u0949\u0917 \u0907\u0928 \u0935\u093f\u092b\u0932 \u0930\u0939\u093e\u0964 \u0908\u092e\u0947\u0932 \u0914\u0930 \u092a\u093e\u0938\u0935\u0930\u094d\u0921 \u091c\u093e\u0902\u091a\u0947\u0902\u0964',
+      'reset_sent':
+          '\u0930\u0940\u0938\u0947\u091f \u0908\u092e\u0947\u0932 \u092d\u0947\u091c \u0926\u0940 \u0917\u0908\u0964',
+      'profile_title': '\u092a\u094d\u0930\u094b\u092b\u093e\u0907\u0932',
+      'save_profile': '\u0938\u0947\u0935 \u0915\u0930\u0947\u0902',
+      'profile_edit':
+          '\u0938\u0902\u092a\u093e\u0926\u093f\u0924 \u0915\u0930\u0947\u0902',
+      'role_label': '\u092d\u0942\u092e\u093f\u0915\u093e',
+      'contact_info': '\u0938\u0902\u092a\u0930\u094d\u0915',
+      'account_info': '\u0916\u093e\u0924\u093e',
+      'preferences': '\u092a\u0938\u0902\u0926\u0947\u0902',
+      'notifications': '\u0938\u0942\u091a\u0928\u093e\u090f\u0902',
+      'schedule_updates':
+          '\u0938\u092e\u092f\u0938\u093e\u0930\u0923\u0940 \u0905\u092a\u0921\u0947\u091f',
+      'request_updates':
+          '\u0905\u0928\u0941\u0930\u094b\u0927 \u0905\u092a\u0921\u0947\u091f',
+      'security': '\u0938\u0941\u0930\u0915\u094d\u0937\u093e',
+      'logout': '\u0932\u0949\u0917 \u0906\u0909\u091f',
+      'birth_date_label':
+          '\u091c\u0928\u094d\u092e \u0924\u093f\u0925\u093f (YYYY-MM-DD)',
+      'group_label': '\u0917\u094d\u0930\u0941\u092a',
+      'phone_label': '\u092b\u094b\u0928',
+      'teacher_name_label':
+          '\u0936\u093f\u0915\u094d\u0937\u0915 \u0915\u093e \u0928\u093e\u092e',
+      'profile_saved':
+          '\u092a\u094d\u0930\u094b\u092b\u093e\u0907\u0932 \u0905\u092a\u0921\u0947\u091f \u0939\u094b \u0917\u0908\u0964',
+      'birth_date_invalid':
+          '\u091c\u0928\u094d\u092e \u0924\u093f\u0925\u093f YYYY-MM-DD \u092b\u0949\u0930\u094d\u092e\u0948\u091f \u092e\u0947\u0902 \u0939\u094b\u0928\u0940 \u091a\u093e\u0939\u093f\u090f\u0964',
+      'profile_stats_group': '\u0917\u094d\u0930\u0941\u092a',
+      'profile_stats_role': '\u092d\u0942\u092e\u093f\u0915\u093e',
+      'profile_stats_phone': '\u092b\u094b\u0928',
+      'group_not_set': '\u0938\u0947\u091f \u0928\u0939\u0940\u0902',
+      'teacher_not_set': '\u0938\u0947\u091f \u0928\u0939\u0940\u0902',
+      'reset_password_action':
+          '\u092a\u093e\u0938\u0935\u0930\u094d\u0921 \u0930\u0940\u0938\u0947\u091f \u0915\u0930\u0947\u0902',
+      'notifications_title': '\u0938\u0942\u091a\u0928\u093e\u090f\u0902',
+      'notifications_empty':
+          '\u0905\u092d\u0940 \u0915\u094b\u0908 \u0938\u0942\u091a\u0928\u093e \u0928\u0939\u0940\u0902 \u0939\u0948',
+      'notifications_mark_read':
+          '\u092a\u0922\u093c\u093e \u0939\u0941\u0906 \u091a\u093f\u0939\u094d\u0928\u093f\u0924 \u0915\u0930\u0947\u0902',
+      'notifications_read_action': '\u092a\u0922\u093c\u0947\u0902',
+      'notifications_delete': '\u0939\u091f\u093e\u090f\u0902',
+      'notifications_unread': '\u0928\u092f\u093e',
+    },
+    'zh': {
+      'auth_title_login': '\u767b\u5f55',
+      'auth_title_register': '\u521b\u5efa\u8d26\u53f7',
+      'auth_subtitle_login': '\u6b22\u8fce\u56de\u6765',
+      'auth_subtitle_register': '\u521b\u5efa\u5b66\u751f\u8d26\u53f7',
+      'full_name': '\u59d3\u540d',
+      'email': '\u90ae\u7bb1',
+      'password': '\u5bc6\u7801',
+      'confirm_password': '\u786e\u8ba4\u5bc6\u7801',
+      'sign_in': '\u767b\u5f55',
+      'create_account': '\u521b\u5efa\u8d26\u53f7',
+      'have_account': '\u6211\u5df2\u7ecf\u6709\u8d26\u53f7',
+      'create_new_account': '\u521b\u5efa\u65b0\u8d26\u53f7',
+      'forgot_password': '\u5fd8\u8bb0\u5bc6\u7801\uff1f',
+      'reset_password': '\u91cd\u7f6e\u5bc6\u7801',
+      'reset_desc':
+          '\u6211\u4eec\u4f1a\u5411\u60a8\u7684\u90ae\u7bb1\u53d1\u9001\u5bc6\u7801\u91cd\u7f6e\u94fe\u63a5\u3002',
+      'send_reset': '\u53d1\u9001\u91cd\u7f6e\u90ae\u4ef6',
+      'language': '\u8bed\u8a00',
+      'language_ru': '\u4fc4\u8bed',
+      'language_en': '\u82f1\u8bed',
+      'language_kk': '\u54c8\u8428\u514b\u8bed',
+      'language_fr': '\u6cd5\u8bed',
+      'language_de': '\u5fb7\u8bed',
+      'language_hi': '\u5370\u5730\u8bed',
+      'language_zh': '\u4e2d\u6587',
+      'settings': '\u8bbe\u7f6e',
+      'password_strength_weak': '\u5bc6\u7801\u5f31',
+      'password_strength_medium': '\u5bc6\u7801\u4e2d\u7b49',
+      'password_strength_strong': '\u5bc6\u7801\u5f3a',
+      'password_hint':
+          '\u81f3\u5c11 8 \u4e2a\u5b57\u7b26\uff0c\u5305\u542b\u5b57\u6bcd\u548c\u6570\u5b57',
+      'passwords_mismatch': '\u5bc6\u7801\u4e0d\u5339\u914d',
+      'email_required': '\u90ae\u7bb1\u4e3a\u5fc5\u586b\u9879',
+      'password_required': '\u5bc6\u7801\u4e3a\u5fc5\u586b\u9879',
+      'name_required': '\u59d3\u540d\u4e3a\u5fc5\u586b\u9879',
+      'auth_error':
+          '\u767b\u5f55\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u90ae\u7bb1\u548c\u5bc6\u7801\u3002',
+      'reset_sent':
+          '\u5df2\u53d1\u9001\u91cd\u7f6e\u90ae\u4ef6\uff0c\u8bf7\u67e5\u6536\u3002',
+      'profile_title': '\u4e2a\u4eba\u8d44\u6599',
+      'save_profile': '\u4fdd\u5b58',
+      'profile_edit': '\u7f16\u8f91',
+      'role_label': '\u89d2\u8272',
+      'contact_info': '\u8054\u7cfb\u65b9\u5f0f',
+      'account_info': '\u8d26\u53f7',
+      'preferences': '\u504f\u597d',
+      'notifications': '\u901a\u77e5',
+      'schedule_updates': '\u8bfe\u8868\u66f4\u65b0',
+      'request_updates': '\u7533\u8bf7\u66f4\u65b0',
+      'security': '\u5b89\u5168',
+      'logout': '\u9000\u51fa\u767b\u5f55',
+      'birth_date_label': '\u51fa\u751f\u65e5\u671f (YYYY-MM-DD)',
+      'group_label': '\u5c0f\u7ec4',
+      'phone_label': '\u7535\u8bdd',
+      'teacher_name_label': '\u6559\u5e08\u59d3\u540d',
+      'profile_saved': '\u4e2a\u4eba\u8d44\u6599\u5df2\u66f4\u65b0\u3002',
+      'birth_date_invalid':
+          '\u51fa\u751f\u65e5\u671f\u5fc5\u987b\u4e3a YYYY-MM-DD \u683c\u5f0f\u3002',
+      'profile_stats_group': '\u5c0f\u7ec4',
+      'profile_stats_role': '\u89d2\u8272',
+      'profile_stats_phone': '\u7535\u8bdd',
+      'group_not_set': '\u672a\u8bbe\u7f6e',
+      'teacher_not_set': '\u672a\u8bbe\u7f6e',
+      'reset_password_action': '\u91cd\u7f6e\u5bc6\u7801',
+      'notifications_title': '\u901a\u77e5',
+      'notifications_empty': '\u6682\u65e0\u901a\u77e5',
+      'notifications_mark_read': '\u6807\u8bb0\u4e3a\u5df2\u8bfb',
+      'notifications_read_action': '\u5df2\u8bfb',
+      'notifications_delete': '\u5220\u9664',
+      'notifications_unread': '\u65b0',
     },
   };
 
@@ -635,7 +1066,9 @@ String _resolvedApiBaseUrl() {
     return trimmed;
   }
   final isLocalhost = uri.host == 'localhost' || uri.host == '127.0.0.1';
-  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android && isLocalhost) {
+  if (!kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.android &&
+      isLocalhost) {
     final mapped = uri.replace(host: '10.0.2.2');
     return mapped.toString().replaceFirst(RegExp(r'/+$'), '');
   }
@@ -1164,7 +1597,8 @@ class _AuthPageState extends State<AuthPage> {
     final text = value ?? '';
     if (text.isEmpty) return l10n.t('password_required');
     if (text.length < 8) return l10n.t('password_hint');
-    final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    final localeCode = AppStateScope.of(context).locale.languageCode;
+    final isRu = localeCode == 'ru';
     if (!RegExp(r'[A-Z]').hasMatch(text)) {
       return isRu
           ? '\u0414\u043e\u0431\u0430\u0432\u044c\u0442\u0435 \u0437\u0430\u0433\u043b\u0430\u0432\u043d\u0443\u044e \u0431\u0443\u043a\u0432\u0443.'
@@ -2036,6 +2470,12 @@ final List<RoleDefinition> kRoles = [
         builder: (context) => const GradesPage(),
       ),
       FeatureDefinition(
+        id: 'exams',
+        title: 'Exam grades',
+        icon: Icons.assignment_turned_in,
+        builder: (context) => const ExamGradesPage(),
+      ),
+      FeatureDefinition(
         id: 'analytics',
         title: 'Analytics',
         icon: Icons.analytics_outlined,
@@ -2134,6 +2574,12 @@ final List<RoleDefinition> kRoles = [
         title: 'Grades',
         icon: Icons.grade,
         builder: (context) => const GradesPage(),
+      ),
+      FeatureDefinition(
+        id: 'exams',
+        title: 'Exam grades',
+        icon: Icons.assignment_turned_in,
+        builder: (context) => const ExamGradesPage(),
       ),
       FeatureDefinition(
         id: 'analytics',
@@ -2247,9 +2693,9 @@ class _RoleHomePageState extends State<RoleHomePage> {
 
   Future<void> _refreshUnreadNotifications() async {
     try {
-      final rows = await AppStateScope.of(context).client.listNotifications(
-        limit: 50,
-      );
+      final rows = await AppStateScope.of(
+        context,
+      ).client.listNotifications(limit: 50);
       if (!mounted) return;
       setState(() {
         _totalNotifications = rows.length;
@@ -2265,7 +2711,10 @@ class _RoleHomePageState extends State<RoleHomePage> {
     final icon = IconButton(
       onPressed: _openNotifications,
       icon: const Icon(Icons.notifications_none),
-      tooltip: 'Notifications',
+      tooltip: translateEnglishUi(
+        AppStateScope.of(context).locale.languageCode,
+        'Notifications',
+      ),
     );
     if (visibleCount <= 0) {
       return icon;
@@ -2316,33 +2765,30 @@ class _RoleHomePageState extends State<RoleHomePage> {
     return DeviceCanvas.mobile;
   }
 
-  String _localizedFeatureTitle(FeatureDefinition feature, bool isRu) {
-    if (!isRu) {
-      return feature.title;
-    }
+  String _localizedFeatureTitle(FeatureDefinition feature, String localeCode) {
     switch (feature.id) {
       case 'schedule':
-        return 'Расписание';
+        return trTextByCode(localeCode, 'Расписание', 'Schedule');
       case 'attendance':
-        return 'Посещаемость';
+        return trTextByCode(localeCode, 'Посещаемость', 'Attendance');
       case 'grades':
-        return 'Оценки';
+        return trTextByCode(localeCode, 'Оценки', 'Grades');
       case 'analytics':
-        return 'Аналитика';
+        return trTextByCode(localeCode, 'Аналитика', 'Analytics');
       case 'news':
-        return 'Новости';
+        return trTextByCode(localeCode, 'Лента новостей', 'News feed');
       case 'requests':
-        return 'Заявки';
+        return trTextByCode(localeCode, 'Заявки', 'Requests');
       case 'makeup':
-        return 'Отработки';
+        return trTextByCode(localeCode, 'Отработки', 'Makeups');
       case 'admin_panel':
-        return 'Админ панель';
+        return trTextByCode(localeCode, 'Админ панель', 'Admin panel');
       case 'exams':
-        return 'Экзамены';
+        return trTextByCode(localeCode, 'Экзамены', 'Exam grades');
       case 'profile':
-        return 'Профиль';
+        return trTextByCode(localeCode, 'Профиль', 'Profile');
       default:
-        return feature.title;
+        return translateEnglishUi(localeCode, feature.title);
     }
   }
 
@@ -2391,9 +2837,9 @@ class _RoleHomePageState extends State<RoleHomePage> {
   }
 
   List<_NavItem> _buildTabs() {
-    final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    final localeCode = AppStateScope.of(context).locale.languageCode;
     final currentUser = AppStateScope.of(context).user;
-    String t(String ru, String en) => isRu ? ru : en;
+    String t(String ru, String en) => trTextByCode(localeCode, ru, en);
     final added = <String>{};
     final sortedFeatures = [...widget.role.features]
       ..sort((a, b) {
@@ -2423,7 +2869,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
       items.add(
         _NavItem(
           id: feature.id,
-          _localizedFeatureTitle(feature, isRu),
+          _localizedFeatureTitle(feature, localeCode),
           feature.icon,
           feature.builder,
         ),
@@ -3470,7 +3916,8 @@ class _ParentAttendancePageState extends State<ParentAttendancePage> {
 
   @override
   Widget build(BuildContext context) {
-    final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    final localeCode = AppStateScope.of(context).locale.languageCode;
+    final isRu = localeCode == 'ru';
     return ModulePanel(
       title: isRu ? 'Посещаемость ребёнка' : 'Child attendance',
       subtitle: isRu
@@ -3555,7 +4002,8 @@ class _ParentGradesPageState extends State<ParentGradesPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    final localeCode = AppStateScope.of(context).locale.languageCode;
+    final isRu = localeCode == 'ru';
     return ModulePanel(
       title: isRu ? 'Оценки ребёнка' : 'Child grades',
       subtitle: isRu
@@ -3861,7 +4309,8 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
 
   Widget _buildParentExamTable() {
     final future = _gradesFuture;
-    final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    final localeCode = AppStateScope.of(context).locale.languageCode;
+    final isRu = localeCode == 'ru';
     if (future == null) return const SizedBox.shrink();
     return FutureBuilder<List<ExamGrade>>(
       future: future,
@@ -4073,7 +4522,8 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
   @override
   Widget build(BuildContext context) {
     final role = AppStateScope.of(context).user?.role ?? '';
-    final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    final localeCode = AppStateScope.of(context).locale.languageCode;
+    final isRu = localeCode == 'ru';
     if (role == 'parent') {
       return FeatureScaffold(
         title: isRu ? 'Экзаменационные оценки ребёнка' : 'Child exam grades',
@@ -5052,9 +5502,7 @@ class _RequestDetailPageState extends State<RequestDetailPage> {
     if (!widget.canProcess) return;
     setState(() => _saving = true);
     try {
-      final updated = await AppStateScope.of(
-        context,
-      ).client.updateRequest(
+      final updated = await AppStateScope.of(context).client.updateRequest(
         _ticket.id,
         status: _status,
         comment: _commentController.text.trim(),
@@ -5328,7 +5776,28 @@ class _ProfilePageState extends State<ProfilePage> {
             final avatarUrl = currentUser?.avatarUrl?.trim();
             final hasAvatar = avatarUrl != null && avatarUrl.isNotEmpty;
             return AlertDialog(
-              title: Text(_isRu ? 'Редактировать профиль' : 'Edit profile'),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              title: Row(
+                children: [
+                  Container(
+                    width: 30,
+                    height: 30,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      color: kBrandPrimary.withValues(alpha: 0.12),
+                    ),
+                    child: const Icon(
+                      Icons.edit_rounded,
+                      size: 18,
+                      color: kBrandPrimary,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(_isRu ? 'Редактировать профиль' : 'Edit profile'),
+                ],
+              ),
               content: SingleChildScrollView(
                 child: SizedBox(
                   width: 520,
@@ -5339,6 +5808,9 @@ class _ProfilePageState extends State<ProfilePage> {
                         children: [
                           CircleAvatar(
                             radius: 26,
+                            backgroundColor: kBrandPrimary.withValues(
+                              alpha: 0.1,
+                            ),
                             backgroundImage: hasAvatar
                                 ? NetworkImage(_resolveMediaUrl(avatarUrl))
                                 : null,
@@ -5382,6 +5854,9 @@ class _ProfilePageState extends State<ProfilePage> {
                         controller: _fullNameController,
                         decoration: InputDecoration(
                           labelText: l10n.t('full_name'),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
                         onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                       ),
@@ -5390,6 +5865,9 @@ class _ProfilePageState extends State<ProfilePage> {
                         controller: _phoneController,
                         decoration: InputDecoration(
                           labelText: l10n.t('phone_label'),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
                         keyboardType: TextInputType.phone,
                         onSubmitted: (_) => FocusScope.of(context).nextFocus(),
@@ -5399,6 +5877,9 @@ class _ProfilePageState extends State<ProfilePage> {
                         controller: _birthController,
                         decoration: InputDecoration(
                           labelText: l10n.t('birth_date_label'),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
                         onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                       ),
@@ -5408,6 +5889,9 @@ class _ProfilePageState extends State<ProfilePage> {
                           controller: _teacherController,
                           decoration: InputDecoration(
                             labelText: l10n.t('teacher_name_label'),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
                           ),
                         ),
                       ],
@@ -5443,12 +5927,10 @@ class _ProfilePageState extends State<ProfilePage> {
     }
     final role = user.role.trim();
     final approved = user.isApproved ?? true;
-    final approvalChip = Chip(
-      label: Text(
-        approved
-            ? (isRu ? 'Подтвержден' : 'Approved')
-            : (isRu ? 'Ожидает подтверждения' : 'Pending approval'),
-      ),
+    final approvalChip = _ProfileInfoPill(
+      text: approved
+          ? (isRu ? 'Подтвержден' : 'Approved')
+          : (isRu ? 'Ожидает подтверждения' : 'Pending approval'),
       backgroundColor: approved
           ? const Color(0xFFD1FAE5)
           : const Color(0xFFFFEDD5),
@@ -5457,6 +5939,7 @@ class _ProfilePageState extends State<ProfilePage> {
       case 'student':
         return _ProfileSectionCard(
           title: isRu ? 'Профиль студента' : 'Student profile',
+          icon: Icons.school_outlined,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -5465,12 +5948,11 @@ class _ProfilePageState extends State<ProfilePage> {
                 runSpacing: 8,
                 children: [
                   approvalChip,
-                  Chip(
-                    label: Text(
-                      (user.studentGroup ?? '').trim().isEmpty
-                          ? (isRu ? 'Группа не назначена' : 'Group not set')
-                          : '${isRu ? 'Группа' : 'Group'}: ${user.studentGroup}',
-                    ),
+                  _ProfileInfoPill(
+                    text: (user.studentGroup ?? '').trim().isEmpty
+                        ? (isRu ? 'Группа не назначена' : 'Group not set')
+                        : '${isRu ? 'Группа' : 'Group'}: ${user.studentGroup}',
+                    backgroundColor: const Color(0xFFEFF6FF),
                   ),
                 ],
               ),
@@ -5486,6 +5968,7 @@ class _ProfilePageState extends State<ProfilePage> {
       case 'teacher':
         return _ProfileSectionCard(
           title: isRu ? 'Профиль преподавателя' : 'Teacher profile',
+          icon: Icons.co_present_outlined,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -5494,14 +5977,13 @@ class _ProfilePageState extends State<ProfilePage> {
                 runSpacing: 8,
                 children: [
                   approvalChip,
-                  Chip(
-                    label: Text(
-                      (user.teacherName ?? '').trim().isEmpty
-                          ? (isRu
-                                ? 'ФИО преподавателя не заполнено'
-                                : 'Teacher name not set')
-                          : '${isRu ? 'ФИО в журнале' : 'Journal name'}: ${user.teacherName}',
-                    ),
+                  _ProfileInfoPill(
+                    text: (user.teacherName ?? '').trim().isEmpty
+                        ? (isRu
+                              ? 'ФИО преподавателя не заполнено'
+                              : 'Teacher name not set')
+                        : '${isRu ? 'ФИО в журнале' : 'Journal name'}: ${user.teacherName}',
+                    backgroundColor: const Color(0xFFEFF6FF),
                   ),
                 ],
               ),
@@ -5517,6 +5999,7 @@ class _ProfilePageState extends State<ProfilePage> {
       case 'parent':
         return _ProfileSectionCard(
           title: isRu ? 'Профиль родителя' : 'Parent profile',
+          icon: Icons.family_restroom_outlined,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -5525,20 +6008,17 @@ class _ProfilePageState extends State<ProfilePage> {
                 runSpacing: 8,
                 children: [
                   approvalChip,
-                  Chip(
-                    label: Text(
-                      (user.childFullName ?? '').trim().isEmpty
-                          ? (isRu
-                                ? 'Ребенок не привязан'
-                                : 'Child is not linked')
-                          : '${isRu ? 'Ребенок' : 'Child'}: ${user.childFullName}',
-                    ),
+                  _ProfileInfoPill(
+                    text: (user.childFullName ?? '').trim().isEmpty
+                        ? (isRu ? 'Ребенок не привязан' : 'Child is not linked')
+                        : '${isRu ? 'Ребенок' : 'Child'}: ${user.childFullName}',
+                    backgroundColor: const Color(0xFFEFF6FF),
                   ),
                   if ((user.studentGroup ?? '').trim().isNotEmpty)
-                    Chip(
-                      label: Text(
-                        '${isRu ? 'Группа ребенка' : 'Child group'}: ${user.studentGroup}',
-                      ),
+                    _ProfileInfoPill(
+                      text:
+                          '${isRu ? 'Группа ребенка' : 'Child group'}: ${user.studentGroup}',
+                      backgroundColor: const Color(0xFFEFF6FF),
                     ),
                 ],
               ),
@@ -5555,6 +6035,7 @@ class _ProfilePageState extends State<ProfilePage> {
         final permissions = user.adminPermissions;
         return _ProfileSectionCard(
           title: isRu ? 'Профиль администратора' : 'Admin profile',
+          icon: Icons.admin_panel_settings_outlined,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -5563,17 +6044,15 @@ class _ProfilePageState extends State<ProfilePage> {
                 runSpacing: 8,
                 children: [
                   approvalChip,
-                  Chip(
-                    label: Text(
-                      isRu ? 'Полный CRUD по системе' : 'Full system CRUD',
-                    ),
+                  _ProfileInfoPill(
+                    text: isRu ? 'Полный CRUD по системе' : 'Full system CRUD',
+                    backgroundColor: const Color(0xFFEFF6FF),
                   ),
                   if (permissions.isNotEmpty)
                     ...permissions.map(
-                      (item) => Chip(
-                        label: Text(
-                          isRu ? 'Право: $item' : 'Permission: $item',
-                        ),
+                      (item) => _ProfileInfoPill(
+                        text: isRu ? 'Право: $item' : 'Permission: $item',
+                        backgroundColor: const Color(0xFFEFF6FF),
                       ),
                     ),
                 ],
@@ -5590,15 +6069,38 @@ class _ProfilePageState extends State<ProfilePage> {
       default:
         return _ProfileSectionCard(
           title: isRu ? 'Профиль' : 'Profile',
+          icon: Icons.person_outline_rounded,
           child: Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
               approvalChip,
-              Chip(label: Text(role.isEmpty ? '-' : role)),
+              _ProfileInfoPill(
+                text: role.isEmpty ? '-' : role,
+                backgroundColor: const Color(0xFFEFF6FF),
+              ),
             ],
           ),
         );
+    }
+  }
+
+  String _roleTitle(String role, bool isRu) {
+    switch (role) {
+      case 'admin':
+        return isRu ? 'Администратор' : 'Administrator';
+      case 'teacher':
+        return isRu ? 'Преподаватель' : 'Teacher';
+      case 'student':
+        return isRu ? 'Студент' : 'Student';
+      case 'parent':
+        return isRu ? 'Родитель' : 'Parent';
+      case 'smm':
+        return isRu ? 'Редактор ленты' : 'News editor';
+      case 'request_handler':
+        return isRu ? 'Обработчик заявок' : 'Request handler';
+      default:
+        return role.isEmpty ? '-' : role;
     }
   }
 
@@ -5609,7 +6111,6 @@ class _ProfilePageState extends State<ProfilePage> {
     final isRu = AppStateScope.of(
       context,
     ).locale.languageCode.toLowerCase().startsWith('ru');
-    final roleLabel = user?.role ?? l10n.t('role_label');
     final displayName = (user?.fullName.isNotEmpty ?? false)
         ? user!.fullName
         : l10n.t('full_name');
@@ -5627,9 +6128,18 @@ class _ProfilePageState extends State<ProfilePage> {
             ? user!.studentGroup!
             : l10n.t('group_not_set')),
     };
+    final roleTitle = _roleTitle(user?.role ?? '', isRu);
+    final approved = user?.isApproved ?? true;
+    final approvedLabel = approved
+        ? (isRu ? 'Подтвержден' : 'Approved')
+        : (isRu ? 'Ожидает подтверждения' : 'Pending approval');
+    final approvedColor = approved
+        ? const Color(0xFF16A34A)
+        : const Color(0xFFD97706);
     final phoneValue = (user?.phone?.isNotEmpty ?? false)
         ? user!.phone!
         : l10n.t('group_not_set');
+    final emailValue = (user?.email ?? '').trim().isEmpty ? '-' : user!.email;
     final initials = (user?.fullName.isNotEmpty ?? false)
         ? user!.fullName
               .split(' ')
@@ -5640,265 +6150,727 @@ class _ProfilePageState extends State<ProfilePage> {
         : 'PA';
     final avatarUrl = user?.avatarUrl?.trim();
     final hasAvatar = avatarUrl != null && avatarUrl.isNotEmpty;
-
-    return ListView(
-      controller: _scrollController,
-      padding: EdgeInsets.zero,
-      children: [
-        Container(
-          padding: const EdgeInsets.fromLTRB(20, 28, 20, 28),
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [kBrandPrimary, kInfo],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+    final width = MediaQuery.of(context).size.width;
+    final isPhoneLayout = width < 640;
+    final isUltraCompact = width < 400;
+    final maxWidth = width >= 1500
+        ? 1360.0
+        : width >= 1100
+        ? 1200.0
+        : double.infinity;
+    final horizontal = width >= 1100
+        ? 28.0
+        : isPhoneLayout
+        ? 10.0
+        : 16.0;
+    final listTopPadding = isPhoneLayout ? 12.0 : 18.0;
+    final listBottomPadding = isPhoneLayout ? 18.0 : 24.0;
+    final sectionGap = isPhoneLayout ? 10.0 : 12.0;
+    final compactTileDensity = isPhoneLayout
+        ? const VisualDensity(horizontal: -2, vertical: -2)
+        : VisualDensity.standard;
+    final compactTilePadding = isPhoneLayout
+        ? const EdgeInsets.symmetric(horizontal: 6)
+        : null;
+    final wideLayout = width >= 1100;
+    final roleSection = _buildRoleContextCard(user: user, isRu: isRu);
+    final accountSection = _ProfileSectionCard(
+      title: l10n.t('account_info'),
+      icon: Icons.person_outline_rounded,
+      subtitle: isRu
+          ? 'Ключевые персональные данные аккаунта.'
+          : 'Primary account identity information.',
+      child: Column(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.badge_outlined),
+            title: Text(l10n.t('full_name')),
+            subtitle: Text(displayName),
+            dense: isPhoneLayout,
+            visualDensity: compactTileDensity,
+            contentPadding: compactTilePadding,
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.email_outlined),
+            title: const Text('Email'),
+            subtitle: Text(user?.email ?? '-'),
+            dense: isPhoneLayout,
+            visualDensity: compactTileDensity,
+            contentPadding: compactTilePadding,
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.phone_outlined),
+            title: Text(l10n.t('phone_label')),
+            subtitle: Text(phoneValue),
+            dense: isPhoneLayout,
+            visualDensity: compactTileDensity,
+            contentPadding: compactTilePadding,
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.cake_outlined),
+            title: Text(l10n.t('birth_date_label')),
+            dense: isPhoneLayout,
+            visualDensity: compactTileDensity,
+            contentPadding: compactTilePadding,
+            subtitle: Text(
+              (user?.birthDate == null)
+                  ? (isRu ? 'Не указан' : 'Not set')
+                  : DateFormat('yyyy-MM-dd').format(user!.birthDate!),
             ),
-            borderRadius: BorderRadius.vertical(bottom: Radius.circular(32)),
           ),
-          child: Column(
-            children: [
-              CircleAvatar(
-                radius: 40,
-                backgroundColor: Colors.white.withValues(alpha: 0.2),
-                backgroundImage: hasAvatar
-                    ? NetworkImage(_resolveMediaUrl(avatarUrl))
-                    : null,
-                child: hasAvatar
-                    ? null
-                    : Text(
-                        initials,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
-                        ),
-                      ),
+          if (user?.role == 'teacher') ...[
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.co_present_outlined),
+              title: Text(l10n.t('teacher_name_label')),
+              dense: isPhoneLayout,
+              visualDensity: compactTileDensity,
+              contentPadding: compactTilePadding,
+              subtitle: Text(
+                (user?.teacherName ?? '').trim().isEmpty
+                    ? (isRu ? 'Не указан' : 'Not set')
+                    : user!.teacherName!,
               ),
-              const SizedBox(height: 12),
-              Text(
-                displayName,
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                ),
+            ),
+          ],
+          if (user?.role == 'parent') ...[
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.family_restroom_outlined),
+              dense: isPhoneLayout,
+              visualDensity: compactTileDensity,
+              contentPadding: compactTilePadding,
+              title: Text(isRu ? 'Подтвержденный ребенок' : 'Approved child'),
+              subtitle: Text(
+                (user?.childFullName ?? '').trim().isEmpty
+                    ? (isRu ? 'Не указан' : 'Not set')
+                    : user!.childFullName!,
               ),
-              const SizedBox(height: 6),
-              Text(
-                subtitle,
-                style: TextStyle(color: Colors.white.withValues(alpha: 0.85)),
+            ),
+          ],
+        ],
+      ),
+    );
+    final preferencesSection = _ProfileSectionCard(
+      title: l10n.t('preferences'),
+      icon: Icons.tune_rounded,
+      subtitle: isRu
+          ? 'Язык интерфейса и уведомления.'
+          : 'Interface language and notifications.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            l10n.t('language'),
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              color: kSecondaryText,
+            ),
+          ),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            initialValue: AppStateScope.of(context).locale.languageCode,
+            decoration: InputDecoration(
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
               ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 10,
-                runSpacing: 10,
-                alignment: WrapAlignment.center,
-                children: [
-                  _ProfileActionButton(
-                    label: l10n.t('profile_edit'),
-                    icon: Icons.edit,
-                    isPrimary: true,
-                    onPressed: _openEditProfileDialog,
-                  ),
-                ],
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 10,
               ),
+            ),
+            items: [
+              DropdownMenuItem(value: 'ru', child: Text(l10n.t('language_ru'))),
+              DropdownMenuItem(value: 'en', child: Text(l10n.t('language_en'))),
+              DropdownMenuItem(value: 'kk', child: Text(l10n.t('language_kk'))),
+              DropdownMenuItem(value: 'fr', child: Text(l10n.t('language_fr'))),
+              DropdownMenuItem(value: 'de', child: Text(l10n.t('language_de'))),
+              DropdownMenuItem(value: 'hi', child: Text(l10n.t('language_hi'))),
+              DropdownMenuItem(value: 'zh', child: Text(l10n.t('language_zh'))),
             ],
+            onChanged: (value) async {
+              if (value != null) {
+                await AppStateScope.of(context).setLocale(value);
+              }
+            },
           ),
+          const SizedBox(height: 12),
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              color: const Color(0xFFF6FAF8),
+            ),
+            child: Column(
+              children: [
+                SwitchListTile(
+                  value: _notifySchedule,
+                  onChanged: (value) async {
+                    setState(() => _notifySchedule = value);
+                    await _saveNotificationPref('notify_schedule', value);
+                  },
+                  title: Text(l10n.t('schedule_updates')),
+                  dense: isPhoneLayout,
+                  contentPadding: isPhoneLayout
+                      ? const EdgeInsets.symmetric(horizontal: 10)
+                      : null,
+                ),
+                const Divider(height: 1),
+                SwitchListTile(
+                  value: _notifyRequests,
+                  onChanged: (value) async {
+                    setState(() => _notifyRequests = value);
+                    await _saveNotificationPref('notify_requests', value);
+                  },
+                  title: Text(l10n.t('request_updates')),
+                  dense: isPhoneLayout,
+                  contentPadding: isPhoneLayout
+                      ? const EdgeInsets.symmetric(horizontal: 10)
+                      : null,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    final securitySection = _ProfileSectionCard(
+      title: l10n.t('security'),
+      icon: Icons.security_outlined,
+      subtitle: isRu
+          ? 'Контроль доступа и безопасность аккаунта.'
+          : 'Access control and account security.',
+      child: Column(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.lock_reset_rounded),
+            title: Text(l10n.t('reset_password_action')),
+            subtitle: Text(
+              isRu
+                  ? 'Смена пароля через безопасный сценарий.'
+                  : 'Change password with secure flow.',
+            ),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            dense: isPhoneLayout,
+            visualDensity: compactTileDensity,
+            contentPadding: compactTilePadding,
+            onTap: () {
+              pushAdaptivePage<void>(context, const ResetPasswordPage());
+            },
+          ),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.logout_rounded),
+            title: Text(l10n.t('logout')),
+            subtitle: Text(
+              isRu
+                  ? 'Выход из текущего сеанса.'
+                  : 'Sign out from current session.',
+            ),
+            trailing: const Icon(Icons.chevron_right_rounded),
+            dense: isPhoneLayout,
+            visualDensity: compactTileDensity,
+            contentPadding: compactTilePadding,
+            onTap: () => AppStateScope.of(context).logout(),
+          ),
+        ],
+      ),
+    );
+
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFF4F7F2), Color(0xFFEAF0E4)],
         ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-          child: Column(
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: maxWidth),
+          child: ListView(
+            controller: _scrollController,
+            padding: EdgeInsets.fromLTRB(
+              horizontal,
+              listTopPadding,
+              horizontal,
+              listBottomPadding,
+            ),
             children: [
-              if (_noticeMessage != null)
-                InlineNotice(message: _noticeMessage!, isError: _noticeError),
-              if (_noticeMessage != null) const SizedBox(height: 12),
               Container(
-                padding: const EdgeInsets.all(16),
+                padding: EdgeInsets.fromLTRB(
+                  isPhoneLayout ? 14 : 20,
+                  isPhoneLayout ? 20 : 28,
+                  isPhoneLayout ? 14 : 20,
+                  isPhoneLayout ? 20 : 28,
+                ),
                 decoration: BoxDecoration(
-                  color: kCardSurface,
-                  borderRadius: BorderRadius.circular(20),
+                  gradient: const LinearGradient(
+                    colors: [kBrandPrimary, kInfo],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(isPhoneLayout ? 20 : 24),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.06),
-                      blurRadius: 16,
-                      offset: const Offset(0, 8),
+                      color: Color(0x220B2A1F),
+                      blurRadius: isPhoneLayout ? 16 : 24,
+                      offset: Offset(0, isPhoneLayout ? 6 : 10),
                     ),
                   ],
                 ),
-                child: Row(
+                child: Stack(
+                  clipBehavior: Clip.none,
                   children: [
-                    Expanded(
-                      child: _ProfileStat(
-                        label: l10n.t('profile_stats_group'),
-                        value: subtitle,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _ProfileStat(
-                        label: l10n.t('profile_stats_role'),
-                        value: roleLabel,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _ProfileStat(
-                        label: l10n.t('profile_stats_phone'),
-                        value: phoneValue,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              _buildRoleContextCard(user: user, isRu: isRu),
-              const SizedBox(height: 16),
-              _ProfileSectionCard(
-                title: l10n.t('account_info'),
-                child: Column(
-                  children: [
-                    ListTile(
-                      leading: const Icon(Icons.badge_outlined),
-                      title: Text(l10n.t('full_name')),
-                      subtitle: Text(displayName),
-                    ),
-                    const Divider(height: 1),
-                    ListTile(
-                      leading: const Icon(Icons.email_outlined),
-                      title: const Text('Email'),
-                      subtitle: Text(user?.email ?? '-'),
-                    ),
-                    const Divider(height: 1),
-                    ListTile(
-                      leading: const Icon(Icons.phone_outlined),
-                      title: Text(l10n.t('phone_label')),
-                      subtitle: Text(phoneValue),
-                    ),
-                    const Divider(height: 1),
-                    ListTile(
-                      leading: const Icon(Icons.cake_outlined),
-                      title: Text(l10n.t('birth_date_label')),
-                      subtitle: Text(
-                        (user?.birthDate == null)
-                            ? (isRu ? 'Не указан' : 'Not set')
-                            : DateFormat('yyyy-MM-dd').format(user!.birthDate!),
-                      ),
-                    ),
-                    if (user?.role == 'teacher') ...[
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(Icons.co_present_outlined),
-                        title: Text(l10n.t('teacher_name_label')),
-                        subtitle: Text(
-                          (user?.teacherName ?? '').trim().isEmpty
-                              ? (isRu ? 'Не указан' : 'Not set')
-                              : user!.teacherName!,
-                        ),
-                      ),
-                    ],
-                    if (user?.role == 'parent') ...[
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(Icons.family_restroom_outlined),
-                        title: Text(
-                          isRu ? 'Подтвержденный ребенок' : 'Approved child',
-                        ),
-                        subtitle: Text(
-                          (user?.childFullName ?? '').trim().isEmpty
-                              ? (isRu ? 'Не указан' : 'Not set')
-                              : user!.childFullName!,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: FilledButton.icon(
-                        onPressed: _openEditProfileDialog,
-                        icon: const Icon(Icons.edit_rounded),
-                        label: Text(l10n.t('profile_edit')),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              _ProfileSectionCard(
-                title: l10n.t('preferences'),
-                child: Column(
-                  children: [
-                    ListTile(
-                      leading: const Icon(Icons.language),
-                      title: Text(l10n.t('language')),
-                      trailing: DropdownButton<String>(
-                        value: AppStateScope.of(context).locale.languageCode,
-                        items: [
-                          DropdownMenuItem(
-                            value: 'ru',
-                            child: Text(l10n.t('language_ru')),
+                    if (!isPhoneLayout)
+                      Positioned(
+                        right: -24,
+                        top: -28,
+                        child: Container(
+                          width: 140,
+                          height: 140,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white.withValues(alpha: 0.10),
                           ),
-                          DropdownMenuItem(
-                            value: 'en',
-                            child: Text(l10n.t('language_en')),
-                          ),
-                        ],
-                        onChanged: (value) async {
-                          if (value != null) {
-                            await AppStateScope.of(context).setLocale(value);
-                          }
-                        },
+                        ),
                       ),
-                    ),
-                    const Divider(height: 1),
-                    SwitchListTile(
-                      value: _notifySchedule,
-                      onChanged: (value) async {
-                        setState(() => _notifySchedule = value);
-                        await _saveNotificationPref('notify_schedule', value);
-                      },
-                      title: Text(l10n.t('schedule_updates')),
-                    ),
-                    const Divider(height: 1),
-                    SwitchListTile(
-                      value: _notifyRequests,
-                      onChanged: (value) async {
-                        setState(() => _notifyRequests = value);
-                        await _saveNotificationPref('notify_requests', value);
-                      },
-                      title: Text(l10n.t('request_updates')),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              _ProfileSectionCard(
-                title: l10n.t('security'),
-                child: Column(
-                  children: [
-                    ListTile(
-                      leading: const Icon(Icons.lock_reset),
-                      title: Text(l10n.t('reset_password_action')),
-                      onTap: () {
-                        pushAdaptivePage<void>(
-                          context,
-                          const ResetPasswordPage(),
+                    if (!isPhoneLayout)
+                      Positioned(
+                        left: -20,
+                        bottom: -36,
+                        child: Container(
+                          width: 110,
+                          height: 110,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white.withValues(alpha: 0.08),
+                          ),
+                        ),
+                      ),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final compact = constraints.maxWidth < 700;
+                        final phone = constraints.maxWidth < 520;
+                        final avatarRadius = phone
+                            ? 34.0
+                            : compact
+                            ? 36.0
+                            : 42.0;
+                        final avatar = Container(
+                          padding: const EdgeInsets.all(2.5),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            gradient: const LinearGradient(
+                              colors: [
+                                Color(0xFF38BDF8),
+                                Color(0xFF2DD4BF),
+                                Color(0xFF0EA5E9),
+                              ],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Color(0x26000000),
+                                blurRadius: 14,
+                                offset: Offset(0, 6),
+                              ),
+                            ],
+                          ),
+                          child: CircleAvatar(
+                            radius: avatarRadius,
+                            backgroundColor: Colors.white.withValues(
+                              alpha: 0.24,
+                            ),
+                            backgroundImage: hasAvatar
+                                ? NetworkImage(_resolveMediaUrl(avatarUrl))
+                                : null,
+                            child: hasAvatar
+                                ? null
+                                : Text(
+                                    initials,
+                                    style: TextStyle(
+                                      fontSize: phone ? 20 : 22,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                          ),
+                        );
+
+                        final info = Column(
+                          crossAxisAlignment: compact
+                              ? (phone
+                                    ? CrossAxisAlignment.stretch
+                                    : CrossAxisAlignment.center)
+                              : CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              displayName,
+                              textAlign: compact
+                                  ? TextAlign.center
+                                  : TextAlign.start,
+                              style: TextStyle(
+                                fontSize: phone
+                                    ? (isUltraCompact ? 24 : 26)
+                                    : 24,
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              emailValue,
+                              textAlign: compact
+                                  ? TextAlign.center
+                                  : TextAlign.start,
+                              style: TextStyle(
+                                fontSize: phone ? 17 : null,
+                                color: Colors.white.withValues(alpha: 0.88),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              isRu
+                                  ? 'Личный кабинет PolyApp'
+                                  : 'PolyApp personal space',
+                              textAlign: compact
+                                  ? TextAlign.center
+                                  : TextAlign.start,
+                              style: TextStyle(
+                                fontSize: phone ? 13 : null,
+                                color: Colors.white.withValues(alpha: 0.74),
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              alignment: compact
+                                  ? WrapAlignment.center
+                                  : WrapAlignment.start,
+                              children: [
+                                _ProfileBadge(
+                                  text: roleTitle,
+                                  color: Colors.white.withValues(alpha: 0.16),
+                                ),
+                                _ProfileBadge(
+                                  text: approvedLabel,
+                                  color: approvedColor.withValues(alpha: 0.26),
+                                ),
+                                _ProfileBadge(
+                                  text: subtitle,
+                                  color: Colors.white.withValues(alpha: 0.16),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            if (phone) ...[
+                              _ProfileActionButton(
+                                label: l10n.t('profile_edit'),
+                                icon: Icons.edit_rounded,
+                                isPrimary: true,
+                                compact: true,
+                                fullWidth: true,
+                                onPressed: _openEditProfileDialog,
+                              ),
+                              const SizedBox(height: 8),
+                              _ProfileActionButton(
+                                label: l10n.t('reset_password_action'),
+                                icon: Icons.lock_reset_rounded,
+                                compact: true,
+                                fullWidth: true,
+                                onPressed: () {
+                                  pushAdaptivePage<void>(
+                                    context,
+                                    const ResetPasswordPage(),
+                                  );
+                                },
+                              ),
+                              const SizedBox(height: 8),
+                              _ProfileActionButton(
+                                label: isRu ? 'Фото профиля' : 'Profile photo',
+                                icon: Icons.add_a_photo_outlined,
+                                compact: true,
+                                fullWidth: true,
+                                onPressed: _pickAndUploadAvatar,
+                              ),
+                            ] else
+                              Wrap(
+                                spacing: 10,
+                                runSpacing: 10,
+                                alignment: compact
+                                    ? WrapAlignment.center
+                                    : WrapAlignment.start,
+                                children: [
+                                  _ProfileActionButton(
+                                    label: l10n.t('profile_edit'),
+                                    icon: Icons.edit_rounded,
+                                    isPrimary: true,
+                                    onPressed: _openEditProfileDialog,
+                                  ),
+                                  _ProfileActionButton(
+                                    label: l10n.t('reset_password_action'),
+                                    icon: Icons.lock_reset_rounded,
+                                    onPressed: () {
+                                      pushAdaptivePage<void>(
+                                        context,
+                                        const ResetPasswordPage(),
+                                      );
+                                    },
+                                  ),
+                                  _ProfileActionButton(
+                                    label: isRu
+                                        ? 'Фото профиля'
+                                        : 'Profile photo',
+                                    icon: Icons.add_a_photo_outlined,
+                                    onPressed: _pickAndUploadAvatar,
+                                  ),
+                                ],
+                              ),
+                          ],
+                        );
+
+                        if (compact) {
+                          return Column(
+                            crossAxisAlignment: phone
+                                ? CrossAxisAlignment.stretch
+                                : CrossAxisAlignment.center,
+                            children: [
+                              if (phone) Center(child: avatar) else avatar,
+                              SizedBox(height: phone ? 10 : 12),
+                              info,
+                            ],
+                          );
+                        }
+
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            avatar,
+                            const SizedBox(width: 16),
+                            Expanded(child: info),
+                          ],
                         );
                       },
                     ),
-                    const Divider(height: 1),
-                    ListTile(
-                      leading: const Icon(Icons.logout),
-                      title: Text(l10n.t('logout')),
-                      onTap: () => AppStateScope.of(context).logout(),
-                    ),
                   ],
                 ),
               ),
-              const SizedBox(height: 24),
+              Padding(
+                padding: EdgeInsets.fromLTRB(0, sectionGap, 0, 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (_noticeMessage != null)
+                      InlineNotice(
+                        message: _noticeMessage!,
+                        isError: _noticeError,
+                      ),
+                    if (_noticeMessage != null) SizedBox(height: sectionGap),
+                    Container(
+                      padding: EdgeInsets.all(isPhoneLayout ? 10 : 14),
+                      decoration: BoxDecoration(
+                        color: kCardSurface,
+                        borderRadius: BorderRadius.circular(
+                          isPhoneLayout ? 16 : 18,
+                        ),
+                        border: Border.all(color: const Color(0xFFD8E3DB)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Color(0x140B2A1F),
+                            blurRadius: isPhoneLayout ? 10 : 14,
+                            offset: Offset(0, isPhoneLayout ? 5 : 8),
+                          ),
+                        ],
+                      ),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          final stats = [
+                            _ProfileStat(
+                              icon: Icons.group_outlined,
+                              label: l10n.t('profile_stats_group'),
+                              value: subtitle,
+                            ),
+                            _ProfileStat(
+                              icon: Icons.badge_outlined,
+                              label: l10n.t('profile_stats_role'),
+                              value: roleTitle,
+                            ),
+                            _ProfileStat(
+                              icon: Icons.phone_outlined,
+                              label: l10n.t('profile_stats_phone'),
+                              value: phoneValue,
+                            ),
+                            _ProfileStat(
+                              icon: Icons.email_outlined,
+                              label: 'Email',
+                              value: emailValue,
+                            ),
+                          ];
+
+                          Widget row(
+                            Widget a,
+                            Widget b, [
+                            Widget? c,
+                            Widget? d,
+                          ]) {
+                            return Row(
+                              children: [
+                                Expanded(child: a),
+                                const SizedBox(width: 10),
+                                Expanded(child: b),
+                                if (c != null) ...[
+                                  const SizedBox(width: 10),
+                                  Expanded(child: c),
+                                ],
+                                if (d != null) ...[
+                                  const SizedBox(width: 10),
+                                  Expanded(child: d),
+                                ],
+                              ],
+                            );
+                          }
+
+                          if (constraints.maxWidth >= 980) {
+                            return row(stats[0], stats[1], stats[2], stats[3]);
+                          }
+                          if (constraints.maxWidth >= 640) {
+                            return Column(
+                              children: [
+                                row(stats[0], stats[1]),
+                                const SizedBox(height: 10),
+                                row(stats[2], stats[3]),
+                              ],
+                            );
+                          }
+                          return Column(
+                            children: [
+                              for (int i = 0; i < stats.length; i++) ...[
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: stats[i],
+                                ),
+                                if (i < stats.length - 1)
+                                  const SizedBox(height: 10),
+                              ],
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                    SizedBox(height: sectionGap),
+                    if (wideLayout)
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                roleSection,
+                                SizedBox(height: sectionGap),
+                                preferencesSection,
+                              ],
+                            ),
+                          ),
+                          SizedBox(width: sectionGap),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                accountSection,
+                                SizedBox(height: sectionGap),
+                                securitySection,
+                              ],
+                            ),
+                          ),
+                        ],
+                      )
+                    else
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          roleSection,
+                          SizedBox(height: sectionGap),
+                          accountSection,
+                          SizedBox(height: sectionGap),
+                          preferencesSection,
+                          SizedBox(height: sectionGap),
+                          securitySection,
+                        ],
+                      ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
-      ],
+      ),
+    );
+  }
+}
+
+class _ProfileInfoPill extends StatelessWidget {
+  const _ProfileInfoPill({required this.text, required this.backgroundColor});
+
+  final String text;
+  final Color backgroundColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: Color(0xFF1F2937),
+          fontWeight: FontWeight.w600,
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileBadge extends StatelessWidget {
+  const _ProfileBadge({required this.text, required this.color});
+
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 520;
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 8 : 10,
+        vertical: compact ? 5 : 6,
+      ),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.25)),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w600,
+          fontSize: compact ? 11 : 12,
+        ),
+      ),
     );
   }
 }
@@ -5909,79 +6881,206 @@ class _ProfileActionButton extends StatelessWidget {
     required this.icon,
     required this.onPressed,
     this.isPrimary = false,
+    this.compact = false,
+    this.fullWidth = false,
   });
 
   final String label;
   final IconData icon;
   final VoidCallback onPressed;
   final bool isPrimary;
+  final bool compact;
+  final bool fullWidth;
 
   @override
   Widget build(BuildContext context) {
-    return isPrimary
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(12),
+    );
+    final padding = EdgeInsets.symmetric(
+      horizontal: compact ? 12 : 14,
+      vertical: compact ? 9 : 10,
+    );
+    final buttonHeight = compact ? 42.0 : 44.0;
+    final iconSize = compact ? 18.0 : 20.0;
+    final labelStyle = TextStyle(
+      fontWeight: FontWeight.w600,
+      fontSize: compact ? 15 : 16,
+    );
+    final button = isPrimary
         ? FilledButton.icon(
             onPressed: onPressed,
-            icon: Icon(icon),
+            icon: Icon(icon, size: iconSize),
             label: Text(label),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.white,
+              foregroundColor: kBrandPrimary,
+              elevation: 0,
+              shape: shape,
+              minimumSize: Size(fullWidth ? double.infinity : 0, buttonHeight),
+              padding: padding,
+              visualDensity: compact
+                  ? const VisualDensity(horizontal: -1, vertical: -1)
+                  : VisualDensity.standard,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              textStyle: labelStyle,
+            ),
           )
         : OutlinedButton.icon(
             onPressed: onPressed,
-            icon: Icon(icon),
+            icon: Icon(icon, size: iconSize),
             label: Text(label),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white,
+              side: BorderSide(color: Colors.white.withValues(alpha: 0.5)),
+              shape: shape,
+              backgroundColor: Colors.white.withValues(alpha: 0.06),
+              minimumSize: Size(fullWidth ? double.infinity : 0, buttonHeight),
+              padding: padding,
+              visualDensity: compact
+                  ? const VisualDensity(horizontal: -1, vertical: -1)
+                  : VisualDensity.standard,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              textStyle: labelStyle,
+            ),
           );
+    if (!fullWidth) {
+      return button;
+    }
+    return SizedBox(width: double.infinity, child: button);
   }
 }
 
 class _ProfileStat extends StatelessWidget {
-  const _ProfileStat({required this.label, required this.value});
+  const _ProfileStat({
+    required this.label,
+    required this.value,
+    required this.icon,
+  });
 
   final String label;
   final String value;
+  final IconData icon;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          value,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-        ),
-        const SizedBox(height: 4),
-        Text(label, style: TextStyle(color: kSecondaryText, fontSize: 12)),
-      ],
+    final compact = MediaQuery.sizeOf(context).width < 640;
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 10 : 12,
+        vertical: compact ? 9 : 10,
+      ),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(compact ? 11 : 12),
+        color: const Color(0xFFF6FAF8),
+        border: Border.all(color: const Color(0xFFD8E3DB)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: compact ? 15 : 16, color: kBrandPrimary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: kSecondaryText,
+                    fontSize: compact ? 11 : 12,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: compact ? 15 : 16,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
 class _ProfileSectionCard extends StatelessWidget {
-  const _ProfileSectionCard({required this.title, required this.child});
+  const _ProfileSectionCard({
+    required this.title,
+    required this.child,
+    this.icon,
+    this.subtitle,
+  });
 
   final String title;
   final Widget child;
+  final IconData? icon;
+  final String? subtitle;
 
   @override
   Widget build(BuildContext context) {
+    final compact = MediaQuery.sizeOf(context).width < 640;
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(compact ? 12 : 16),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: kCardSurface,
-        borderRadius: BorderRadius.circular(20),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFFFFFF), Color(0xFFFBFDFC)],
+        ),
+        borderRadius: BorderRadius.circular(compact ? 16 : 18),
+        border: Border.all(color: const Color(0xFFD8E3DB)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 14,
-            offset: const Offset(0, 8),
+            color: Color(0x140B2A1F),
+            blurRadius: compact ? 10 : 14,
+            offset: Offset(0, compact ? 5 : 8),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(title, style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 12),
+          Row(
+            children: [
+              if (icon != null)
+                Container(
+                  width: compact ? 26 : 28,
+                  height: compact ? 26 : 28,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    color: kBrandPrimary.withValues(alpha: 0.12),
+                  ),
+                  child: Icon(
+                    icon,
+                    size: compact ? 15 : 16,
+                    color: kBrandPrimary,
+                  ),
+                ),
+              if (icon != null) const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontSize: compact ? 18 : null,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (subtitle != null) ...[
+            SizedBox(height: compact ? 3 : 4),
+            Text(subtitle!, style: const TextStyle(color: kSecondaryText)),
+          ],
+          SizedBox(height: compact ? 10 : 12),
           child,
         ],
       ),
@@ -6434,7 +7533,8 @@ class _HomeDashboardPageState extends State<HomeDashboardPage> {
   List<AppNotification> _newNotifications = const [];
 
   bool get _isRu => AppStateScope.of(context).locale.languageCode == 'ru';
-  String _t(String ru, String en) => _isRu ? ru : en;
+  String _t(String ru, String en) =>
+      trTextByCode(AppStateScope.of(context).locale.languageCode, ru, en);
 
   bool _hasFeature(String featureId) =>
       widget.role.features.any((item) => item.id == featureId);
@@ -6873,7 +7973,8 @@ class HomePage extends StatelessWidget {
   final RoleDefinition role;
 
   void _openFeature(BuildContext context, FeatureDefinition action) {
-    final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    final localeCode = AppStateScope.of(context).locale.languageCode;
+    final isRu = localeCode == 'ru';
     pushAdaptivePage<void>(
       context,
       _FeatureStandalonePage(
@@ -6933,7 +8034,7 @@ class HomePage extends StatelessWidget {
       case 'makeup':
         return 'Отработки занятий';
       case 'admin_panel':
-        return 'CRUD и контроль системы';
+        return 'Пользователи и управление системой';
       case 'exams':
         return 'Экзаменационные оценки';
       case 'profile':
@@ -7288,7 +8389,8 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     final user = AppStateScope.of(context).user;
     final client = AppStateScope.of(context).client;
-    final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
+    final localeCode = AppStateScope.of(context).locale.languageCode;
+    final isRu = localeCode == 'ru';
     final quickActions = role.features.take(6).toList();
     final newsFeature = _findFeature('news');
     final attendanceFeature = _findFeature('attendance');
@@ -9952,11 +11054,8 @@ String _resolveMediaUrl(String url) {
     caseSensitive: false,
   ).firstMatch(value);
   if (embedded != null) {
-    value = embedded
-        .group(0)!
-        .trim();
-    while (value.isNotEmpty &&
-        '"\'},'.contains(value[value.length - 1])) {
+    value = embedded.group(0)!.trim();
+    while (value.isNotEmpty && '"\'},'.contains(value[value.length - 1])) {
       value = value.substring(0, value.length - 1);
     }
   }

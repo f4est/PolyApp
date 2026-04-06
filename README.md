@@ -36,6 +36,7 @@ PolyApp — учебная платформа с модульной архите
 
 ```bash
 docker compose up --build
+flutter run
 ```
 
 Доступность:
