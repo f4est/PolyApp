@@ -127,19 +127,28 @@ func SeedDemo(ctx context.Context, db *gorm.DB, hasher passwordHasher) error {
 	}
 	for _, d := range dates {
 		dateOnly := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
-		row := persistence.DBJournalDate{GroupName: group, ClassDate: dateOnly}
-		if err := db.WithContext(ctx).Where("group_name = ? AND class_date = ?", group, dateOnly).FirstOrCreate(&row).Error; err != nil {
+		row := persistence.DBJournalDate{
+			GroupName:  group,
+			ClassDate:  dateOnly,
+			LessonSlot: 1,
+		}
+		if err := db.WithContext(ctx).
+			Where("group_name = ? AND class_date = ? AND lesson_slot = ?", group, dateOnly, 1).
+			FirstOrCreate(&row).Error; err != nil {
 			return err
 		}
 		for _, student := range students {
 			attendance := persistence.DBAttendanceRecord{
 				GroupName:   group,
 				ClassDate:   dateOnly,
+				LessonSlot:  1,
 				StudentName: student,
 				Present:     true,
 				TeacherID:   userIDs["teacher"],
 			}
-			if err := db.WithContext(ctx).Where("group_name = ? AND class_date = ? AND student_name = ?", group, dateOnly, student).FirstOrCreate(&attendance).Error; err != nil {
+			if err := db.WithContext(ctx).
+				Where("group_name = ? AND class_date = ? AND lesson_slot = ? AND student_name = ?", group, dateOnly, 1, student).
+				FirstOrCreate(&attendance).Error; err != nil {
 				return err
 			}
 

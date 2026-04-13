@@ -145,7 +145,49 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
     context,
   ).languageCode.toLowerCase().startsWith('ru');
   bool get _syncing => _loading || _saving;
-  String _tr(String ru, String en) => trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
+  String _tr(String ru, String en) =>
+      trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
+
+  int _normalizeLessonSlot(int value) => value < 1 ? 1 : value;
+
+  int _slotFromLegacyLabel(String? label) {
+    if (label == null) {
+      return 1;
+    }
+    final match = RegExp(
+      r'\|\s*[пp](\d+)\s*$',
+      caseSensitive: false,
+    ).firstMatch(label);
+    if (match == null) {
+      return 1;
+    }
+    return int.tryParse(match.group(1) ?? '') ?? 1;
+  }
+
+  String _dateIdentity(DateTime classDate, int lessonSlot) {
+    return '${_dateKeyFormat.format(classDate)}|${_normalizeLessonSlot(lessonSlot)}';
+  }
+
+  String _dateIdentityFromEntry(JournalDateEntry entry) =>
+      _dateIdentity(entry.classDate, entry.lessonSlot);
+
+  String _dateHeaderLabel(JournalDateEntry entry) {
+    final base = _dateLabelFormat.format(entry.classDate);
+    final slot = _normalizeLessonSlot(entry.lessonSlot);
+    if (slot <= 1) {
+      return base;
+    }
+    return '$base |п$slot';
+  }
+
+  String _dateFullLabel(JournalDateEntry entry) {
+    final base = _dateFullFormat.format(entry.classDate);
+    final slot = _normalizeLessonSlot(entry.lessonSlot);
+    if (slot <= 1) {
+      return base;
+    }
+    return '$base |п$slot';
+  }
 
   void _markOnline() {
     _online = true;
@@ -229,6 +271,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
           await widget.client.upsertJournalDate(
             groupName: group.name,
             classDate: date.date,
+            lessonSlot: _slotFromLegacyLabel(date.label),
           );
         }
 
@@ -246,6 +289,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
             dateCells.add(
               DateCellWriteDto(
                 classDate: date.date,
+                lessonSlot: _slotFromLegacyLabel(date.label),
                 studentName: student.name,
                 rawValue: grade.grade.trim(),
               ),
@@ -736,12 +780,12 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
   }
 
   Future<void> _openDateActions(
-    DateTime classDate, {
+    JournalDateEntry classDate, {
     TapDownDetails? tapDetails,
   }) async {
     if (!widget.canEdit || _saving || _groupName == null) return;
     final action = await _showActionPicker(
-      title: _dateFullFormat.format(classDate),
+      title: _dateFullLabel(classDate),
       tapDetails: tapDetails,
       actions: [
         _QuickActionItem(
@@ -850,9 +894,9 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
     );
   }
 
-  Widget _buildDateHeaderLabel(DateTime classDate) {
+  Widget _buildDateHeaderLabel(JournalDateEntry classDate) {
     final label = Text(
-      _dateLabelFormat.format(classDate),
+      _dateHeaderLabel(classDate),
       overflow: TextOverflow.ellipsis,
     );
     if (!widget.canEdit) {
@@ -1056,6 +1100,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
           .map(
             (cell) => DateCellWriteDto(
               classDate: cell.classDate,
+              lessonSlot: cell.lessonSlot,
               studentName: trimmed,
               rawValue: cell.rawValue,
             ),
@@ -1092,6 +1137,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
           .map(
             (cell) => DateCellDeleteDto(
               classDate: cell.classDate,
+              lessonSlot: cell.lessonSlot,
               studentName: fromName,
             ),
           )
@@ -1140,6 +1186,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
           .map(
             (cell) => DateCellDeleteDto(
               classDate: cell.classDate,
+              lessonSlot: cell.lessonSlot,
               studentName: studentName,
             ),
           )
@@ -1199,40 +1246,48 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
     }
   }
 
-  Future<void> _renameDate(DateTime fromDate) async {
+  Future<void> _renameDate(JournalDateEntry fromDate) async {
     final groupName = _groupName;
     final grid = _grid;
     if (groupName == null || grid == null) return;
-    final toDate = await _pickDate(initial: fromDate);
+    final toDate = await _pickDate(initial: fromDate.classDate);
     if (toDate == null) return;
-    final fromKey = _dateKeyFormat.format(fromDate);
-    final toKey = _dateKeyFormat.format(toDate);
+    final fromKey = _dateIdentity(fromDate.classDate, fromDate.lessonSlot);
+    final toKey = _dateIdentity(toDate, fromDate.lessonSlot);
     if (fromKey == toKey) return;
 
     final confirmed = await _showConfirmDialog(
       _tr(
-        'Изменить дату ${_dateFullFormat.format(fromDate)} на ${_dateFullFormat.format(toDate)}?',
-        'Change ${_dateFullFormat.format(fromDate)} to ${_dateFullFormat.format(toDate)}?',
+        'Изменить дату ${_dateFullLabel(fromDate)} на ${_dateFullFormat.format(toDate)}?',
+        'Change ${_dateFullLabel(fromDate)} to ${_dateFullFormat.format(toDate)}?',
       ),
     );
     if (!confirmed) return;
 
     setState(() => _saving = true);
     try {
-      await widget.client.upsertJournalDate(
+      final slotConflict = grid.dates.any(
+        (item) =>
+            _dateIdentityFromEntry(item) != fromKey &&
+            _dateIdentity(item.classDate, item.lessonSlot) ==
+                _dateIdentity(toDate, fromDate.lessonSlot),
+      );
+      final target = await widget.client.upsertJournalDate(
         groupName: groupName,
         classDate: toDate,
+        lessonSlot: slotConflict ? null : fromDate.lessonSlot,
       );
 
       final dateUpserts = grid.dateCells
           .where(
             (cell) =>
-                _dateKeyFormat.format(cell.classDate) == fromKey &&
+                _dateIdentity(cell.classDate, cell.lessonSlot) == fromKey &&
                 cell.rawValue.isNotEmpty,
           )
           .map(
             (cell) => DateCellWriteDto(
-              classDate: toDate,
+              classDate: target.classDate,
+              lessonSlot: target.lessonSlot,
               studentName: cell.studentName,
               rawValue: cell.rawValue,
             ),
@@ -1247,8 +1302,11 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
 
       final dateDeletes = grid.students
           .map(
-            (student) =>
-                DateCellDeleteDto(classDate: fromDate, studentName: student),
+            (student) => DateCellDeleteDto(
+              classDate: fromDate.classDate,
+              lessonSlot: fromDate.lessonSlot,
+              studentName: student,
+            ),
           )
           .toList();
       if (dateDeletes.isNotEmpty) {
@@ -1260,7 +1318,8 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
 
       await widget.client.deleteJournalDate(
         groupName: groupName,
-        classDate: fromDate,
+        classDate: fromDate.classDate,
+        lessonSlot: fromDate.lessonSlot,
       );
       await _reloadGrid();
       if (!mounted) return;
@@ -1276,14 +1335,14 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
     }
   }
 
-  Future<void> _deleteDate(DateTime classDate) async {
+  Future<void> _deleteDate(JournalDateEntry classDate) async {
     final groupName = _groupName;
     final grid = _grid;
     if (groupName == null || grid == null) return;
     final confirmed = await _showConfirmDialog(
       _tr(
-        'Удалить дату ${_dateFullFormat.format(classDate)}?',
-        'Delete date ${_dateFullFormat.format(classDate)}?',
+        'Удалить дату ${_dateFullLabel(classDate)}?',
+        'Delete date ${_dateFullLabel(classDate)}?',
       ),
     );
     if (!confirmed) return;
@@ -1292,8 +1351,11 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
     try {
       final dateDeletes = grid.students
           .map(
-            (student) =>
-                DateCellDeleteDto(classDate: classDate, studentName: student),
+            (student) => DateCellDeleteDto(
+              classDate: classDate.classDate,
+              lessonSlot: classDate.lessonSlot,
+              studentName: student,
+            ),
           )
           .toList();
       if (dateDeletes.isNotEmpty) {
@@ -1304,7 +1366,8 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       }
       await widget.client.deleteJournalDate(
         groupName: groupName,
-        classDate: classDate,
+        classDate: classDate.classDate,
+        lessonSlot: classDate.lessonSlot,
       );
       await _reloadGrid();
       if (!mounted) return;
@@ -1399,7 +1462,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
     final dateCellMap = <String, String>{};
     for (final cell in grid.dateCells) {
       final key =
-          '${cell.studentName}::${_dateKeyFormat.format(cell.classDate)}';
+          '${cell.studentName}::${_dateIdentity(cell.classDate, cell.lessonSlot)}';
       dateCellMap[key] = cell.rawValue;
     }
     final manualCellMap = <String, String>{};
@@ -1490,7 +1553,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
                               cells: [
                                 ...grid.dates.map((date) {
                                   final key =
-                                      '$student::${_dateKeyFormat.format(date)}';
+                                      '$student::${_dateIdentity(date.classDate, date.lessonSlot)}';
                                   final value = dateCellMap[key] ?? '';
                                   return DataCell(
                                     Text(value.isEmpty ? '-' : value),
@@ -1550,11 +1613,11 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
 
   Future<void> _editDateValue(
     String student,
-    DateTime date,
+    JournalDateEntry date,
     String initial,
   ) async {
     final value = await _showValueDialog(
-      title: '$student • ${_dateKeyFormat.format(date)}',
+      title: '$student • ${_dateFullLabel(date)}',
       initial: initial,
       hint: _tr('0..100 или спецкод', '0..100 or status code'),
     );
@@ -1569,14 +1632,21 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       if (value.isEmpty) {
         await widget.client.deleteDateCellsV2(
           groupName: _groupName!,
-          items: [DateCellDeleteDto(classDate: date, studentName: student)],
+          items: [
+            DateCellDeleteDto(
+              classDate: date.classDate,
+              lessonSlot: date.lessonSlot,
+              studentName: student,
+            ),
+          ],
         );
       } else {
         await widget.client.upsertDateCellsV2(
           groupName: _groupName!,
           items: [
             DateCellWriteDto(
-              classDate: date,
+              classDate: date.classDate,
+              lessonSlot: date.lessonSlot,
               studentName: student,
               rawValue: value,
             ),
@@ -1712,7 +1782,8 @@ class _PresetLibraryPageState extends State<PresetLibraryPage> {
   bool get _isRu => Localizations.localeOf(
     context,
   ).languageCode.toLowerCase().startsWith('ru');
-  String _tr(String ru, String en) => trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
+  String _tr(String ru, String en) =>
+      trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
 
   @override
   void initState() {
@@ -1979,7 +2050,8 @@ class _PresetDetailsPageState extends State<PresetDetailsPage> {
   bool get _isRu => Localizations.localeOf(
     context,
   ).languageCode.toLowerCase().startsWith('ru');
-  String _tr(String ru, String en) => trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
+  String _tr(String ru, String en) =>
+      trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
 
   GradingPresetVersion? get _version => _preset?.currentVersion;
 
@@ -2308,7 +2380,8 @@ class _PresetEditorPageState extends State<PresetEditorPage> {
   bool get _isRu => Localizations.localeOf(
     context,
   ).languageCode.toLowerCase().startsWith('ru');
-  String _tr(String ru, String en) => trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
+  String _tr(String ru, String en) =>
+      trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
 
   @override
   void initState() {
@@ -3737,4 +3810,3 @@ class _ErrorCard extends StatelessWidget {
     );
   }
 }
-

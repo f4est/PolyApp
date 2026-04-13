@@ -58,7 +58,8 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
     }
   }
 
-  String _tr(String ru, String en) => trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
+  String _tr(String ru, String en) =>
+      trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
 
   @override
   void initState() {
@@ -223,6 +224,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
     }
     _students = _service.getStudentsByGroup(_group!);
     _dates = _service.getDatesByGroup(_group!);
+    _dates.sort(_compareLessonDates);
     if (mounted) {
       setState(() {});
     }
@@ -230,6 +232,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
     await _syncFromServer();
     _students = _service.getStudentsByGroup(_group!);
     _dates = _service.getDatesByGroup(_group!);
+    _dates.sort(_compareLessonDates);
     if (mounted) {
       setState(() {});
     }
@@ -252,6 +255,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
           await widget.client.upsertJournalDate(
             groupName: group.name,
             classDate: d.date,
+            lessonSlot: _lessonSlotFromLesson(d),
           );
         }
       }
@@ -275,14 +279,22 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
             );
           }
         }
-        final serverDates = await widget.client.listJournalDates(name);
+        final serverDates = await widget.client.listJournalDateEntries(name);
         for (final d in serverDates) {
-          final label = _formatDateLabel(d);
+          final label = _formatDateLabelWithSlot(d.classDate, d.lessonSlot);
           final dates = _service.getDatesByGroup(group);
-          final exists = dates.any((item) => item.label == label);
+          final exists = dates.any(
+            (item) =>
+                _lessonDateIdentity(item) ==
+                _dateIdentity(d.classDate, d.lessonSlot),
+          );
           if (!exists) {
             await _service.addDate(
-              LessonDate(date: d, label: label, groupId: group.groupId),
+              LessonDate(
+                date: d.classDate,
+                label: label,
+                groupId: group.groupId,
+              ),
             );
           }
         }
@@ -318,10 +330,11 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
           await _service.addStudent(student);
         }
 
-        final label = _formatDateLabel(record.classDate);
+        final slot = record.lessonSlot < 1 ? 1 : record.lessonSlot;
+        final label = _formatDateLabelWithSlot(record.classDate, slot);
         LessonDate? date;
         for (final d in dates) {
-          if (d.label == label) {
+          if (_lessonDateIdentity(d) == _dateIdentity(record.classDate, slot)) {
             date = d;
             break;
           }
@@ -334,7 +347,10 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
           );
           await _service.addDate(created);
           dates = _service.getDatesByGroup(_group!);
-          date = dates.firstWhere((d) => d.label == label);
+          date = dates.firstWhere(
+            (d) =>
+                _lessonDateIdentity(d) == _dateIdentity(record.classDate, slot),
+          );
         }
 
         await _service.addOrUpdateAttendance(
@@ -460,23 +476,30 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
     try {
       for (final picked in pickedDates) {
         final normalized = DateTime(picked.year, picked.month, picked.day);
-        final label = _formatDateLabel(normalized);
+        final created = await widget.client.upsertJournalDate(
+          groupName: _group!.name,
+          classDate: normalized,
+        );
+        final label = _formatDateLabelWithSlot(
+          created.classDate,
+          created.lessonSlot,
+        );
         final exists = _service
             .getDatesByGroup(_group!)
-            .any((item) => item.label == label);
+            .any(
+              (item) =>
+                  _lessonDateIdentity(item) ==
+                  _dateIdentity(created.classDate, created.lessonSlot),
+            );
         if (!exists) {
           await _service.addDate(
             LessonDate(
-              date: normalized,
+              date: created.classDate,
               label: label,
               groupId: _group!.groupId,
             ),
           );
         }
-        await widget.client.upsertJournalDate(
-          groupName: _group!.name,
-          classDate: normalized,
-        );
       }
       await _loadGroupData(sync: false);
       if (mounted) {
@@ -583,6 +606,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
     setState(() => _busy = true);
     try {
       final trimmed = value.trim();
+      final lessonSlot = _lessonSlotFromLesson(date);
       if (trimmed.isEmpty) {
         final current = _service.getAttendance(
           studentName,
@@ -595,6 +619,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
         await widget.client.deleteAttendance(
           groupName: _group!.name,
           classDate: date.date,
+          lessonSlot: lessonSlot,
           studentName: studentName,
         );
       } else {
@@ -610,12 +635,14 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
         await widget.client.createAttendance(
           groupName: _group!.name,
           classDate: date.date,
+          lessonSlot: lessonSlot,
           studentName: studentName,
           present: present,
         );
       }
       _students = _service.getStudentsByGroup(_group!);
       _dates = _service.getDatesByGroup(_group!);
+      _dates.sort(_compareLessonDates);
       if (mounted) {
         setState(() {
           _online = true;
@@ -635,6 +662,55 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
 
   String _formatDateLabel(DateTime date) {
     return '${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}';
+  }
+
+  String _formatDateLabelWithSlot(DateTime date, int lessonSlot) {
+    final normalized = lessonSlot < 1 ? 1 : lessonSlot;
+    final base = _formatDateLabel(date);
+    if (normalized <= 1) {
+      return base;
+    }
+    return '$base |п$normalized';
+  }
+
+  String _dateIdentity(DateTime date, int lessonSlot) {
+    final y = date.year.toString().padLeft(4, '0');
+    final m = date.month.toString().padLeft(2, '0');
+    final d = date.day.toString().padLeft(2, '0');
+    final slot = lessonSlot < 1 ? 1 : lessonSlot;
+    return '$y-$m-$d|$slot';
+  }
+
+  int _lessonSlotFromLesson(LessonDate date) {
+    final match = RegExp(
+      r'\|\s*[пp](\d+)\s*$',
+      caseSensitive: false,
+    ).firstMatch(date.label);
+    if (match == null) {
+      return 1;
+    }
+    return int.tryParse(match.group(1) ?? '') ?? 1;
+  }
+
+  String _lessonDateIdentity(LessonDate date) {
+    return _dateIdentity(date.date, _lessonSlotFromLesson(date));
+  }
+
+  int _compareLessonDates(LessonDate left, LessonDate right) {
+    final byDate = left.date.compareTo(right.date);
+    if (byDate != 0) {
+      return byDate;
+    }
+    return _lessonSlotFromLesson(left).compareTo(_lessonSlotFromLesson(right));
+  }
+
+  String _gridDateLabel(LessonDate date) {
+    final base = _dateLabelFormat.format(date.date);
+    final slot = _lessonSlotFromLesson(date);
+    if (slot <= 1) {
+      return base;
+    }
+    return '$base |п$slot';
   }
 
   String _formatSyncTime(DateTime time) {
@@ -967,9 +1043,8 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
                         dataRowMaxHeight: compact ? 56 : 64,
                         columns: [
                           ..._dates.map(
-                            (date) => DataColumn(
-                              label: Text(_dateLabelFormat.format(date.date)),
-                            ),
+                            (date) =>
+                                DataColumn(label: Text(_gridDateLabel(date))),
                           ),
                         ],
                         rows: _students.map((student) {
@@ -1095,4 +1170,3 @@ class _AttendancePanel extends StatelessWidget {
     );
   }
 }
-

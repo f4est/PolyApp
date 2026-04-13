@@ -37,6 +37,7 @@ func NewJournalUseCase(
 
 type DateCellUpsertInput struct {
 	ClassDate   time.Time
+	LessonSlot  int
 	StudentName string
 	RawValue    string
 }
@@ -216,6 +217,7 @@ func (u *JournalUseCase) UpsertDateCells(ctx context.Context, actor Actor, group
 		cells = append(cells, entity.JournalCell{
 			GroupName:    groupName,
 			ClassDate:    dateOnly,
+			LessonSlot:   normalizeLessonSlot(item.LessonSlot),
 			StudentName:  student,
 			RawValue:     raw,
 			NumericValue: numeric,
@@ -249,6 +251,7 @@ func (u *JournalUseCase) DeleteDateCells(ctx context.Context, actor Actor, group
 		cells = append(cells, entity.JournalCell{
 			GroupName:   groupName,
 			ClassDate:   normalizeDate(item.ClassDate),
+			LessonSlot:  normalizeLessonSlot(item.LessonSlot),
 			StudentName: student,
 		})
 	}
@@ -383,6 +386,16 @@ func (u *JournalUseCase) Recalculate(ctx context.Context, actor Actor, groupName
 	datesByStudent := map[string][]entity.JournalCell{}
 	for _, cell := range dateCells {
 		datesByStudent[cell.StudentName] = append(datesByStudent[cell.StudentName], cell)
+	}
+	for student := range datesByStudent {
+		sort.Slice(datesByStudent[student], func(i, j int) bool {
+			left := datesByStudent[student][i]
+			right := datesByStudent[student][j]
+			if !left.ClassDate.Equal(right.ClassDate) {
+				return left.ClassDate.Before(right.ClassDate)
+			}
+			return left.LessonSlot < right.LessonSlot
+		})
 	}
 
 	groupCodeCounts := map[string]float64{}
@@ -530,6 +543,14 @@ func (u *JournalUseCase) Recalculate(ctx context.Context, actor Actor, groupName
 			} else {
 				contextValues[key] = item.RawValue
 			}
+			if item.LessonSlot > 1 {
+				slotKey := fmt.Sprintf("%s_P%d", key, item.LessonSlot)
+				if item.NumericValue != nil {
+					contextValues[slotKey] = *item.NumericValue
+				} else {
+					contextValues[slotKey] = item.RawValue
+				}
+			}
 		}
 		contextValues["DATE_SUM"] = dateSum
 		contextValues["DATE_COUNT"] = dateCount
@@ -609,6 +630,13 @@ func (u *JournalUseCase) ensureCanReadGroup(ctx context.Context, actor Actor, gr
 func normalizeDate(value time.Time) time.Time {
 	utc := value.UTC()
 	return time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+func normalizeLessonSlot(value int) int {
+	if value < 1 {
+		return 1
+	}
+	return value
 }
 
 func normalizeRawValue(

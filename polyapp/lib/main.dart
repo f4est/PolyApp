@@ -4071,6 +4071,11 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
   Future<List<ExamUpload>>? _uploadsFuture;
   bool _initialized = false;
   bool _showUploads = false;
+  bool _groupsLoading = false;
+  final List<String> _groupCatalog = [];
+
+  String _tt(String en) =>
+      translateEnglishUi(AppStateScope.of(context).locale.languageCode, en);
 
   List<ExamGrade> _filterGradesByRole(List<ExamGrade> source) {
     final user = AppStateScope.of(context).user;
@@ -4092,6 +4097,11 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
     return role == 'teacher' || role == 'admin';
   }
 
+  bool get _isAdmin {
+    final role = AppStateScope.of(context).user?.role ?? '';
+    return role == 'admin';
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -4099,6 +4109,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
     final user = AppStateScope.of(context).user;
     _groupController.text = user?.studentGroup ?? '';
     _reload();
+    unawaited(_loadGroupCatalog(silent: true));
     _initialized = true;
   }
 
@@ -4107,6 +4118,176 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
     _groupController.dispose();
     _examController.dispose();
     super.dispose();
+  }
+
+  List<String> _normalizeGroupNames(Iterable<String> values) {
+    final set = <String>{};
+    for (final raw in values) {
+      final value = raw.trim();
+      if (value.isNotEmpty) {
+        set.add(value);
+      }
+    }
+    final list = set.toList(growable: false);
+    list.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return list;
+  }
+
+  Future<void> _loadGroupCatalog({bool silent = false}) async {
+    if (!_canUpload || _groupsLoading) return;
+    if (mounted) {
+      setState(() => _groupsLoading = true);
+    } else {
+      _groupsLoading = true;
+    }
+    final client = AppStateScope.of(context).client;
+    try {
+      final collected = <String>{};
+      try {
+        collected.addAll(await client.listJournalGroupCatalog());
+      } catch (_) {}
+      try {
+        collected.addAll(await client.listJournalGroups());
+      } catch (_) {}
+      final normalized = _normalizeGroupNames(collected);
+      if (!mounted) return;
+      setState(() {
+        _groupCatalog
+          ..clear()
+          ..addAll(normalized);
+      });
+    } catch (error) {
+      if (!mounted || silent) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = humanizeError(error);
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _groupsLoading = false);
+      } else {
+        _groupsLoading = false;
+      }
+    }
+  }
+
+  List<String> _filterGroupCatalog(String query) {
+    if (_groupCatalog.isEmpty) return const <String>[];
+    final needle = query.trim().toLowerCase();
+    if (needle.isEmpty) {
+      return _groupCatalog;
+    }
+    final startsWith = <String>[];
+    final contains = <String>[];
+    for (final group in _groupCatalog) {
+      final normalized = group.toLowerCase();
+      if (normalized.startsWith(needle)) {
+        startsWith.add(group);
+      } else if (normalized.contains(needle)) {
+        contains.add(group);
+      }
+    }
+    return [...startsWith, ...contains];
+  }
+
+  Future<String?> _pickGroupFromCatalog({
+    required String title,
+    String initialQuery = '',
+  }) async {
+    final queryController = TextEditingController(text: initialQuery);
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        var filtered = _filterGroupCatalog(initialQuery);
+        return StatefulBuilder(
+          builder: (context, setStateDialog) => AlertDialog(
+            title: Text(title),
+            content: SizedBox(
+              width: 460,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: queryController,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      labelText: _tt('Search group'),
+                      border: const OutlineInputBorder(),
+                    ),
+                    onChanged: (value) {
+                      setStateDialog(() {
+                        filtered = _filterGroupCatalog(value);
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  if (filtered.isEmpty)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(_tt('No groups found')),
+                    )
+                  else
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 280),
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: [
+                          for (final group in filtered)
+                            ListTile(
+                              dense: true,
+                              title: Text(group),
+                              onTap: () => Navigator.of(context).pop(group),
+                            ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(_tt('Close')),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    queryController.dispose();
+    return selected;
+  }
+
+  Future<void> _chooseFilterGroup() async {
+    await _loadGroupCatalog();
+    if (!mounted) return;
+    if (_groupCatalog.isEmpty) {
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = _tt('No journal groups found.');
+      });
+      return;
+    }
+    final selected = await _pickGroupFromCatalog(
+      title: _tt('Select group'),
+      initialQuery: _groupController.text.trim(),
+    );
+    if (!mounted || selected == null || selected.isEmpty) return;
+    setState(() => _groupController.text = selected);
+    _reload();
+  }
+
+  Future<void> _downloadExamTemplate() async {
+    final client = AppStateScope.of(context).client;
+    final opened = await launchUrl(
+      Uri.parse(client.examTemplateUrl()),
+      mode: LaunchMode.platformDefault,
+    );
+    if (!mounted || opened) return;
+    setState(() {
+      _noticeError = true;
+      _noticeMessage = _tt('Failed to open exam template download.');
+    });
   }
 
   void _reload() {
@@ -4129,8 +4310,19 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
 
   Future<void> _openUploadDialog() async {
     final client = AppStateScope.of(context).client;
+    await _loadGroupCatalog();
+    if (!mounted) return;
+    if (_groupCatalog.isEmpty) {
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = _tt('Create journal groups first.');
+      });
+      return;
+    }
     final groupController = TextEditingController(
-      text: _groupController.text.trim(),
+      text: _groupCatalog.contains(_groupController.text.trim())
+          ? _groupController.text.trim()
+          : _groupCatalog.first,
     );
     final examController = TextEditingController(
       text: _examController.text.trim(),
@@ -4145,31 +4337,42 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
         return StatefulBuilder(
           builder: (context, setStateDialog) {
             return AlertDialog(
-              title: const Text('Upload exam grades'),
+              title: Text(_tt('Upload exam grades')),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   TextField(
                     controller: groupController,
-                    decoration: const InputDecoration(
-                      labelText: 'Group',
-                      border: OutlineInputBorder(),
+                    readOnly: true,
+                    decoration: InputDecoration(
+                      labelText: _tt('Group'),
+                      border: const OutlineInputBorder(),
+                      suffixIcon: const Icon(Icons.search),
                     ),
-                    onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+                    onTap: () async {
+                      final selected = await _pickGroupFromCatalog(
+                        title: _tt('Select group'),
+                        initialQuery: groupController.text.trim(),
+                      );
+                      if (selected == null || selected.isEmpty) return;
+                      setStateDialog(() {
+                        groupController.text = selected;
+                      });
+                    },
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: examController,
-                    decoration: const InputDecoration(
-                      labelText: 'Exam name',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: _tt('Exam name'),
+                      border: const OutlineInputBorder(),
                     ),
                     onSubmitted: (_) => FocusScope.of(context).unfocus(),
                   ),
                   const SizedBox(height: 12),
                   Row(
                     children: [
-                      Expanded(child: Text(filename ?? 'No file chosen')),
+                      Expanded(child: Text(filename ?? _tt('No file chosen'))),
                       IconButton(
                         icon: const Icon(Icons.upload_file),
                         onPressed: uploading
@@ -4178,7 +4381,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                                 final result = await FilePicker.platform
                                     .pickFiles(
                                       type: FileType.custom,
-                                      allowedExtensions: ['xlsx'],
+                                      allowedExtensions: ['xlsx', 'csv'],
                                       withData: true,
                                     );
                                 if (result != null && result.files.isNotEmpty) {
@@ -4192,6 +4395,15 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                      onPressed: _downloadExamTemplate,
+                      icon: const Icon(Icons.download_outlined),
+                      label: Text(_tt('Download template (CSV)')),
+                    ),
+                  ),
                 ],
               ),
               actions: [
@@ -4199,7 +4411,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                   onPressed: uploading
                       ? null
                       : () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
+                  child: Text(_tt('Cancel')),
                 ),
                 FilledButton(
                   onPressed: uploading
@@ -4209,12 +4421,14 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                           final exam = examController.text.trim();
                           if (group.isEmpty ||
                               exam.isEmpty ||
+                              !_groupCatalog.contains(group) ||
                               bytes == null ||
                               filename == null) {
                             setState(() {
                               _noticeError = true;
-                              _noticeMessage =
-                                  'Заполните группу, название экзамена и выберите файл.';
+                              _noticeMessage = _tt(
+                                'Select existing group, exam name and file.',
+                              );
                             });
                             return;
                           }
@@ -4229,7 +4443,8 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                             if (!mounted) return;
                             setState(() {
                               _noticeError = false;
-                              _noticeMessage = 'Загружено оценок: $count';
+                              _noticeMessage =
+                                  '${_tt('Uploaded grades')}: $count';
                             });
                             _groupController.text = group;
                             _examController.text = exam;
@@ -4253,7 +4468,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Upload'),
+                      : Text(_tt('Upload')),
                 ),
               ],
             );
@@ -4261,6 +4476,8 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
         );
       },
     );
+    groupController.dispose();
+    examController.dispose();
   }
 
   Widget _buildGradesList() {
@@ -4275,11 +4492,13 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
           return const Center(child: BrandLoadingIndicator());
         }
         if (snapshot.hasError) {
-          return Text('Failed to load exam grades: ${snapshot.error}');
+          return Text(
+            '${_tt('Failed to load exam grades')}: ${snapshot.error}',
+          );
         }
         final items = _filterGradesByRole(snapshot.data ?? []);
         if (items.isEmpty) {
-          return const Text('No exam grades yet');
+          return Text(_tt('No exam grades yet'));
         }
         return Column(
           children: [
@@ -4309,8 +4528,6 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
 
   Widget _buildParentExamTable() {
     final future = _gradesFuture;
-    final localeCode = AppStateScope.of(context).locale.languageCode;
-    final isRu = localeCode == 'ru';
     if (future == null) return const SizedBox.shrink();
     return FutureBuilder<List<ExamGrade>>(
       future: future,
@@ -4327,18 +4544,16 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
         final rows = snapshot.data ?? const <ExamGrade>[];
         final filteredRows = _filterGradesByRole(rows);
         if (filteredRows.isEmpty) {
-          return Text(
-            isRu ? 'Экзаменационных оценок пока нет.' : 'No exam grades yet.',
-          );
+          return Text(_tt('No exam grades yet.'));
         }
         return SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: DataTable(
             columns: [
-              DataColumn(label: Text(isRu ? 'Экзамен' : 'Exam')),
-              DataColumn(label: Text(isRu ? 'Дата' : 'Date')),
-              DataColumn(label: Text(isRu ? 'Группа' : 'Group')),
-              DataColumn(label: Text(isRu ? 'Оценка' : 'Grade')),
+              DataColumn(label: Text(_tt('Exam'))),
+              DataColumn(label: Text(_tt('Date'))),
+              DataColumn(label: Text(_tt('Group'))),
+              DataColumn(label: Text(_tt('Grade'))),
             ],
             rows: filteredRows
                 .map(
@@ -4362,58 +4577,93 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
 
   Future<void> _editUpload(ExamUpload upload) async {
     final client = AppStateScope.of(context).client;
+    await _loadGroupCatalog();
+    if (!mounted) return;
+    if (_groupCatalog.isEmpty) {
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = _tt('No journal groups found.');
+      });
+      return;
+    }
     final groupController = TextEditingController(text: upload.groupName);
     final examController = TextEditingController(text: upload.examName);
     final result = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Edit upload'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: groupController,
-              decoration: const InputDecoration(
-                labelText: 'Group',
-                border: OutlineInputBorder(),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setStateDialog) => AlertDialog(
+          title: Text(_tt('Edit upload')),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: groupController,
+                readOnly: true,
+                decoration: InputDecoration(
+                  labelText: _tt('Group'),
+                  border: const OutlineInputBorder(),
+                  suffixIcon: const Icon(Icons.search),
+                ),
+                onTap: () async {
+                  final selected = await _pickGroupFromCatalog(
+                    title: _tt('Select group'),
+                    initialQuery: groupController.text.trim(),
+                  );
+                  if (selected == null || selected.isEmpty) return;
+                  setStateDialog(() => groupController.text = selected);
+                },
               ),
-              onSubmitted: (_) => FocusScope.of(context).nextFocus(),
+              const SizedBox(height: 12),
+              TextField(
+                controller: examController,
+                decoration: InputDecoration(
+                  labelText: _tt('Exam name'),
+                  border: const OutlineInputBorder(),
+                ),
+                onSubmitted: (_) => Navigator.pop(context, true),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text(_tt('Cancel')),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: examController,
-              decoration: const InputDecoration(
-                labelText: 'Exam name',
-                border: OutlineInputBorder(),
-              ),
-              onSubmitted: (_) => Navigator.pop(context, true),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: Text(_tt('Save')),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Save'),
-          ),
-        ],
       ),
     );
-    if (result != true) return;
+    if (result != true) {
+      groupController.dispose();
+      examController.dispose();
+      return;
+    }
+    final selectedGroup = groupController.text.trim();
+    if (!_groupCatalog.contains(selectedGroup)) {
+      if (!mounted) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = _tt('Select an existing group.');
+      });
+      groupController.dispose();
+      examController.dispose();
+      return;
+    }
     try {
       await client.updateExamUpload(
         upload.id,
-        groupName: groupController.text.trim(),
+        groupName: selectedGroup,
         examName: examController.text.trim(),
       );
       if (!mounted) return;
       _reload();
       setState(() {
         _noticeError = false;
-        _noticeMessage = 'Загрузка обновлена.';
+        _noticeMessage = _tt('Upload updated.');
       });
     } catch (error) {
       if (!mounted) return;
@@ -4422,6 +4672,8 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
         _noticeMessage = humanizeError(error);
       });
     }
+    groupController.dispose();
+    examController.dispose();
   }
 
   Future<void> _deleteUpload(ExamUpload upload) async {
@@ -4429,16 +4681,16 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete upload?'),
-        content: const Text('All grades from this upload will be deleted.'),
+        title: Text(_tt('Delete upload?')),
+        content: Text(_tt('All grades from this upload will be deleted.')),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text(_tt('Cancel')),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
+            child: Text(_tt('Delete')),
           ),
         ],
       ),
@@ -4450,8 +4702,66 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
       _reload();
       setState(() {
         _noticeError = false;
-        _noticeMessage = 'Загрузка удалена.';
+        _noticeMessage = _tt('Upload deleted.');
       });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = humanizeError(error);
+      });
+    }
+  }
+
+  Future<void> _deletePastUploads() async {
+    if (!_isAdmin) return;
+    final client = AppStateScope.of(context).client;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: DateUtils.dateOnly(DateTime.now()),
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+      helpText: _tt('Delete uploads before date'),
+    );
+    if (picked == null || !mounted) return;
+    final group = _groupController.text.trim();
+    final exam = _examController.text.trim();
+    final dateLabel = DateFormat('dd.MM.yyyy').format(picked);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(_tt('Delete past uploads?')),
+        content: Text(
+          '${_tt('Uploads before')} $dateLabel ${_tt('will be deleted.')}${group.isEmpty ? '' : '\n${_tt('Group')}: $group'}${exam.isEmpty ? '' : '\n${_tt('Exam')}: $exam'}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(_tt('Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(_tt('Delete')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final result = await client.deletePastExamUploads(
+        beforeDate: picked,
+        groupName: group.isEmpty ? null : group,
+        examName: exam.isEmpty ? null : exam,
+      );
+      if (!mounted) return;
+      final uploadsDeleted = (result['uploads_deleted'] as num?)?.toInt() ?? 0;
+      final gradesDeleted = (result['grades_deleted'] as num?)?.toInt() ?? 0;
+      setState(() {
+        _noticeError = false;
+        _noticeMessage =
+            '${_tt('Deleted uploads')}: $uploadsDeleted. ${_tt('Deleted grades')}: $gradesDeleted.';
+      });
+      _reload();
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -4473,11 +4783,11 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
           return const Center(child: BrandLoadingIndicator());
         }
         if (snapshot.hasError) {
-          return Text('Failed to load uploads: ${snapshot.error}');
+          return Text('${_tt('Failed to load uploads')}: ${snapshot.error}');
         }
         final items = snapshot.data ?? [];
         if (items.isEmpty) {
-          return const Text('No uploads yet');
+          return Text(_tt('No uploads yet'));
         }
         return Column(
           children: [
@@ -4500,13 +4810,13 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                             }
                           },
                           itemBuilder: (context) => [
-                            const PopupMenuItem(
+                            PopupMenuItem(
                               value: 'edit',
-                              child: Text('Edit'),
+                              child: Text(_tt('Edit')),
                             ),
-                            const PopupMenuItem(
+                            PopupMenuItem(
                               value: 'delete',
-                              child: Text('Delete'),
+                              child: Text(_tt('Delete')),
                             ),
                           ],
                         )
@@ -4522,25 +4832,21 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
   @override
   Widget build(BuildContext context) {
     final role = AppStateScope.of(context).user?.role ?? '';
-    final localeCode = AppStateScope.of(context).locale.languageCode;
-    final isRu = localeCode == 'ru';
     if (role == 'parent') {
       return FeatureScaffold(
-        title: isRu ? 'Экзаменационные оценки ребёнка' : 'Child exam grades',
-        subtitle: isRu
-            ? 'Только оценки подтвержденного ребёнка.'
-            : 'Only grades for approved child.',
-        actionLabel: isRu ? 'Обновить' : 'Refresh',
+        title: _tt('Child exam grades'),
+        subtitle: _tt('Only grades for approved child.'),
+        actionLabel: _tt('Refresh'),
         onAction: _reload,
         child: _buildParentExamTable(),
       );
     }
     return FeatureScaffold(
-      title: 'Exam grades',
+      title: _tt('Exam grades'),
       subtitle: _canUpload
-          ? 'Upload and review exam grades'
-          : 'Your exam results',
-      actionLabel: _canUpload ? 'Upload exam grades' : null,
+          ? _tt('Upload and review exam grades')
+          : _tt('Your exam results'),
+      actionLabel: _canUpload ? _tt('Upload exam grades') : null,
       onAction: _canUpload ? _openUploadDialog : null,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4555,30 +4861,80 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                 children: [
                   TextField(
                     controller: _groupController,
-                    decoration: const InputDecoration(
-                      labelText: 'Group',
-                      border: OutlineInputBorder(),
+                    readOnly: _canUpload,
+                    decoration: InputDecoration(
+                      labelText: _tt('Group'),
+                      hintText: _canUpload
+                          ? (_groupsLoading
+                                ? _tt('Loading groups...')
+                                : _tt('Select existing group'))
+                          : null,
+                      border: const OutlineInputBorder(),
+                      suffixIcon: _canUpload
+                          ? Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (_groupController.text.trim().isNotEmpty)
+                                  IconButton(
+                                    onPressed: () {
+                                      setState(() => _groupController.clear());
+                                      _reload();
+                                    },
+                                    icon: const Icon(Icons.close),
+                                  ),
+                                IconButton(
+                                  onPressed: _groupsLoading
+                                      ? null
+                                      : _chooseFilterGroup,
+                                  icon: const Icon(Icons.search),
+                                ),
+                              ],
+                            )
+                          : null,
                     ),
+                    onTap: _canUpload ? _chooseFilterGroup : null,
                     onSubmitted: (_) => FocusScope.of(context).nextFocus(),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: _examController,
-                    decoration: const InputDecoration(
-                      labelText: 'Exam name',
-                      border: OutlineInputBorder(),
+                    decoration: InputDecoration(
+                      labelText: _tt('Exam name'),
+                      border: const OutlineInputBorder(),
                     ),
                     onSubmitted: (_) => _reload(),
                   ),
                   const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: FilledButton.icon(
-                      onPressed: _reload,
-                      icon: const Icon(Icons.search),
-                      label: const Text('Filter'),
-                    ),
+                  Row(
+                    children: [
+                      if (_canUpload)
+                        OutlinedButton.icon(
+                          onPressed: _downloadExamTemplate,
+                          icon: const Icon(Icons.download_outlined),
+                          label: Text(_tt('Template')),
+                        ),
+                      const Spacer(),
+                      FilledButton.icon(
+                        onPressed: _reload,
+                        icon: const Icon(Icons.search),
+                        label: Text(_tt('Filter')),
+                      ),
+                    ],
                   ),
+                  if (_canUpload && _showUploads && _isAdmin) ...[
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: FilledButton.icon(
+                        onPressed: _deletePastUploads,
+                        icon: const Icon(Icons.delete_sweep_outlined),
+                        label: Text(_tt('Delete past uploads')),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: Colors.red.shade600,
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -4597,7 +4953,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                               context,
                             ).colorScheme.primary.withValues(alpha: 0.12),
                     ),
-                    child: const Text('Grades'),
+                    child: Text(_tt('Grades')),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -4611,7 +4967,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                             ).colorScheme.primary.withValues(alpha: 0.12)
                           : null,
                     ),
-                    child: const Text('Uploads'),
+                    child: Text(_tt('Uploads')),
                   ),
                 ),
               ],

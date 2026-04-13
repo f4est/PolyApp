@@ -175,7 +175,8 @@ class _MakeupWorkspacePageState extends State<MakeupWorkspacePage> {
   bool get _canManage =>
       widget.currentUser.role == 'teacher' ||
       widget.currentUser.role == 'admin';
-  String _t(String ru, String en) => trTextByCode(widget.locale.languageCode, ru, en);
+  String _t(String ru, String en) =>
+      trTextByCode(widget.locale.languageCode, ru, en);
 
   @override
   void initState() {
@@ -460,7 +461,12 @@ class _MakeupWorkspacePageState extends State<MakeupWorkspacePage> {
                         for (final status in kMakeupStatuses)
                           DropdownMenuItem(
                             value: status,
-                            child: Text(makeupStatusLabel(status, widget.locale.languageCode)),
+                            child: Text(
+                              makeupStatusLabel(
+                                status,
+                                widget.locale.languageCode,
+                              ),
+                            ),
                           ),
                       ],
                       onChanged: (value) {
@@ -590,7 +596,8 @@ class _MakeupCaseDetailScreenState extends State<MakeupCaseDetailScreen> {
   Timer? _autoRefreshTimer;
 
   bool get _isRu => widget.locale.languageCode == 'ru';
-  String _t(String ru, String en) => trTextByCode(widget.locale.languageCode, ru, en);
+  String _t(String ru, String en) =>
+      trTextByCode(widget.locale.languageCode, ru, en);
   bool get _canTeacherEdit =>
       widget.currentUser.role == 'teacher' ||
       widget.currentUser.role == 'admin';
@@ -1487,7 +1494,10 @@ class _MakeupCaseDetailScreenState extends State<MakeupCaseDetailScreen> {
                                     DropdownMenuItem(
                                       value: status,
                                       child: Text(
-                                        makeupStatusLabel(status, widget.locale.languageCode),
+                                        makeupStatusLabel(
+                                          status,
+                                          widget.locale.languageCode,
+                                        ),
                                       ),
                                     ),
                                 ],
@@ -1914,7 +1924,8 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
   String? _journalGroup;
 
   bool get _isRu => widget.locale.languageCode == 'ru';
-  String _t(String ru, String en) => trTextByCode(widget.locale.languageCode, ru, en);
+  String _t(String ru, String en) =>
+      trTextByCode(widget.locale.languageCode, ru, en);
   String _readError(Object error) => widget.errorText(error);
   bool get _isSuperAdmin =>
       widget.currentUser.adminPermissions.isEmpty ||
@@ -1938,6 +1949,65 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
       default:
         return key;
     }
+  }
+
+  List<String> _normalizeGroupNames(Iterable<String> rawValues) {
+    final set = <String>{};
+    for (final raw in rawValues) {
+      final value = raw.trim();
+      if (value.isNotEmpty) {
+        set.add(value);
+      }
+    }
+    final list = set.toList(growable: false);
+    list.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return list;
+  }
+
+  Future<List<String>> _loadAdminGroupCatalog({
+    Iterable<String> seed = const <String>[],
+  }) async {
+    final collected = <String>{};
+    void addAll(Iterable<String> values) {
+      for (final raw in values) {
+        final value = raw.trim();
+        if (value.isNotEmpty) {
+          collected.add(value);
+        }
+      }
+    }
+
+    addAll(seed);
+    try {
+      addAll(await widget.client.listJournalGroupCatalog());
+    } catch (_) {}
+    try {
+      addAll(await widget.client.listJournalGroups());
+    } catch (_) {}
+    try {
+      final students = await widget.client.listUsers(role: 'student');
+      addAll(students.map((user) => user.studentGroup ?? ''));
+    } catch (_) {}
+    return _normalizeGroupNames(collected);
+  }
+
+  List<String> _filterGroupCatalog(List<String> groups, String query) {
+    if (groups.isEmpty) return const <String>[];
+    final needle = query.trim().toLowerCase();
+    if (needle.isEmpty) {
+      return groups;
+    }
+    final startsWith = <String>[];
+    final contains = <String>[];
+    for (final group in groups) {
+      final normalized = group.toLowerCase();
+      if (normalized.startsWith(needle)) {
+        startsWith.add(group);
+      } else if (normalized.contains(needle)) {
+        contains.add(group);
+      }
+    }
+    return [...startsWith, ...contains];
   }
 
   @override
@@ -1997,6 +2067,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
 
   Future<void> _createUser() async {
     List<UserPublicProfile> approvedStudents = const [];
+    List<String> availableGroups = const [];
     try {
       approvedStudents = await widget.client.listApprovedStudents();
     } catch (error) {
@@ -2008,6 +2079,9 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
       }
       return;
     }
+    availableGroups = await _loadAdminGroupCatalog(
+      seed: approvedStudents.map((item) => item.studentGroup ?? ''),
+    );
     String role = 'student';
     bool isApproved = true;
     final selectedAdminPermissions = <String>{};
@@ -2086,11 +2160,79 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                 ),
                 const SizedBox(height: 8),
                 if (role == 'student')
-                  TextField(
-                    controller: groupController,
-                    decoration: InputDecoration(
-                      labelText: _t('Группа', 'Group'),
-                    ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TextField(
+                        controller: groupController,
+                        onChanged: (_) => setDialogState(() {}),
+                        decoration: InputDecoration(
+                          labelText: _t('Группа', 'Group'),
+                          hintText: _t(
+                            'Начните вводить, например P22',
+                            'Start typing, e.g. P22',
+                          ),
+                        ),
+                      ),
+                      if (availableGroups.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Builder(
+                          builder: (context) {
+                            final filtered = _filterGroupCatalog(
+                              availableGroups,
+                              groupController.text,
+                            );
+                            return Container(
+                              width: double.infinity,
+                              constraints: const BoxConstraints(maxHeight: 150),
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                  color: const Color(0xFFD8E3DB),
+                                ),
+                                borderRadius: BorderRadius.circular(10),
+                                color: const Color(0xFFF6FAF8),
+                              ),
+                              child: filtered.isEmpty
+                                  ? Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                        vertical: 10,
+                                      ),
+                                      child: Text(
+                                        _t(
+                                          'Нет групп с таким началом.',
+                                          'No groups found for this query.',
+                                        ),
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: Color(0xFF6B7280),
+                                        ),
+                                      ),
+                                    )
+                                  : ListView(
+                                      shrinkWrap: true,
+                                      children: [
+                                        for (final group in filtered)
+                                          ListTile(
+                                            dense: true,
+                                            title: Text(group),
+                                            onTap: () {
+                                              setDialogState(() {
+                                                groupController.text = group;
+                                                groupController.selection =
+                                                    TextSelection.collapsed(
+                                                      offset: group.length,
+                                                    );
+                                              });
+                                            },
+                                          ),
+                                      ],
+                                    ),
+                            );
+                          },
+                        ),
+                      ],
+                    ],
                   ),
                 if (role == 'teacher')
                   TextField(
@@ -2287,6 +2429,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
 
   Future<void> _editUser(UserProfile user) async {
     List<UserPublicProfile> approvedStudents = const [];
+    List<String> availableGroups = const [];
     try {
       approvedStudents = await widget.client.listApprovedStudents();
     } catch (error) {
@@ -2298,6 +2441,12 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
       }
       return;
     }
+    availableGroups = await _loadAdminGroupCatalog(
+      seed: [
+        user.studentGroup ?? '',
+        ...approvedStudents.map((item) => item.studentGroup ?? ''),
+      ],
+    );
     String role = user.role;
     final fullNameController = TextEditingController(text: user.fullName);
     final emailController = TextEditingController(text: user.email);
@@ -2386,10 +2535,71 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                 if (role == 'student') ...[
                   TextField(
                     controller: groupController,
+                    onChanged: (_) => setDialogState(() {}),
                     decoration: InputDecoration(
                       labelText: _t('Группа', 'Group'),
+                      hintText: _t(
+                        'Начните вводить, например P22',
+                        'Start typing, e.g. P22',
+                      ),
                     ),
                   ),
+                  if (availableGroups.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Builder(
+                      builder: (context) {
+                        final filtered = _filterGroupCatalog(
+                          availableGroups,
+                          groupController.text,
+                        );
+                        return Container(
+                          width: double.infinity,
+                          constraints: const BoxConstraints(maxHeight: 150),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: const Color(0xFFD8E3DB)),
+                            borderRadius: BorderRadius.circular(10),
+                            color: const Color(0xFFF6FAF8),
+                          ),
+                          child: filtered.isEmpty
+                              ? Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  child: Text(
+                                    _t(
+                                      'Нет групп с таким началом.',
+                                      'No groups found for this query.',
+                                    ),
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Color(0xFF6B7280),
+                                    ),
+                                  ),
+                                )
+                              : ListView(
+                                  shrinkWrap: true,
+                                  children: [
+                                    for (final group in filtered)
+                                      ListTile(
+                                        dense: true,
+                                        title: Text(group),
+                                        onTap: () {
+                                          setDialogState(() {
+                                            groupController.text = group;
+                                            groupController.selection =
+                                                TextSelection.collapsed(
+                                                  offset: group.length,
+                                                );
+                                          });
+                                        },
+                                      ),
+                                  ],
+                                ),
+                        );
+                      },
+                    ),
+                  ],
                   const SizedBox(height: 8),
                 ],
                 if (role == 'teacher') ...[
@@ -3715,6 +3925,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     if (!mounted) return;
     String studentName = existing?.studentName ?? students.first;
     DateTime classDate = existing?.classDate ?? DateTime.now();
+    int lessonSlot = existing?.lessonSlot ?? 1;
     bool present = existing?.present ?? true;
     final ok = await showDialog<bool>(
       context: context,
@@ -3788,6 +3999,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     await widget.client.createAttendance(
       groupName: _journalGroup!,
       classDate: classDate,
+      lessonSlot: lessonSlot,
       studentName: studentName,
       present: present,
     );
@@ -3798,6 +4010,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     await widget.client.deleteAttendance(
       groupName: item.groupName,
       classDate: item.classDate,
+      lessonSlot: item.lessonSlot,
       studentName: item.studentName,
     );
     _reloadAll();
@@ -5378,7 +5591,12 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                       for (final status in kMakeupStatuses)
                         DropdownMenuItem(
                           value: status,
-                          child: Text(makeupStatusLabel(status, widget.locale.languageCode)),
+                          child: Text(
+                            makeupStatusLabel(
+                              status,
+                              widget.locale.languageCode,
+                            ),
+                          ),
                         ),
                     ],
                     onChanged: (value) {
@@ -5867,4 +6085,3 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     );
   }
 }
-

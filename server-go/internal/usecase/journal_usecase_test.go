@@ -14,7 +14,7 @@ type fakeJournalRepo struct {
 	binding          *entity.GroupPresetBinding
 	teacherGroups    map[uint]map[string]struct{}
 	studentsByGroup  map[string][]string
-	datesByGroup     map[string][]time.Time
+	datesByGroup     map[string][]entity.JournalDate
 	dateCellsByGroup map[string][]entity.JournalCell
 	manualByGroup    map[string][]entity.ManualCell
 	computedByGroup  map[string][]entity.ComputedRow
@@ -24,7 +24,7 @@ func newFakeJournalRepo() *fakeJournalRepo {
 	return &fakeJournalRepo{
 		teacherGroups:    map[uint]map[string]struct{}{},
 		studentsByGroup:  map[string][]string{},
-		datesByGroup:     map[string][]time.Time{},
+		datesByGroup:     map[string][]entity.JournalDate{},
 		dateCellsByGroup: map[string][]entity.JournalCell{},
 		manualByGroup:    map[string][]entity.ManualCell{},
 		computedByGroup:  map[string][]entity.ComputedRow{},
@@ -56,8 +56,8 @@ func (r *fakeJournalRepo) ListJournalStudents(_ context.Context, groupName strin
 	return append([]string{}, r.studentsByGroup[groupName]...), nil
 }
 
-func (r *fakeJournalRepo) ListJournalDates(_ context.Context, groupName string) ([]time.Time, error) {
-	return append([]time.Time{}, r.datesByGroup[groupName]...), nil
+func (r *fakeJournalRepo) ListJournalDates(_ context.Context, groupName string) ([]entity.JournalDate, error) {
+	return append([]entity.JournalDate{}, r.datesByGroup[groupName]...), nil
 }
 
 func (r *fakeJournalRepo) ListDateCells(_ context.Context, groupName string) ([]entity.JournalCell, error) {

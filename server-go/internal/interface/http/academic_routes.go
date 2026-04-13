@@ -54,13 +54,15 @@ type journalStudentPayload struct {
 }
 
 type journalDatePayload struct {
-	GroupName string `json:"group_name"`
-	ClassDate string `json:"class_date"`
+	GroupName  string `json:"group_name"`
+	ClassDate  string `json:"class_date"`
+	LessonSlot *int   `json:"lesson_slot"`
 }
 
 type attendancePayload struct {
 	GroupName   string `json:"group_name"`
 	ClassDate   string `json:"class_date"`
+	LessonSlot  *int   `json:"lesson_slot"`
 	StudentName string `json:"student_name"`
 	Present     bool   `json:"present"`
 }
@@ -89,6 +91,8 @@ type examUploadUpdatePayload struct {
 }
 
 func (h *Handler) RegisterAcademicRoutes(router *gin.Engine, auth *httpMiddleware.AuthMiddleware) {
+	router.GET("/exams/template", h.downloadExamTemplate)
+
 	secured := router.Group("/")
 	secured.Use(auth.RequireAuth())
 	{
@@ -185,6 +189,7 @@ func (h *Handler) RegisterAcademicRoutes(router *gin.Engine, auth *httpMiddlewar
 
 		secured.GET("/exams", httpMiddleware.RequireRoles("student", "parent", "teacher", "admin"), h.listExamGrades)
 		secured.GET("/exams/uploads", httpMiddleware.RequireRoles("teacher", "admin"), h.listExamUploads)
+		secured.DELETE("/exams/uploads/past", httpMiddleware.RequireRoles("admin"), h.deletePastExamUploads)
 		secured.PATCH("/exams/uploads/:id", httpMiddleware.RequireRoles("teacher", "admin"), h.updateExamUpload)
 		secured.DELETE("/exams/uploads/:id", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteExamUpload)
 		secured.POST("/exams/upload", httpMiddleware.RequireRoles("teacher", "admin"), h.uploadExamGrades)
@@ -197,6 +202,36 @@ func parseDate(value string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return parsed.UTC(), nil
+}
+
+func normalizeLessonSlot(value int) int {
+	if value < 1 {
+		return 1
+	}
+	return value
+}
+
+func parseOptionalLessonSlot(raw string) (*int, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil, nil
+	}
+	value, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	if value < 1 {
+		return nil, strconv.ErrSyntax
+	}
+	normalized := normalizeLessonSlot(value)
+	return &normalized, nil
+}
+
+func lessonSlotFromPointer(value *int) int {
+	if value == nil {
+		return 1
+	}
+	return normalizeLessonSlot(*value)
 }
 
 func contains(items []string, value string) bool {

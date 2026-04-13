@@ -379,6 +379,7 @@ func (h *Handler) upsertAttendance(c *gin.Context) {
 	row := persistence.DBAttendanceRecord{
 		GroupName:   strings.TrimSpace(payload.GroupName),
 		ClassDate:   classDate,
+		LessonSlot:  lessonSlotFromPointer(payload.LessonSlot),
 		StudentName: strings.TrimSpace(payload.StudentName),
 		Present:     payload.Present,
 		TeacherID:   user.ID,
@@ -401,7 +402,13 @@ func (h *Handler) upsertAttendance(c *gin.Context) {
 	tx := h.db.WithContext(c.Request.Context())
 	actor := actorFromContext(c)
 	var existing persistence.DBAttendanceRecord
-	err = tx.Where("group_name = ? AND class_date = ? AND student_name = ?", row.GroupName, row.ClassDate, row.StudentName).
+	err = tx.Where(
+		"group_name = ? AND class_date = ? AND lesson_slot = ? AND student_name = ?",
+		row.GroupName,
+		row.ClassDate,
+		row.LessonSlot,
+		row.StudentName,
+	).
 		First(&existing).Error
 	switch {
 	case err == nil:
@@ -477,7 +484,7 @@ func (h *Handler) listAttendance(c *gin.Context) {
 		}
 	}
 	var rows []persistence.DBAttendanceRecord
-	if err := query.Order("class_date desc").Find(&rows).Error; err != nil {
+	if err := query.Order("class_date desc").Order("lesson_slot desc").Find(&rows).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load attendance"})
 		return
 	}
@@ -497,9 +504,18 @@ func (h *Handler) deleteAttendance(c *gin.Context) {
 	group := strings.TrimSpace(c.Query("group_name"))
 	student := strings.TrimSpace(c.Query("student_name"))
 	classDate, err := parseDate(c.Query("class_date"))
+	slotPtr, slotErr := parseOptionalLessonSlot(c.Query("lesson_slot"))
 	if group == "" || student == "" || err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name, class_date and student_name are required"})
 		return
+	}
+	if slotErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "lesson_slot should be a positive integer"})
+		return
+	}
+	slot := 1
+	if slotPtr != nil {
+		slot = *slotPtr
 	}
 	if user.Role == "teacher" {
 		scope, scopeErr := h.groupScopeForUser(c.Request.Context(), user)
@@ -513,7 +529,13 @@ func (h *Handler) deleteAttendance(c *gin.Context) {
 		}
 	}
 	res := h.db.WithContext(c.Request.Context()).
-		Where("group_name = ? AND class_date = ? AND student_name = ?", group, classDate, student).
+		Where(
+			"group_name = ? AND class_date = ? AND lesson_slot = ? AND student_name = ?",
+			group,
+			classDate,
+			slot,
+			student,
+		).
 		Delete(&persistence.DBAttendanceRecord{})
 	if res.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete attendance"})
@@ -877,7 +899,7 @@ func (h *Handler) analyticsAttendance(c *gin.Context) {
 		}
 	}
 	var rows []persistence.DBAttendanceRecord
-	if err := query.Order("class_date desc").Find(&rows).Error; err != nil {
+	if err := query.Order("class_date desc").Order("lesson_slot desc").Find(&rows).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load analytics"})
 		return
 	}
@@ -964,6 +986,7 @@ func mapAttendance(row persistence.DBAttendanceRecord) gin.H {
 		"id":           row.ID,
 		"group_name":   row.GroupName,
 		"class_date":   dateOnly(row.ClassDate),
+		"lesson_slot":  normalizeLessonSlot(row.LessonSlot),
 		"student_name": row.StudentName,
 		"present":      row.Present,
 	}
@@ -1005,6 +1028,7 @@ func (h *Handler) notifyAttendanceChanged(ctx context.Context, row persistence.D
 			"type":         "attendance_updated",
 			"group_name":   row.GroupName,
 			"class_date":   dateOnly(row.ClassDate),
+			"lesson_slot":  normalizeLessonSlot(row.LessonSlot),
 			"student_name": row.StudentName,
 			"present":      row.Present,
 		},

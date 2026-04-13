@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"encoding/csv"
 	"fmt"
 	"io"
@@ -299,6 +300,70 @@ func (h *Handler) listExamUploads(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+func (h *Handler) deletePastExamUploads(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermAcademicManage) {
+		return
+	}
+	groupName := strings.TrimSpace(c.Query("group_name"))
+	examName := strings.TrimSpace(c.Query("exam_name"))
+	beforeDate := strings.TrimSpace(c.Query("before_date"))
+	cutoff := time.Now().UTC()
+	if beforeDate != "" {
+		parsed, err := parseDate(beforeDate)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid before_date. Use YYYY-MM-DD"})
+			return
+		}
+		// Treat date as inclusive day boundary and remove records before next day.
+		cutoff = parsed.Add(24 * time.Hour)
+	}
+	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBExamUpload{}).Where("uploaded_at < ?", cutoff)
+	if groupName != "" {
+		query = query.Where("group_name = ?", groupName)
+	}
+	if examName != "" {
+		query = query.Where("exam_name = ?", examName)
+	}
+	var uploads []persistence.DBExamUpload
+	if err := query.Find(&uploads).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load uploads"})
+		return
+	}
+	if len(uploads) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"uploads_deleted": 0,
+			"grades_deleted":  0,
+		})
+		return
+	}
+	ids := make([]uint, 0, len(uploads))
+	for _, row := range uploads {
+		ids = append(ids, row.ID)
+	}
+	var gradesDeleted int64
+	var uploadsDeleted int64
+	if err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		res := tx.Where("upload_id IN ?", ids).Delete(&persistence.DBExamGrade{})
+		if res.Error != nil {
+			return res.Error
+		}
+		gradesDeleted = res.RowsAffected
+		res = tx.Where("id IN ?", ids).Delete(&persistence.DBExamUpload{})
+		if res.Error != nil {
+			return res.Error
+		}
+		uploadsDeleted = res.RowsAffected
+		return nil
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete uploads"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"uploads_deleted": uploadsDeleted,
+		"grades_deleted":  gradesDeleted,
+	})
+}
+
 func (h *Handler) updateExamUpload(c *gin.Context) {
 	user := httpMiddleware.CurrentUser(c)
 	id, err := parseUintParam(c, "id")
@@ -329,6 +394,18 @@ func (h *Handler) updateExamUpload(c *gin.Context) {
 	}
 	if payload.ExamName != nil {
 		upload.ExamName = strings.TrimSpace(*payload.ExamName)
+	}
+	if upload.GroupName == "" || upload.ExamName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Group and exam name are required"})
+		return
+	}
+	if err := h.ensureExamGroupExists(c.Request.Context(), upload.GroupName); err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusBadRequest, gin.H{"detail": "Group not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to validate group"})
+		return
 	}
 	err = h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Save(&upload).Error; err != nil {
@@ -399,6 +476,14 @@ func (h *Handler) uploadExamGrades(c *gin.Context) {
 	examName := strings.TrimSpace(c.PostForm("exam_name"))
 	if groupName == "" || examName == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Group and exam name are required"})
+		return
+	}
+	if err := h.ensureExamGroupExists(c.Request.Context(), groupName); err != nil {
+		if err == gorm.ErrRecordNotFound {
+			c.JSON(http.StatusBadRequest, gin.H{"detail": "Group not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to validate group"})
 		return
 	}
 	file, err := c.FormFile("file")
@@ -551,7 +636,7 @@ func parseExamRows(data []byte, filename string) ([]examRow, error) {
 
 func parseExamTable(rows [][]string) ([]examRow, error) {
 	out := []examRow{}
-	for _, row := range rows {
+	for index, row := range rows {
 		if len(row) < 2 {
 			continue
 		}
@@ -562,11 +647,86 @@ func parseExamTable(rows [][]string) ([]examRow, error) {
 		}
 		grade, err := strconv.Atoi(gradeRaw)
 		if err != nil {
+			if index == 0 && isExamHeaderRow(name, gradeRaw) {
+				continue
+			}
 			return nil, fmt.Errorf("invalid grade for %s", name)
 		}
 		out = append(out, examRow{StudentName: name, Grade: grade})
 	}
 	return out, nil
+}
+
+func isExamHeaderRow(name string, grade string) bool {
+	normalizedName := strings.ToLower(strings.TrimSpace(name))
+	normalizedGrade := strings.ToLower(strings.TrimSpace(grade))
+	if normalizedName == "" || normalizedGrade == "" {
+		return false
+	}
+	nameHeaders := []string{
+		"student",
+		"student_name",
+		"name",
+		"full_name",
+		"fio",
+		"\u0441\u0442\u0443\u0434\u0435\u043d\u0442",
+		"\u0441\u0442\u0443\u0434\u0435\u043d\u0442 \u0444\u0438\u043e",
+		"\u0444\u0438\u043e",
+	}
+	gradeHeaders := []string{
+		"grade",
+		"mark",
+		"score",
+		"result",
+		"\u043e\u0446\u0435\u043d\u043a\u0430",
+		"\u0431\u0430\u043b\u043b",
+		"\u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442",
+	}
+	return containsExactOrPart(nameHeaders, normalizedName) &&
+		containsExactOrPart(gradeHeaders, normalizedGrade)
+}
+
+func containsExactOrPart(candidates []string, value string) bool {
+	for _, item := range candidates {
+		if value == item || strings.Contains(value, item) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handler) ensureExamGroupExists(ctx context.Context, groupName string) error {
+	trimmed := strings.TrimSpace(groupName)
+	if trimmed == "" {
+		return gorm.ErrRecordNotFound
+	}
+	var count int64
+	if err := h.db.WithContext(ctx).
+		Model(&persistence.DBJournalGroup{}).
+		Where("name = ?", trimmed).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+func (h *Handler) downloadExamTemplate(c *gin.Context) {
+	rows := [][]string{
+		{"student_name", "grade"},
+		{"Student Demo", "5"},
+		{"Another Student", "4"},
+	}
+	var buffer bytes.Buffer
+	writer := csv.NewWriter(&buffer)
+	if err := writer.WriteAll(rows); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to build template"})
+		return
+	}
+	c.Header("Content-Disposition", `attachment; filename="exam_template.csv"`)
+	c.Data(http.StatusOK, "text/csv; charset=utf-8", buffer.Bytes())
 }
 
 func mapExamGrade(row persistence.DBExamGrade) gin.H {

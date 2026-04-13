@@ -15,6 +15,7 @@ import (
 
 type dateCellAttendanceSync struct {
 	ClassDate   time.Time
+	LessonSlot  int
 	StudentName string
 	RawValue    string
 }
@@ -38,7 +39,13 @@ func (h *Handler) syncAttendanceToJournalV2(
 	if row.Present {
 		var existing persistence.DBJournalDateCellV2
 		err := h.db.WithContext(ctx).
-			Where("group_name = ? AND class_date = ? AND student_name = ?", groupName, row.ClassDate, studentName).
+			Where(
+				"group_name = ? AND class_date = ? AND lesson_slot = ? AND student_name = ?",
+				groupName,
+				row.ClassDate,
+				normalizeLessonSlot(row.LessonSlot),
+				studentName,
+			).
 			First(&existing).Error
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -50,7 +57,13 @@ func (h *Handler) syncAttendanceToJournalV2(
 			return nil
 		}
 		if err := h.db.WithContext(ctx).
-			Where("group_name = ? AND class_date = ? AND student_name = ?", groupName, row.ClassDate, studentName).
+			Where(
+				"group_name = ? AND class_date = ? AND lesson_slot = ? AND student_name = ?",
+				groupName,
+				row.ClassDate,
+				normalizeLessonSlot(row.LessonSlot),
+				studentName,
+			).
 			Delete(&persistence.DBJournalDateCellV2{}).Error; err != nil {
 			return err
 		}
@@ -59,6 +72,7 @@ func (h *Handler) syncAttendanceToJournalV2(
 		cell := persistence.DBJournalDateCellV2{
 			GroupName:   groupName,
 			ClassDate:   row.ClassDate,
+			LessonSlot:  normalizeLessonSlot(row.LessonSlot),
 			StudentName: studentName,
 			RawValue:    "Н",
 			StatusCode:  "Н",
@@ -70,12 +84,14 @@ func (h *Handler) syncAttendanceToJournalV2(
 				Columns: []clause.Column{
 					{Name: "group_name"},
 					{Name: "class_date"},
+					{Name: "lesson_slot"},
 					{Name: "student_name"},
 				},
 				DoUpdates: clause.Assignments(map[string]any{
 					"raw_value":     cell.RawValue,
 					"numeric_value": nil,
 					"status_code":   cell.StatusCode,
+					"lesson_slot":   cell.LessonSlot,
 					"updated_by":    cell.UpdatedBy,
 					"updated_at":    cell.UpdatedAt,
 				}),
@@ -114,6 +130,7 @@ func (h *Handler) syncDateCellsToAttendance(
 		row := persistence.DBAttendanceRecord{
 			GroupName:   groupName,
 			ClassDate:   item.ClassDate,
+			LessonSlot:  normalizeLessonSlot(item.LessonSlot),
 			StudentName: studentName,
 			Present:     present,
 			TeacherID:   actor.UserID,
@@ -123,11 +140,13 @@ func (h *Handler) syncDateCellsToAttendance(
 				Columns: []clause.Column{
 					{Name: "group_name"},
 					{Name: "class_date"},
+					{Name: "lesson_slot"},
 					{Name: "student_name"},
 				},
 				DoUpdates: clause.Assignments(map[string]any{
-					"present":    present,
-					"teacher_id": actor.UserID,
+					"lesson_slot": row.LessonSlot,
+					"present":     present,
+					"teacher_id":  actor.UserID,
 				}),
 			}).
 			Create(&row).Error; err != nil {
@@ -150,6 +169,7 @@ func (h *Handler) syncGradeToAttendance(
 	attendance := persistence.DBAttendanceRecord{
 		GroupName:   groupName,
 		ClassDate:   row.ClassDate,
+		LessonSlot:  1,
 		StudentName: studentName,
 		Present:     true,
 		TeacherID:   teacherID,
@@ -159,11 +179,13 @@ func (h *Handler) syncGradeToAttendance(
 			Columns: []clause.Column{
 				{Name: "group_name"},
 				{Name: "class_date"},
+				{Name: "lesson_slot"},
 				{Name: "student_name"},
 			},
 			DoUpdates: clause.Assignments(map[string]any{
-				"present":    true,
-				"teacher_id": teacherID,
+				"lesson_slot": attendance.LessonSlot,
+				"present":     true,
+				"teacher_id":  teacherID,
 			}),
 		}).
 		Create(&attendance).Error

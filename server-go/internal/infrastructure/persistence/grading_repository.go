@@ -221,23 +221,39 @@ func (r *GradingRepo) ListJournalStudents(ctx context.Context, groupName string)
 	return students, nil
 }
 
-func (r *GradingRepo) ListJournalDates(ctx context.Context, groupName string) ([]time.Time, error) {
-	var dates []time.Time
+func (r *GradingRepo) ListJournalDates(ctx context.Context, groupName string) ([]entity.JournalDate, error) {
+	var rows []DBJournalDate
 	if err := r.db.WithContext(ctx).
-		Model(&DBJournalDate{}).
 		Where("group_name = ?", groupName).
 		Order("class_date asc").
-		Pluck("class_date", &dates).Error; err != nil {
+		Order("lesson_slot asc").
+		Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	return dates, nil
+	out := make([]entity.JournalDate, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, entity.JournalDate{
+			ClassDate:  row.ClassDate,
+			LessonSlot: normalizeLessonSlot(row.LessonSlot),
+		})
+	}
+	return out, nil
+}
+
+func normalizeLessonSlot(value int) int {
+	if value < 1 {
+		return 1
+	}
+	return value
 }
 
 func (r *GradingRepo) ListDateCells(ctx context.Context, groupName string) ([]entity.JournalCell, error) {
 	var rows []DBJournalDateCellV2
 	if err := r.db.WithContext(ctx).
 		Where("group_name = ?", groupName).
-		Order("class_date asc").Order("student_name asc").
+		Order("class_date asc").
+		Order("lesson_slot asc").
+		Order("student_name asc").
 		Find(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -255,8 +271,13 @@ func (r *GradingRepo) UpsertDateCells(ctx context.Context, cells []entity.Journa
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, cell := range cells {
 			var existing DBJournalDateCellV2
-			err := tx.Where("group_name = ? AND class_date = ? AND student_name = ?", cell.GroupName, cell.ClassDate, cell.StudentName).
-				First(&existing).Error
+			err := tx.Where(
+				"group_name = ? AND class_date = ? AND lesson_slot = ? AND student_name = ?",
+				cell.GroupName,
+				cell.ClassDate,
+				normalizeLessonSlot(cell.LessonSlot),
+				cell.StudentName,
+			).First(&existing).Error
 			switch {
 			case err == nil:
 				existing.RawValue = cell.RawValue
@@ -264,11 +285,13 @@ func (r *GradingRepo) UpsertDateCells(ctx context.Context, cells []entity.Journa
 				existing.StatusCode = cell.StatusCode
 				existing.UpdatedBy = cell.UpdatedBy
 				existing.UpdatedAt = cell.UpdatedAt
+				existing.LessonSlot = normalizeLessonSlot(cell.LessonSlot)
 				if err := tx.Save(&existing).Error; err != nil {
 					return err
 				}
 			case errors.Is(err, gorm.ErrRecordNotFound):
 				row := mapDateCellToModel(cell)
+				row.LessonSlot = normalizeLessonSlot(row.LessonSlot)
 				if err := tx.Create(&row).Error; err != nil {
 					return err
 				}
@@ -286,7 +309,13 @@ func (r *GradingRepo) DeleteDateCells(ctx context.Context, _ string, items []ent
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, item := range items {
-			if err := tx.Where("group_name = ? AND class_date = ? AND student_name = ?", item.GroupName, item.ClassDate, item.StudentName).Delete(&DBJournalDateCellV2{}).Error; err != nil {
+			if err := tx.Where(
+				"group_name = ? AND class_date = ? AND lesson_slot = ? AND student_name = ?",
+				item.GroupName,
+				item.ClassDate,
+				normalizeLessonSlot(item.LessonSlot),
+				item.StudentName,
+			).Delete(&DBJournalDateCellV2{}).Error; err != nil {
 				return err
 			}
 		}
@@ -465,6 +494,7 @@ func mapDateCellToDomain(model DBJournalDateCellV2) entity.JournalCell {
 		ID:           model.ID,
 		GroupName:    model.GroupName,
 		ClassDate:    model.ClassDate,
+		LessonSlot:   normalizeLessonSlot(model.LessonSlot),
 		StudentName:  model.StudentName,
 		RawValue:     model.RawValue,
 		NumericValue: model.NumericValue,
@@ -479,6 +509,7 @@ func mapDateCellToModel(item entity.JournalCell) DBJournalDateCellV2 {
 		ID:           item.ID,
 		GroupName:    item.GroupName,
 		ClassDate:    item.ClassDate,
+		LessonSlot:   normalizeLessonSlot(item.LessonSlot),
 		StudentName:  item.StudentName,
 		RawValue:     item.RawValue,
 		NumericValue: item.NumericValue,

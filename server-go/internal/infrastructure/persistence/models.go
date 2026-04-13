@@ -139,6 +139,7 @@ type DBAttendanceRecord struct {
 	ID          uint      `gorm:"primaryKey"`
 	GroupName   string    `gorm:"size:64;uniqueIndex:idx_attendance_record;not null"`
 	ClassDate   time.Time `gorm:"type:date;uniqueIndex:idx_attendance_record;not null"`
+	LessonSlot  int       `gorm:"uniqueIndex:idx_attendance_record;not null;default:1"`
 	StudentName string    `gorm:"size:255;uniqueIndex:idx_attendance_record;not null"`
 	Present     bool      `gorm:"not null"`
 	TeacherID   uint      `gorm:"index"`
@@ -217,9 +218,10 @@ type DBJournalStudent struct {
 }
 
 type DBJournalDate struct {
-	ID        uint      `gorm:"primaryKey"`
-	GroupName string    `gorm:"size:64;uniqueIndex:idx_journal_date;not null"`
-	ClassDate time.Time `gorm:"type:date;uniqueIndex:idx_journal_date;not null"`
+	ID         uint      `gorm:"primaryKey"`
+	GroupName  string    `gorm:"size:64;uniqueIndex:idx_journal_date;not null"`
+	ClassDate  time.Time `gorm:"type:date;uniqueIndex:idx_journal_date;not null"`
+	LessonSlot int       `gorm:"uniqueIndex:idx_journal_date;not null;default:1"`
 }
 
 type DBGradingPreset struct {
@@ -258,6 +260,7 @@ type DBJournalDateCellV2 struct {
 	ID           uint      `gorm:"primaryKey"`
 	GroupName    string    `gorm:"size:64;uniqueIndex:idx_journal_date_cell_v2;index;not null"`
 	ClassDate    time.Time `gorm:"type:date;uniqueIndex:idx_journal_date_cell_v2;not null"`
+	LessonSlot   int       `gorm:"uniqueIndex:idx_journal_date_cell_v2;not null;default:1"`
 	StudentName  string    `gorm:"size:255;uniqueIndex:idx_journal_date_cell_v2;not null"`
 	RawValue     string    `gorm:"size:128;not null;default:''"`
 	NumericValue *float64

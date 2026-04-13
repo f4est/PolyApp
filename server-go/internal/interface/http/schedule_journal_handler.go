@@ -1010,18 +1010,21 @@ func (h *Handler) listJournalDates(c *gin.Context) {
 			return
 		}
 	}
-	var dates []time.Time
+	var rows []persistence.DBJournalDate
 	if err := h.db.WithContext(c.Request.Context()).
-		Model(&persistence.DBJournalDate{}).
 		Where("group_name = ?", group).
 		Order("class_date asc").
-		Pluck("class_date", &dates).Error; err != nil {
+		Order("lesson_slot asc").
+		Find(&rows).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load dates"})
 		return
 	}
-	out := make([]string, 0, len(dates))
-	for _, d := range dates {
-		out = append(out, dateOnly(d))
+	out := make([]gin.H, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, gin.H{
+			"class_date":  dateOnly(row.ClassDate),
+			"lesson_slot": normalizeLessonSlot(row.LessonSlot),
+		})
 	}
 	c.JSON(http.StatusOK, out)
 }
@@ -1039,7 +1042,7 @@ func (h *Handler) upsertJournalDate(c *gin.Context) {
 	}
 	group := strings.TrimSpace(payload.GroupName)
 	dateValue, err := parseDate(payload.ClassDate)
-	if group == "" || err != nil {
+	if group == "" || err != nil || (payload.LessonSlot != nil && *payload.LessonSlot < 1) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid group_name or class_date"})
 		return
 	}
@@ -1054,20 +1057,44 @@ func (h *Handler) upsertJournalDate(c *gin.Context) {
 			return
 		}
 	}
-	row := persistence.DBJournalDate{
-		GroupName: group,
-		ClassDate: dateValue,
-	}
-	if err := h.db.WithContext(c.Request.Context()).
-		Where("group_name = ? AND class_date = ?", group, dateValue).
-		FirstOrCreate(&row).Error; err != nil {
+	row := persistence.DBJournalDate{}
+	if err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		// Explicit slot keeps deterministic identity (used by rename/edit operations).
+		if payload.LessonSlot != nil && *payload.LessonSlot > 0 {
+			slot := normalizeLessonSlot(*payload.LessonSlot)
+			row = persistence.DBJournalDate{
+				GroupName:  group,
+				ClassDate:  dateValue,
+				LessonSlot: slot,
+			}
+			return tx.
+				Where("group_name = ? AND class_date = ? AND lesson_slot = ?", group, dateValue, slot).
+				FirstOrCreate(&row).Error
+		}
+
+		// No slot in payload -> append next pair index for this day: p1, p2, p3...
+		var maxSlot int
+		if err := tx.Model(&persistence.DBJournalDate{}).
+			Where("group_name = ? AND class_date = ?", group, dateValue).
+			Select("COALESCE(MAX(lesson_slot), 0)").
+			Scan(&maxSlot).Error; err != nil {
+			return err
+		}
+		row = persistence.DBJournalDate{
+			GroupName:  group,
+			ClassDate:  dateValue,
+			LessonSlot: normalizeLessonSlot(maxSlot + 1),
+		}
+		return tx.Create(&row).Error
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save date"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"id":         row.ID,
-		"group_name": row.GroupName,
-		"class_date": dateOnly(row.ClassDate),
+		"id":          row.ID,
+		"group_name":  row.GroupName,
+		"class_date":  dateOnly(row.ClassDate),
+		"lesson_slot": normalizeLessonSlot(row.LessonSlot),
 	})
 }
 
@@ -1083,6 +1110,11 @@ func (h *Handler) deleteJournalDate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid group_name or class_date"})
 		return
 	}
+	slotPtr, slotErr := parseOptionalLessonSlot(c.Query("lesson_slot"))
+	if slotErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid lesson_slot"})
+		return
+	}
 	if user.Role == "teacher" {
 		scope, scopeErr := h.groupScopeForUser(c.Request.Context(), user)
 		if scopeErr != nil {
@@ -1094,9 +1126,12 @@ func (h *Handler) deleteJournalDate(c *gin.Context) {
 			return
 		}
 	}
-	if err := h.db.WithContext(c.Request.Context()).
-		Where("group_name = ? AND class_date = ?", group, dateValue).
-		Delete(&persistence.DBJournalDate{}).Error; err != nil {
+	query := h.db.WithContext(c.Request.Context()).
+		Where("group_name = ? AND class_date = ?", group, dateValue)
+	if slotPtr != nil {
+		query = query.Where("lesson_slot = ?", *slotPtr)
+	}
+	if err := query.Delete(&persistence.DBJournalDate{}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete date"})
 		return
 	}

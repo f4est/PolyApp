@@ -41,6 +41,7 @@ type bulkDateCellsV2Payload struct {
 
 type bulkDateCellV2Item struct {
 	ClassDate   string `json:"class_date"`
+	LessonSlot  *int   `json:"lesson_slot"`
 	StudentName string `json:"student_name"`
 	RawValue    string `json:"raw_value"`
 }
@@ -242,11 +243,13 @@ func (h *Handler) bulkUpsertDateCellsV2(c *gin.Context) {
 		}
 		items = append(items, usecase.DateCellUpsertInput{
 			ClassDate:   classDate,
+			LessonSlot:  lessonSlotFromPointer(item.LessonSlot),
 			StudentName: item.StudentName,
 			RawValue:    item.RawValue,
 		})
 		syncItems = append(syncItems, dateCellAttendanceSync{
 			ClassDate:   classDate,
+			LessonSlot:  lessonSlotFromPointer(item.LessonSlot),
 			StudentName: item.StudentName,
 			RawValue:    item.RawValue,
 		})
@@ -276,6 +279,7 @@ func (h *Handler) bulkDeleteDateCellsV2(c *gin.Context) {
 		}
 		items = append(items, usecase.DateCellUpsertInput{
 			ClassDate:   classDate,
+			LessonSlot:  lessonSlotFromPointer(item.LessonSlot),
 			StudentName: item.StudentName,
 		})
 	}
@@ -376,9 +380,12 @@ func mapBinding(binding entity.GroupPresetBinding) gin.H {
 }
 
 func mapGrid(grid entity.JournalGrid) gin.H {
-	dates := make([]string, 0, len(grid.Dates))
+	dates := make([]gin.H, 0, len(grid.Dates))
 	for _, date := range grid.Dates {
-		dates = append(dates, dateOnly(date))
+		dates = append(dates, gin.H{
+			"class_date":  dateOnly(date.ClassDate),
+			"lesson_slot": normalizeLessonSlot(date.LessonSlot),
+		})
 	}
 	dateCells := make([]gin.H, 0, len(grid.DateCells))
 	for _, item := range grid.DateCells {
@@ -422,6 +429,7 @@ func mapDateCell(item entity.JournalCell) gin.H {
 		"id":            item.ID,
 		"group_name":    item.GroupName,
 		"class_date":    dateOnly(item.ClassDate),
+		"lesson_slot":   normalizeLessonSlot(item.LessonSlot),
 		"student_name":  item.StudentName,
 		"raw_value":     item.RawValue,
 		"status_code":   nullOrString(item.StatusCode),
