@@ -56,6 +56,35 @@ func SeedDemo(ctx context.Context, db *gorm.DB, hasher passwordHasher) error {
 		err := db.WithContext(ctx).Where("email = ?", item.Email).First(&row).Error
 		switch {
 		case err == nil:
+			updates := map[string]any{}
+			if row.IsApproved != true {
+				updates["is_approved"] = true
+				updates["approved_at"] = now
+			}
+			if row.Role != item.Role {
+				updates["role"] = item.Role
+			}
+			if row.FullName != item.FullName {
+				updates["full_name"] = item.FullName
+			}
+			if row.StudentGroup != item.StudentGroup {
+				updates["student_group"] = item.StudentGroup
+			}
+			if row.TeacherName != item.TeacherName {
+				updates["teacher_name"] = item.TeacherName
+			}
+			if len(updates) > 0 {
+				updates["updated_at"] = now
+				if err := db.WithContext(ctx).
+					Model(&persistence.DBUser{}).
+					Where("id = ?", row.ID).
+					Updates(updates).Error; err != nil {
+					return err
+				}
+				if err := db.WithContext(ctx).Where("id = ?", row.ID).First(&row).Error; err != nil {
+					return err
+				}
+			}
 			userIDs[item.Role] = row.ID
 			continue
 		case !errors.Is(err, gorm.ErrRecordNotFound):
@@ -68,6 +97,8 @@ func SeedDemo(ctx context.Context, db *gorm.DB, hasher passwordHasher) error {
 			PasswordHash: hash,
 			StudentGroup: item.StudentGroup,
 			TeacherName:  item.TeacherName,
+			IsApproved:   true,
+			ApprovedAt:   &now,
 			CreatedAt:    now,
 			UpdatedAt:    now,
 		}
@@ -96,19 +127,28 @@ func SeedDemo(ctx context.Context, db *gorm.DB, hasher passwordHasher) error {
 	}
 	for _, d := range dates {
 		dateOnly := time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, time.UTC)
-		row := persistence.DBJournalDate{GroupName: group, ClassDate: dateOnly}
-		if err := db.WithContext(ctx).Where("group_name = ? AND class_date = ?", group, dateOnly).FirstOrCreate(&row).Error; err != nil {
+		row := persistence.DBJournalDate{
+			GroupName:  group,
+			ClassDate:  dateOnly,
+			LessonSlot: 1,
+		}
+		if err := db.WithContext(ctx).
+			Where("group_name = ? AND class_date = ? AND lesson_slot = ?", group, dateOnly, 1).
+			FirstOrCreate(&row).Error; err != nil {
 			return err
 		}
 		for _, student := range students {
 			attendance := persistence.DBAttendanceRecord{
 				GroupName:   group,
 				ClassDate:   dateOnly,
+				LessonSlot:  1,
 				StudentName: student,
 				Present:     true,
 				TeacherID:   userIDs["teacher"],
 			}
-			if err := db.WithContext(ctx).Where("group_name = ? AND class_date = ? AND student_name = ?", group, dateOnly, student).FirstOrCreate(&attendance).Error; err != nil {
+			if err := db.WithContext(ctx).
+				Where("group_name = ? AND class_date = ? AND lesson_slot = ? AND student_name = ?", group, dateOnly, 1, student).
+				FirstOrCreate(&attendance).Error; err != nil {
 				return err
 			}
 

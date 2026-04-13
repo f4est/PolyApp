@@ -3,12 +3,14 @@ package http
 import (
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"polyapp/server-go/internal/domain/entity"
 	domainErrors "polyapp/server-go/internal/domain/errors"
+	"polyapp/server-go/internal/infrastructure/persistence"
 	httpMiddleware "polyapp/server-go/internal/interface/http/middleware"
 	"polyapp/server-go/internal/usecase"
 
@@ -41,6 +43,7 @@ type bulkDateCellsV2Payload struct {
 
 type bulkDateCellV2Item struct {
 	ClassDate   string `json:"class_date"`
+	LessonSlot  *int   `json:"lesson_slot"`
 	StudentName string `json:"student_name"`
 	RawValue    string `json:"raw_value"`
 }
@@ -178,8 +181,10 @@ func (h *Handler) unpublishGradingPresetV2(c *gin.Context) {
 }
 
 func (h *Handler) getGroupPresetBindingV2(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
 	groupName := strings.TrimSpace(c.Param("group_name"))
-	binding, err := h.journalUC.GetBinding(c.Request.Context(), actorFromContext(c), groupName)
+	scopedGroupName := scopedJournalGroupNameForUser(user, groupName)
+	binding, err := h.journalUC.GetBinding(c.Request.Context(), actorFromContext(c), scopedGroupName)
 	if err != nil {
 		if err == domainErrors.ErrNotFound {
 			c.JSON(http.StatusOK, nil)
@@ -192,13 +197,15 @@ func (h *Handler) getGroupPresetBindingV2(c *gin.Context) {
 }
 
 func (h *Handler) applyGroupPresetBindingV2(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
 	groupName := strings.TrimSpace(c.Param("group_name"))
+	scopedGroupName := scopedJournalGroupNameForUser(user, groupName)
 	var payload applyPresetV2Payload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
 		return
 	}
-	binding, err := h.journalUC.ApplyPreset(c.Request.Context(), actorFromContext(c), groupName, payload.PresetID)
+	binding, err := h.journalUC.ApplyPreset(c.Request.Context(), actorFromContext(c), scopedGroupName, payload.PresetID)
 	if err != nil {
 		writeUseCaseError(c, err, "Failed to apply preset")
 		return
@@ -207,8 +214,10 @@ func (h *Handler) applyGroupPresetBindingV2(c *gin.Context) {
 }
 
 func (h *Handler) deleteGroupPresetBindingV2(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
 	groupName := strings.TrimSpace(c.Param("group_name"))
-	if err := h.journalUC.UnapplyPreset(c.Request.Context(), actorFromContext(c), groupName); err != nil {
+	scopedGroupName := scopedJournalGroupNameForUser(user, groupName)
+	if err := h.journalUC.UnapplyPreset(c.Request.Context(), actorFromContext(c), scopedGroupName); err != nil {
 		writeUseCaseError(c, err, "Failed to remove preset binding")
 		return
 	}
@@ -216,8 +225,10 @@ func (h *Handler) deleteGroupPresetBindingV2(c *gin.Context) {
 }
 
 func (h *Handler) getJournalGridV2(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
 	groupName := strings.TrimSpace(c.Param("group_name"))
-	grid, err := h.journalUC.GetGrid(c.Request.Context(), actorFromContext(c), groupName)
+	scopedGroupName := scopedJournalGroupNameForUser(user, groupName)
+	grid, err := h.journalUC.GetGrid(c.Request.Context(), actorFromContext(c), scopedGroupName)
 	if err != nil {
 		writeUseCaseError(c, err, "Failed to load journal grid")
 		return
@@ -226,7 +237,9 @@ func (h *Handler) getJournalGridV2(c *gin.Context) {
 }
 
 func (h *Handler) bulkUpsertDateCellsV2(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
 	groupName := strings.TrimSpace(c.Param("group_name"))
+	scopedGroupName := scopedJournalGroupNameForUser(user, groupName)
 	var payload bulkDateCellsV2Payload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
@@ -242,26 +255,198 @@ func (h *Handler) bulkUpsertDateCellsV2(c *gin.Context) {
 		}
 		items = append(items, usecase.DateCellUpsertInput{
 			ClassDate:   classDate,
+			LessonSlot:  lessonSlotFromPointer(item.LessonSlot),
 			StudentName: item.StudentName,
 			RawValue:    item.RawValue,
 		})
 		syncItems = append(syncItems, dateCellAttendanceSync{
 			ClassDate:   classDate,
+			LessonSlot:  lessonSlotFromPointer(item.LessonSlot),
 			StudentName: item.StudentName,
 			RawValue:    item.RawValue,
 		})
 	}
 	actor := actorFromContext(c)
-	if err := h.journalUC.UpsertDateCells(c.Request.Context(), actor, groupName, items); err != nil {
+	if err := h.journalUC.UpsertDateCells(c.Request.Context(), actor, scopedGroupName, items); err != nil {
 		writeUseCaseError(c, err, "Failed to save date cells")
 		return
 	}
-	_ = h.syncDateCellsToAttendance(c.Request.Context(), actor, groupName, syncItems)
+	_ = h.syncDateCellsToAttendance(c.Request.Context(), actor, scopedGroupName, syncItems)
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
+func (h *Handler) listJournalGroupCatalogV2(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
+	if user == nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
+		return
+	}
+	role := strings.ToLower(strings.TrimSpace(user.Role))
+	if role == "teacher" {
+		scope, err := h.groupScopeForUser(c.Request.Context(), user)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load groups"})
+			return
+		}
+		items := make([]gin.H, 0, len(scope.All))
+		for _, group := range scope.asList() {
+			items = append(items, gin.H{
+				"group_name": group,
+				"label":      group,
+			})
+		}
+		c.JSON(http.StatusOK, items)
+		return
+	}
+	if role != "admin" {
+		c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
+		return
+	}
+
+	type item struct {
+		GroupName string
+		Label     string
+	}
+	itemsByGroup := map[string]item{}
+	teacherNameByID := map[uint]string{}
+	resolveTeacherName := func(id uint) string {
+		if id == 0 {
+			return ""
+		}
+		if value, ok := teacherNameByID[id]; ok {
+			return value
+		}
+		var user persistence.DBUser
+		if err := h.db.WithContext(c.Request.Context()).
+			Select("id", "full_name", "teacher_name").
+			First(&user, id).Error; err == nil {
+			name := strings.TrimSpace(user.TeacherName)
+			if name == "" {
+				name = strings.TrimSpace(user.FullName)
+			}
+			teacherNameByID[id] = name
+			return name
+		}
+		return ""
+	}
+	add := func(groupName string) {
+		groupName = strings.TrimSpace(groupName)
+		if groupName == "" {
+			return
+		}
+		base := baseJournalGroupName(groupName)
+		label := base
+		if teacherID, ok := teacherIDFromScopedJournalGroupName(groupName); ok {
+			teacherName := resolveTeacherName(teacherID)
+			if teacherName == "" {
+				teacherName = "#" + strconv.FormatUint(uint64(teacherID), 10)
+			}
+			label = base + " - " + teacherName
+		}
+		itemsByGroup[groupName] = item{GroupName: groupName, Label: label}
+	}
+
+	var assignments []persistence.DBTeacherGroupAssignment
+	if err := h.db.WithContext(c.Request.Context()).
+		Find(&assignments).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load groups"})
+		return
+	}
+	for _, row := range assignments {
+		scoped := scopedJournalGroupNameForUser(&entity.User{ID: row.TeacherID, Role: "teacher"}, row.GroupName)
+		add(scoped)
+	}
+
+	var rawGroups []string
+	if err := h.db.WithContext(c.Request.Context()).
+		Model(&persistence.DBJournalGroup{}).
+		Distinct("name").
+		Pluck("name", &rawGroups).Error; err == nil {
+		for _, group := range rawGroups {
+			add(group)
+		}
+	}
+	rawGroups = rawGroups[:0]
+	if err := h.db.WithContext(c.Request.Context()).
+		Model(&persistence.DBJournalStudent{}).
+		Distinct("group_name").
+		Pluck("group_name", &rawGroups).Error; err == nil {
+		for _, group := range rawGroups {
+			add(group)
+		}
+	}
+	rawGroups = rawGroups[:0]
+	if err := h.db.WithContext(c.Request.Context()).
+		Model(&persistence.DBJournalDate{}).
+		Distinct("group_name").
+		Pluck("group_name", &rawGroups).Error; err == nil {
+		for _, group := range rawGroups {
+			add(group)
+		}
+	}
+	rawGroups = rawGroups[:0]
+	if err := h.db.WithContext(c.Request.Context()).
+		Model(&persistence.DBJournalDateCellV2{}).
+		Distinct("group_name").
+		Pluck("group_name", &rawGroups).Error; err == nil {
+		for _, group := range rawGroups {
+			add(group)
+		}
+	}
+	rawGroups = rawGroups[:0]
+	if err := h.db.WithContext(c.Request.Context()).
+		Model(&persistence.DBJournalManualCellV2{}).
+		Distinct("group_name").
+		Pluck("group_name", &rawGroups).Error; err == nil {
+		for _, group := range rawGroups {
+			add(group)
+		}
+	}
+	rawGroups = rawGroups[:0]
+	if err := h.db.WithContext(c.Request.Context()).
+		Model(&persistence.DBJournalComputedRowV2{}).
+		Distinct("group_name").
+		Pluck("group_name", &rawGroups).Error; err == nil {
+		for _, group := range rawGroups {
+			add(group)
+		}
+	}
+	rawGroups = rawGroups[:0]
+	if err := h.db.WithContext(c.Request.Context()).
+		Model(&persistence.DBGroupPresetBinding{}).
+		Distinct("group_name").
+		Pluck("group_name", &rawGroups).Error; err == nil {
+		for _, group := range rawGroups {
+			add(group)
+		}
+	}
+
+	out := make([]item, 0, len(itemsByGroup))
+	for _, item := range itemsByGroup {
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		li := strings.ToLower(out[i].Label)
+		lj := strings.ToLower(out[j].Label)
+		if li == lj {
+			return out[i].GroupName < out[j].GroupName
+		}
+		return li < lj
+	})
+	response := make([]gin.H, 0, len(out))
+	for _, row := range out {
+		response = append(response, gin.H{
+			"group_name": row.GroupName,
+			"label":      row.Label,
+		})
+	}
+	c.JSON(http.StatusOK, response)
+}
+
 func (h *Handler) bulkDeleteDateCellsV2(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
 	groupName := strings.TrimSpace(c.Param("group_name"))
+	scopedGroupName := scopedJournalGroupNameForUser(user, groupName)
 	var payload bulkDateCellsV2Payload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
@@ -276,10 +461,11 @@ func (h *Handler) bulkDeleteDateCellsV2(c *gin.Context) {
 		}
 		items = append(items, usecase.DateCellUpsertInput{
 			ClassDate:   classDate,
+			LessonSlot:  lessonSlotFromPointer(item.LessonSlot),
 			StudentName: item.StudentName,
 		})
 	}
-	if err := h.journalUC.DeleteDateCells(c.Request.Context(), actorFromContext(c), groupName, items); err != nil {
+	if err := h.journalUC.DeleteDateCells(c.Request.Context(), actorFromContext(c), scopedGroupName, items); err != nil {
 		writeUseCaseError(c, err, "Failed to delete date cells")
 		return
 	}
@@ -287,7 +473,9 @@ func (h *Handler) bulkDeleteDateCellsV2(c *gin.Context) {
 }
 
 func (h *Handler) bulkUpsertManualCellsV2(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
 	groupName := strings.TrimSpace(c.Param("group_name"))
+	scopedGroupName := scopedJournalGroupNameForUser(user, groupName)
 	var payload bulkManualCellsV2Payload
 	if err := c.ShouldBindJSON(&payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
@@ -301,7 +489,7 @@ func (h *Handler) bulkUpsertManualCellsV2(c *gin.Context) {
 			RawValue:    item.RawValue,
 		})
 	}
-	if err := h.journalUC.UpsertManualCells(c.Request.Context(), actorFromContext(c), groupName, items); err != nil {
+	if err := h.journalUC.UpsertManualCells(c.Request.Context(), actorFromContext(c), scopedGroupName, items); err != nil {
 		writeUseCaseError(c, err, "Failed to save manual cells")
 		return
 	}
@@ -309,8 +497,10 @@ func (h *Handler) bulkUpsertManualCellsV2(c *gin.Context) {
 }
 
 func (h *Handler) recalculateJournalV2(c *gin.Context) {
+	user := httpMiddleware.CurrentUser(c)
 	groupName := strings.TrimSpace(c.Param("group_name"))
-	if err := h.journalUC.Recalculate(c.Request.Context(), actorFromContext(c), groupName); err != nil {
+	scopedGroupName := scopedJournalGroupNameForUser(user, groupName)
+	if err := h.journalUC.Recalculate(c.Request.Context(), actorFromContext(c), scopedGroupName); err != nil {
 		writeUseCaseError(c, err, "Failed to recalculate")
 		return
 	}
@@ -365,7 +555,7 @@ func mapPresetVersion(version entity.GradingPresetVersion) gin.H {
 func mapBinding(binding entity.GroupPresetBinding) gin.H {
 	return gin.H{
 		"id":                binding.ID,
-		"group_name":        binding.GroupName,
+		"group_name":        baseJournalGroupName(binding.GroupName),
 		"preset_id":         binding.PresetID,
 		"preset_version_id": binding.PresetVersionID,
 		"auto_update":       binding.AutoUpdate,
@@ -376,9 +566,12 @@ func mapBinding(binding entity.GroupPresetBinding) gin.H {
 }
 
 func mapGrid(grid entity.JournalGrid) gin.H {
-	dates := make([]string, 0, len(grid.Dates))
+	dates := make([]gin.H, 0, len(grid.Dates))
 	for _, date := range grid.Dates {
-		dates = append(dates, dateOnly(date))
+		dates = append(dates, gin.H{
+			"class_date":  dateOnly(date.ClassDate),
+			"lesson_slot": normalizeLessonSlot(date.LessonSlot),
+		})
 	}
 	dateCells := make([]gin.H, 0, len(grid.DateCells))
 	for _, item := range grid.DateCells {
@@ -394,7 +587,7 @@ func mapGrid(grid entity.JournalGrid) gin.H {
 	}
 
 	out := gin.H{
-		"group_name":     grid.GroupName,
+		"group_name":     baseJournalGroupName(grid.GroupName),
 		"students":       grid.Students,
 		"dates":          dates,
 		"date_cells":     dateCells,
@@ -420,8 +613,9 @@ func mapGrid(grid entity.JournalGrid) gin.H {
 func mapDateCell(item entity.JournalCell) gin.H {
 	out := gin.H{
 		"id":            item.ID,
-		"group_name":    item.GroupName,
+		"group_name":    baseJournalGroupName(item.GroupName),
 		"class_date":    dateOnly(item.ClassDate),
+		"lesson_slot":   normalizeLessonSlot(item.LessonSlot),
 		"student_name":  item.StudentName,
 		"raw_value":     item.RawValue,
 		"status_code":   nullOrString(item.StatusCode),
@@ -438,7 +632,7 @@ func mapDateCell(item entity.JournalCell) gin.H {
 func mapManualCell(item entity.ManualCell) gin.H {
 	out := gin.H{
 		"id":            item.ID,
-		"group_name":    item.GroupName,
+		"group_name":    baseJournalGroupName(item.GroupName),
 		"student_name":  item.StudentName,
 		"column_key":    item.ColumnKey,
 		"raw_value":     item.RawValue,
@@ -455,7 +649,7 @@ func mapManualCell(item entity.ManualCell) gin.H {
 func mapComputedRow(item entity.ComputedRow) gin.H {
 	return gin.H{
 		"id":                item.ID,
-		"group_name":        item.GroupName,
+		"group_name":        baseJournalGroupName(item.GroupName),
 		"student_name":      item.StudentName,
 		"preset_version_id": item.PresetVersionID,
 		"values":            item.Values,

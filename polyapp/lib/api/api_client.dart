@@ -826,6 +826,21 @@ class ApiClient {
     return data.map((item) => item.toString()).toList();
   }
 
+  Future<List<JournalGroupCatalogItemDto>> listJournalGroupCatalogV2() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/journal/v2/groups/catalog'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data
+        .map(
+          (item) =>
+              JournalGroupCatalogItemDto.fromJson(item as Map<String, dynamic>),
+        )
+        .toList();
+  }
+
   Future<void> upsertJournalGroup(String name) async {
     final response = await http.post(
       Uri.parse('$baseUrl/journal/groups'),
@@ -892,19 +907,38 @@ class ApiClient {
     _ensureSuccess(response);
   }
 
-  Future<List<DateTime>> listJournalDates(String groupName) async {
+  Future<List<JournalDateEntry>> listJournalDateEntries(
+    String groupName,
+  ) async {
     final uri = Uri.parse(
       '$baseUrl/journal/dates',
     ).replace(queryParameters: {'group_name': groupName});
     final response = await http.get(uri, headers: _headers());
     _ensureSuccess(response);
     final data = jsonDecode(response.body) as List<dynamic>;
-    return data.map((item) => DateTime.parse(item.toString())).toList();
+    return data.map((item) {
+      if (item is Map<String, dynamic>) {
+        return JournalDateEntry.fromJson(item);
+      }
+      if (item is Map) {
+        return JournalDateEntry.fromJson(item.cast<String, dynamic>());
+      }
+      return JournalDateEntry(
+        classDate: DateTime.parse(item.toString()),
+        lessonSlot: 1,
+      );
+    }).toList();
   }
 
-  Future<void> upsertJournalDate({
+  Future<List<DateTime>> listJournalDates(String groupName) async {
+    final entries = await listJournalDateEntries(groupName);
+    return entries.map((item) => item.classDate).toList();
+  }
+
+  Future<JournalDateEntry> upsertJournalDate({
     required String groupName,
     required DateTime classDate,
+    int? lessonSlot,
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/journal/dates'),
@@ -912,19 +946,24 @@ class ApiClient {
       body: jsonEncode({
         'group_name': groupName,
         'class_date': classDate.toIso8601String().substring(0, 10),
+        if (lessonSlot != null && lessonSlot > 0) 'lesson_slot': lessonSlot,
       }),
     );
     _ensureSuccess(response);
+    final payload = _decodeJsonObject(response.body);
+    return JournalDateEntry.fromJson(payload);
   }
 
   Future<void> deleteJournalDate({
     required String groupName,
     required DateTime classDate,
+    int? lessonSlot,
   }) async {
     final uri = Uri.parse('$baseUrl/journal/dates').replace(
       queryParameters: {
         'group_name': groupName,
         'class_date': classDate.toIso8601String().substring(0, 10),
+        if (lessonSlot != null && lessonSlot > 0) 'lesson_slot': '$lessonSlot',
       },
     );
     final response = await http.delete(uri, headers: _headers());
@@ -948,6 +987,7 @@ class ApiClient {
     required DateTime classDate,
     required String studentName,
     required bool present,
+    int? lessonSlot,
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/attendance'),
@@ -955,6 +995,7 @@ class ApiClient {
       body: jsonEncode({
         'group_name': groupName,
         'class_date': classDate.toIso8601String().substring(0, 10),
+        if (lessonSlot != null && lessonSlot > 0) 'lesson_slot': lessonSlot,
         'student_name': studentName,
         'present': present,
       }),
@@ -969,12 +1010,14 @@ class ApiClient {
     required String groupName,
     required DateTime classDate,
     required String studentName,
+    int? lessonSlot,
   }) async {
     final uri = Uri.parse('$baseUrl/attendance').replace(
       queryParameters: {
         'group_name': groupName,
         'class_date': classDate.toIso8601String().substring(0, 10),
         'student_name': studentName,
+        if (lessonSlot != null && lessonSlot > 0) 'lesson_slot': '$lessonSlot',
       },
     );
     final response = await http.delete(uri, headers: _headers());
@@ -1377,6 +1420,27 @@ class ApiClient {
     );
     _ensureSuccess(response);
   }
+
+  Future<Map<String, dynamic>> deletePastExamUploads({
+    DateTime? beforeDate,
+    String? groupName,
+    String? examName,
+  }) async {
+    final uri = Uri.parse('$baseUrl/exams/uploads/past').replace(
+      queryParameters: {
+        if (beforeDate != null) 'before_date': _formatDateOnly(beforeDate),
+        if (groupName != null && groupName.trim().isNotEmpty)
+          'group_name': groupName.trim(),
+        if (examName != null && examName.trim().isNotEmpty)
+          'exam_name': examName.trim(),
+      },
+    );
+    final response = await http.delete(uri, headers: _headers());
+    _ensureSuccess(response);
+    return _decodeJsonObject(response.body);
+  }
+
+  String examTemplateUrl() => '$baseUrl/exams/template';
 
   Future<int> uploadExamGradesBytes({
     required String groupName,
@@ -2563,6 +2627,7 @@ class AttendanceRecord {
     required this.id,
     required this.groupName,
     required this.classDate,
+    required this.lessonSlot,
     required this.studentName,
     required this.present,
   });
@@ -2570,6 +2635,7 @@ class AttendanceRecord {
   final int id;
   final String groupName;
   final DateTime classDate;
+  final int lessonSlot;
   final String studentName;
   final bool present;
 
@@ -2578,6 +2644,7 @@ class AttendanceRecord {
       id: json['id'] as int,
       groupName: json['group_name'] as String,
       classDate: DateTime.parse(json['class_date'] as String),
+      lessonSlot: (json['lesson_slot'] as num?)?.toInt() ?? 1,
       studentName: json['student_name'] as String,
       present: json['present'] as bool,
     );
@@ -2779,6 +2846,23 @@ class TeacherGroupAssignment {
       groupName: json['group_name'] as String,
       subject: json['subject'] as String,
       createdAt: DateTime.parse(json['created_at'] as String),
+    );
+  }
+}
+
+class JournalGroupCatalogItemDto {
+  JournalGroupCatalogItemDto({
+    required this.groupName,
+    required this.label,
+  });
+
+  final String groupName;
+  final String label;
+
+  factory JournalGroupCatalogItemDto.fromJson(Map<String, dynamic> json) {
+    return JournalGroupCatalogItemDto(
+      groupName: (json['group_name'] as String? ?? '').trim(),
+      label: (json['label'] as String? ?? '').trim(),
     );
   }
 }
@@ -3151,6 +3235,27 @@ class GroupPresetBindingDto {
   }
 }
 
+class JournalDateEntry {
+  JournalDateEntry({required this.classDate, required this.lessonSlot});
+
+  final DateTime classDate;
+  final int lessonSlot;
+
+  factory JournalDateEntry.fromJson(Map<String, dynamic> json) {
+    return JournalDateEntry(
+      classDate: DateTime.parse(json['class_date'] as String),
+      lessonSlot: (json['lesson_slot'] as num?)?.toInt() ?? 1,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'class_date': classDate.toIso8601String().substring(0, 10),
+      'lesson_slot': lessonSlot,
+    };
+  }
+}
+
 class JournalGridDto {
   JournalGridDto({
     required this.groupName,
@@ -3167,7 +3272,7 @@ class JournalGridDto {
 
   final String groupName;
   final List<String> students;
-  final List<DateTime> dates;
+  final List<JournalDateEntry> dates;
   final List<DateCellDto> dateCells;
   final List<ManualCellDto> manualCells;
   final List<ComputedCellDto> computedCells;
@@ -3182,9 +3287,18 @@ class JournalGridDto {
       students: (json['students'] as List<dynamic>? ?? [])
           .map((item) => item.toString())
           .toList(),
-      dates: (json['dates'] as List<dynamic>? ?? [])
-          .map((item) => DateTime.parse(item.toString()))
-          .toList(),
+      dates: (json['dates'] as List<dynamic>? ?? []).map((item) {
+        if (item is Map<String, dynamic>) {
+          return JournalDateEntry.fromJson(item);
+        }
+        if (item is Map) {
+          return JournalDateEntry.fromJson(item.cast<String, dynamic>());
+        }
+        return JournalDateEntry(
+          classDate: DateTime.parse(item.toString()),
+          lessonSlot: 1,
+        );
+      }).toList(),
       dateCells: (json['date_cells'] as List<dynamic>? ?? [])
           .map((item) => DateCellDto.fromJson(item as Map<String, dynamic>))
           .toList(),
@@ -3216,6 +3330,7 @@ class DateCellDto {
   DateCellDto({
     required this.groupName,
     required this.classDate,
+    required this.lessonSlot,
     required this.studentName,
     required this.rawValue,
     this.numericValue,
@@ -3224,6 +3339,7 @@ class DateCellDto {
 
   final String groupName;
   final DateTime classDate;
+  final int lessonSlot;
   final String studentName;
   final String rawValue;
   final double? numericValue;
@@ -3234,6 +3350,7 @@ class DateCellDto {
     return DateCellDto(
       groupName: (json['group_name'] as String?) ?? '',
       classDate: DateTime.parse(json['class_date'] as String),
+      lessonSlot: (json['lesson_slot'] as num?)?.toInt() ?? 1,
       studentName: (json['student_name'] as String?) ?? '',
       rawValue: (json['raw_value'] as String?) ?? '',
       numericValue: numericRaw is num ? numericRaw.toDouble() : null,
@@ -3301,17 +3418,20 @@ class ComputedCellDto {
 class DateCellWriteDto {
   DateCellWriteDto({
     required this.classDate,
+    this.lessonSlot = 1,
     required this.studentName,
     required this.rawValue,
   });
 
   final DateTime classDate;
+  final int lessonSlot;
   final String studentName;
   final String rawValue;
 
   Map<String, dynamic> toJson() {
     return {
       'class_date': classDate.toIso8601String().substring(0, 10),
+      'lesson_slot': lessonSlot < 1 ? 1 : lessonSlot,
       'student_name': studentName,
       'raw_value': rawValue,
     };
@@ -3319,14 +3439,20 @@ class DateCellWriteDto {
 }
 
 class DateCellDeleteDto {
-  DateCellDeleteDto({required this.classDate, required this.studentName});
+  DateCellDeleteDto({
+    required this.classDate,
+    this.lessonSlot = 1,
+    required this.studentName,
+  });
 
   final DateTime classDate;
+  final int lessonSlot;
   final String studentName;
 
   Map<String, dynamic> toJson() {
     return {
       'class_date': classDate.toIso8601String().substring(0, 10),
+      'lesson_slot': lessonSlot < 1 ? 1 : lessonSlot,
       'student_name': studentName,
       'raw_value': '',
     };

@@ -1,10 +1,10 @@
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../api/api_client.dart';
+import '../i18n/ui_text.dart';
 
 class AnalyticsWorkspacePage extends StatefulWidget {
   const AnalyticsWorkspacePage({
@@ -36,9 +36,8 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
   bool _loading = true;
   bool _globalMode = true;
   bool _monthlyTrend = true;
-  bool _gridLoading = false;
+  bool _wideMode = false;
   bool _initialized = false;
-  double _gridProgress = 0;
 
   String? _selectedGroup;
   String? _error;
@@ -52,11 +51,11 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
   List<RequestTicket> _requests = const [];
   List<TeacherGroupAssignment> _assignments = const [];
   List<DepartmentDto> _departments = const [];
-  Map<String, _GridStats> _gridByGroup = const {};
 
   bool get _isRu => widget.locale.languageCode.toLowerCase() == 'ru';
   bool get _isAdmin => widget.currentUser.role == 'admin';
-  String _t(String ru, String en) => _isRu ? ru : en;
+  String _t(String ru, String en) =>
+      trTextByCode(widget.locale.languageCode, ru, en);
 
   @override
   void didChangeDependencies() {
@@ -129,8 +128,6 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
         _loadedAt = DateTime.now();
         _loading = false;
       });
-
-      unawaited(_loadGrid(groupNames));
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -138,29 +135,6 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
         _error = widget.errorText(error);
       });
     }
-  }
-
-  Future<void> _loadGrid(List<String> groups) async {
-    if (!mounted || groups.isEmpty) return;
-    setState(() {
-      _gridLoading = true;
-      _gridProgress = 0;
-    });
-    final result = <String, _GridStats>{};
-    for (int i = 0; i < groups.length; i++) {
-      try {
-        final grid = await widget.client.getGroupGridV2(groups[i]);
-        result[groups[i]] = _GridStats.fromGrid(grid);
-      } catch (_) {}
-      if (!mounted) return;
-      setState(() => _gridProgress = (i + 1) / groups.length);
-    }
-    if (!mounted) return;
-    setState(() {
-      _gridByGroup = result;
-      _gridLoading = false;
-      _gridProgress = 1;
-    });
   }
 
   List<String> _groupNames({
@@ -228,13 +202,6 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
         agg.makeupActive += 1;
       }
     }
-    _gridByGroup.forEach((group, data) {
-      final agg = touch(group);
-      agg.specialTotal = data.statusCodeCounts.values.fold<int>(
-        0,
-        (a, b) => a + b,
-      );
-    });
     return map;
   }
 
@@ -255,7 +222,7 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
       final label = _monthlyTrend
           ? DateFormat('MM.yyyy').format(key)
           : '${_t('Нед', 'W')}${_week(key)}';
-      return _Trend(label, avg, med);
+      return _Trend(label, avg, med, values.length);
     }).toList();
   }
 
@@ -291,60 +258,6 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
       data[(row.classDate.weekday - 1).clamp(0, 6)] += 1;
     }
     return data;
-  }
-
-  Map<String, int> _specialCounts({String? group}) {
-    if (group != null) return _gridByGroup[group]?.statusCodeCounts ?? const {};
-    final result = <String, int>{};
-    for (final item in _gridByGroup.values) {
-      item.statusCodeCounts.forEach((code, count) {
-        result[code] = (result[code] ?? 0) + count;
-      });
-    }
-    return result;
-  }
-
-  Map<String, int> _makeupFunnel({String? group}) {
-    const keys = <String>[
-      'awaiting_proof',
-      'proof_submitted',
-      'task_assigned',
-      'submission_sent',
-      'graded',
-    ];
-    final result = <String, int>{for (final key in keys) key: 0};
-    for (final row in _makeups) {
-      if (group != null && row.groupName != group) continue;
-      if (!result.containsKey(row.status)) continue;
-      result[row.status] = (result[row.status] ?? 0) + 1;
-    }
-    return result;
-  }
-
-  List<_TeacherSla> _teacherSla() {
-    final samples = <String, List<double>>{};
-    for (final row in _makeups) {
-      final teacher = row.teacherName.trim().isEmpty
-          ? 'Unknown'
-          : row.teacherName.trim();
-      final target = samples.putIfAbsent(teacher, () => <double>[]);
-      if (row.proofSubmittedAt != null && row.teacherTaskAt != null) {
-        final d = row.teacherTaskAt!.difference(row.proofSubmittedAt!);
-        if (!d.isNegative) target.add(d.inMinutes / 60);
-      }
-      if (row.submissionSentAt != null && row.gradeSetAt != null) {
-        final d = row.gradeSetAt!.difference(row.submissionSentAt!);
-        if (!d.isNegative) target.add(d.inMinutes / 60);
-      }
-    }
-    final out = <_TeacherSla>[];
-    samples.forEach((teacher, values) {
-      if (values.isEmpty) return;
-      final avg = values.reduce((a, b) => a + b) / values.length;
-      out.add(_TeacherSla(teacher, avg, values.length));
-    });
-    out.sort((a, b) => a.avgHours.compareTo(b.avgHours));
-    return out;
   }
 
   _ExamAgg _examAgg({String? group}) {
@@ -424,6 +337,188 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
     return _RequestAgg(fresh, progress, closed, avgClose);
   }
 
+  bool _isRequestClosedStatus(String status) {
+    final normalized = status.toLowerCase();
+    return normalized.contains('close') ||
+        normalized.contains('done') ||
+        normalized.contains('resolved') ||
+        normalized.contains('approved') ||
+        normalized.contains('rejected') ||
+        normalized.contains('закры') ||
+        normalized.contains('выполн');
+  }
+
+  _AnalyticsOverview _overview({
+    required Map<String, _GroupAgg> aggregate,
+    required _RequestAgg requests,
+    required bool globalMode,
+    String? selectedGroup,
+  }) {
+    final scoped = globalMode
+        ? aggregate.values.toList()
+        : [
+            if (selectedGroup != null && aggregate[selectedGroup] != null)
+              aggregate[selectedGroup]!,
+          ];
+    final students = <String>{};
+    final teachers = <String>{};
+    int gradeCount = 0;
+    int gradeTotal = 0;
+    int attendanceTotal = 0;
+    int attendancePresent = 0;
+    int examCount = 0;
+    int examPassed = 0;
+    int activeMakeups = 0;
+    for (final item in scoped) {
+      students.addAll(item.students);
+      teachers.addAll(item.teachers);
+      gradeCount += item.gradeCount;
+      gradeTotal += item.gradeTotal;
+      attendanceTotal += item.attendanceTotal;
+      attendancePresent += item.attendancePresent;
+      examCount += item.examCount;
+      examPassed += item.examPassed;
+      activeMakeups += item.makeupActive;
+    }
+    final avgGrade = gradeCount == 0 ? 0.0 : gradeTotal / gradeCount;
+    final attendanceRate = attendanceTotal == 0
+        ? 0.0
+        : attendancePresent / attendanceTotal;
+    final examPassRate = examCount == 0 ? 0.0 : examPassed / examCount;
+    final pendingRequests = requests.fresh + requests.progress;
+    final overdueRequests = _requests.where((row) {
+      if (_isRequestClosedStatus(row.status)) return false;
+      final age = DateTime.now().difference(row.createdAt);
+      return age.inHours >= 48;
+    }).length;
+    return _AnalyticsOverview(
+      groupCount: scoped.length,
+      studentCount: students.length,
+      teacherCount: teachers.length,
+      averageGrade: avgGrade,
+      attendanceRate: attendanceRate,
+      examPassRate: examPassRate,
+      activeMakeups: activeMakeups,
+      pendingRequests: pendingRequests,
+      overdueRequests: overdueRequests,
+      averageRequestCloseHours: requests.avgCloseHours,
+    );
+  }
+
+  List<_InsightRow> _insights({
+    required _AnalyticsOverview overview,
+    required bool globalMode,
+    String? selectedGroup,
+  }) {
+    final rows = <_InsightRow>[];
+    final scope = globalMode
+        ? _t('по всем группам', 'across all groups')
+        : (selectedGroup == null
+              ? _t('по выбранной группе', 'for selected group')
+              : '${_t('в группе', 'in group')} $selectedGroup');
+    if (overview.studentCount == 0) {
+      rows.add(
+        _InsightRow(
+          text: _t(
+            'Нет данных по студентам $scope. Проверьте загрузку посещаемости и оценок.',
+            'No student data $scope. Check attendance and grade loading.',
+          ),
+          color: _warn,
+          icon: Icons.info_outline,
+        ),
+      );
+      return rows;
+    }
+
+    if (overview.attendanceRate < 0.8) {
+      rows.add(
+        _InsightRow(
+          text: _t(
+            'Посещаемость ${(overview.attendanceRate * 100).toStringAsFixed(1)}% $scope. Нужен план по снижению пропусков.',
+            'Attendance is ${(overview.attendanceRate * 100).toStringAsFixed(1)}% $scope. Action plan is needed to reduce absences.',
+          ),
+          color: _err,
+          icon: Icons.warning_amber_rounded,
+        ),
+      );
+    }
+
+    if (overview.averageGrade > 0 && overview.averageGrade < 70) {
+      rows.add(
+        _InsightRow(
+          text: _t(
+            'Средний балл ${overview.averageGrade.toStringAsFixed(1)} $scope. Рекомендуется разбор слабых тем и точечные консультации.',
+            'Average grade is ${overview.averageGrade.toStringAsFixed(1)} $scope. Recommend topic reviews and targeted tutoring.',
+          ),
+          color: _warn,
+          icon: Icons.trending_down_rounded,
+        ),
+      );
+    }
+
+    if (overview.examPassRate > 0 && overview.examPassRate < 0.7) {
+      rows.add(
+        _InsightRow(
+          text: _t(
+            'Процент сдачи экзаменов ${(overview.examPassRate * 100).toStringAsFixed(1)}% $scope. Нужна подготовка для группы риска.',
+            'Exam pass rate is ${(overview.examPassRate * 100).toStringAsFixed(1)}% $scope. Risk students need prep support.',
+          ),
+          color: _err,
+          icon: Icons.rule_rounded,
+        ),
+      );
+    }
+
+    final makeupPressure = overview.studentCount == 0
+        ? 0.0
+        : overview.activeMakeups / overview.studentCount;
+    if (makeupPressure >= 0.25) {
+      rows.add(
+        _InsightRow(
+          text: _t(
+            'Активных отработок ${overview.activeMakeups} (${(makeupPressure * 100).toStringAsFixed(1)}% от числа студентов). Проверьте сроки и ответственных.',
+            'Active makeups: ${overview.activeMakeups} (${(makeupPressure * 100).toStringAsFixed(1)}% of students). Review deadlines and ownership.',
+          ),
+          color: _warn,
+          icon: Icons.assignment_late_outlined,
+        ),
+      );
+    }
+
+    if (overview.pendingRequests > 0) {
+      final overdueHint = overview.overdueRequests > 0
+          ? _t(
+              ' Просрочено: ${overview.overdueRequests}.',
+              ' Overdue: ${overview.overdueRequests}.',
+            )
+          : '';
+      rows.add(
+        _InsightRow(
+          text: _t(
+            'Открытых заявок: ${overview.pendingRequests}.$overdueHint',
+            'Open requests: ${overview.pendingRequests}.$overdueHint',
+          ),
+          color: overview.overdueRequests > 0 ? _err : _brand,
+          icon: Icons.mark_email_unread_outlined,
+        ),
+      );
+    }
+
+    if (rows.isEmpty) {
+      rows.add(
+        _InsightRow(
+          text: _t(
+            'Критичных отклонений не найдено. Метрики в рабочей зоне.',
+            'No critical deviations found. Metrics are in healthy range.',
+          ),
+          color: _ok,
+          icon: Icons.check_circle_outline,
+        ),
+      );
+    }
+    return rows;
+  }
+
   List<_TeacherLoad> _teacherLoad() {
     final teacherGroups = <String, Set<String>>{};
     final groupStudents = <String, Set<String>>{};
@@ -500,15 +595,6 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
       } else {
         agg.makeupsActive += 1;
       }
-    }
-    final grid = _gridByGroup[group];
-    if (grid != null) {
-      grid.studentCodeCounts.forEach((student, codes) {
-        final agg = touch(student);
-        codes.forEach((code, count) {
-          agg.specialCodes[code] = (agg.specialCodes[code] ?? 0) + count;
-        });
-      });
     }
     return result;
   }
@@ -701,14 +787,71 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
     );
   }
 
+  Widget _metricCard({
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color color,
+    String? hint,
+  }) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 170, maxWidth: 240),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          color: color.withValues(alpha: 0.10),
+          border: Border.all(color: color.withValues(alpha: 0.35)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 18, color: color),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: const TextStyle(
+                      color: _muted,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              value,
+              style: TextStyle(
+                color: color,
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            if (hint != null) ...[
+              const SizedBox(height: 4),
+              Text(hint, style: const TextStyle(color: _muted, fontSize: 12)),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
-    final max = width >= 1500
+    final baseMax = width >= 1500
         ? 1380.0
         : width >= 1100
         ? 1200.0
         : double.infinity;
+    final max = _wideMode
+        ? math.max(width - 24, 2800).toDouble()
+        : baseMax;
     final horizontal = width >= 1100 ? 28.0 : 16.0;
     final twoColWidth = width >= 1100
         ? (max - horizontal * 2 - 12) / 2
@@ -726,12 +869,20 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
       ..sort((a, b) => b.rankScore.compareTo(a.rankScore));
     final trend = _gradeTrend(group: _globalMode ? null : _selectedGroup);
     final heat = _weekdayAbsences(group: _globalMode ? null : _selectedGroup);
-    final special = _specialCounts(group: _globalMode ? null : _selectedGroup);
-    final funnel = _makeupFunnel(group: _globalMode ? null : _selectedGroup);
-    final sla = _teacherSla();
     final exams = _examAgg(group: _globalMode ? null : _selectedGroup);
     final req = _requestAgg();
     final load = _teacherLoad();
+    final overview = _overview(
+      aggregate: aggregate,
+      requests: req,
+      globalMode: _globalMode,
+      selectedGroup: _selectedGroup,
+    );
+    final insights = _insights(
+      overview: overview,
+      globalMode: _globalMode,
+      selectedGroup: _selectedGroup,
+    );
 
     final selected = _selectedGroup;
     final risks = selected == null ? const <_RiskRow>[] : _riskRows(selected);
@@ -744,20 +895,21 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
         ? <_StudentAgg>[]
         : _studentAgg(selected).values.toList();
     students.sort((a, b) => a.student.compareTo(b.student));
-    final contributionRows = selected == null
-        ? <MapEntry<String, double>>[]
-        : ((_gridByGroup[selected]?.contributions.entries.toList() ??
-                <MapEntry<String, double>>[])
-            ..sort((a, b) => b.value.compareTo(a.value)));
-    final studentSpecialRows = selected == null
-        ? <MapEntry<String, Map<String, int>>>[]
-        : ((_gridByGroup[selected]?.studentCodeCounts.entries.toList() ??
-                <MapEntry<String, Map<String, int>>>[])
-            ..sort((a, b) {
-              final av = a.value.values.fold<int>(0, (x, y) => x + y);
-              final bv = b.value.values.fold<int>(0, (x, y) => x + y);
-              return bv.compareTo(av);
-            }));
+    final visibleTrend = trend.length > 8
+        ? trend.sublist(trend.length - 8)
+        : trend;
+    final maxTrendValue = visibleTrend.isEmpty
+        ? 0.0
+        : visibleTrend
+              .map((e) => math.max(e.avg, e.median))
+              .reduce((a, b) => math.max(a, b));
+    final latestTrend = visibleTrend.isEmpty ? null : visibleTrend.last;
+    final previousTrend = visibleTrend.length < 2
+        ? null
+        : visibleTrend[visibleTrend.length - 2];
+    final latestDelta = (latestTrend == null || previousTrend == null)
+        ? null
+        : latestTrend.avg - previousTrend.avg;
 
     return Container(
       decoration: const BoxDecoration(
@@ -813,21 +965,6 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                         style: const TextStyle(color: Colors.white),
                       ),
                     ),
-                    if (_gridLoading)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.16),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          '${_t('Спецзначения', 'Special values')} ${(100 * _gridProgress).round()}%',
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      ),
                   ],
                 ),
               ),
@@ -890,6 +1027,19 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                         icon: const Icon(Icons.refresh_rounded),
                         label: Text(_t('Обновить', 'Refresh')),
                       ),
+                      FilledButton.tonalIcon(
+                        onPressed: () => setState(() => _wideMode = !_wideMode),
+                        icon: Icon(
+                          _wideMode
+                              ? Icons.close_fullscreen_rounded
+                              : Icons.open_in_full_rounded,
+                        ),
+                        label: Text(
+                          _wideMode
+                              ? _t('Стандартный вид', 'Standard view')
+                              : _t('Широкий вид', 'Wide view'),
+                        ),
+                      ),
                       SegmentedButton<bool>(
                         showSelectedIcon: false,
                         segments: <ButtonSegment<bool>>[
@@ -913,6 +1063,112 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                   ),
                 ),
                 const SizedBox(height: 12),
+                _panel(
+                  _t('Ключевые показатели', 'Key metrics'),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      _metricCard(
+                        icon: Icons.groups_rounded,
+                        label: _t('Группы в срезе', 'Groups in scope'),
+                        value: '${overview.groupCount}',
+                        color: _brand,
+                      ),
+                      _metricCard(
+                        icon: Icons.school_rounded,
+                        label: _t('Студенты', 'Students'),
+                        value: '${overview.studentCount}',
+                        color: const Color(0xFF2563EB),
+                      ),
+                      _metricCard(
+                        icon: Icons.person_rounded,
+                        label: _t('Преподаватели', 'Teachers'),
+                        value: '${overview.teacherCount}',
+                        color: const Color(0xFF7C3AED),
+                      ),
+                      _metricCard(
+                        icon: Icons.grade_rounded,
+                        label: _t('Средний балл', 'Average grade'),
+                        value: overview.averageGrade.toStringAsFixed(1),
+                        color: overview.averageGrade < 65 ? _warn : _ok,
+                      ),
+                      _metricCard(
+                        icon: Icons.fact_check_outlined,
+                        label: _t('Посещаемость', 'Attendance'),
+                        value:
+                            '${(overview.attendanceRate * 100).toStringAsFixed(1)}%',
+                        color: overview.attendanceRate < 0.8 ? _err : _ok,
+                      ),
+                      _metricCard(
+                        icon: Icons.assignment_turned_in_outlined,
+                        label: _t('Сдача экзаменов', 'Exam pass rate'),
+                        value:
+                            '${(overview.examPassRate * 100).toStringAsFixed(1)}%',
+                        color: overview.examPassRate < 0.7 ? _warn : _ok,
+                      ),
+                      _metricCard(
+                        icon: Icons.assignment_late_outlined,
+                        label: _t('Активные отработки', 'Active makeups'),
+                        value: '${overview.activeMakeups}',
+                        color: overview.activeMakeups > 0 ? _warn : _ok,
+                      ),
+                      _metricCard(
+                        icon: Icons.mark_email_unread_outlined,
+                        label: _t('Открытые заявки', 'Open requests'),
+                        value: '${overview.pendingRequests}',
+                        color: overview.overdueRequests > 0 ? _err : _brand,
+                        hint: overview.overdueRequests > 0
+                            ? _t(
+                                'Просрочено: ${overview.overdueRequests}',
+                                'Overdue: ${overview.overdueRequests}',
+                              )
+                            : (overview.averageRequestCloseHours == null
+                                  ? null
+                                  : _t(
+                                      'Ср. закрытие: ${overview.averageRequestCloseHours!.toStringAsFixed(1)} ч',
+                                      'Avg close: ${overview.averageRequestCloseHours!.toStringAsFixed(1)} h',
+                                    )),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _panel(
+                  _t('Что требует внимания', 'Actionable focus'),
+                  Column(
+                    children: [
+                      for (final row in insights) ...[
+                        Container(
+                          width: double.infinity,
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(10),
+                            color: row.color.withValues(alpha: 0.10),
+                            border: Border.all(
+                              color: row.color.withValues(alpha: 0.35),
+                            ),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(row.icon, size: 18, color: row.color),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  row.text,
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
                 Wrap(
                   spacing: 12,
                   runSpacing: 12,
@@ -921,6 +1177,10 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                       width: twoColWidth,
                       child: _panel(
                         _t('Динамика среднего/медианы', 'Average/median trend'),
+                        subtitle: _t(
+                          'Считается по оценкам из журнала: группировка по дате занятия (месяц/неделя) и по выбранному срезу группы.',
+                          'Computed from journal grades: grouped by class date (month/week) and selected group scope.',
+                        ),
                         trend.isEmpty
                             ? Text(
                                 _t(
@@ -929,38 +1189,82 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                                 ),
                               )
                             : Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  for (final item
-                                      in (trend.length > 8
-                                          ? trend.sublist(trend.length - 8)
-                                          : trend)) ...[
-                                    Row(
+                                  if (latestTrend != null) ...[
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 8,
                                       children: [
-                                        SizedBox(
-                                          width: 84,
-                                          child: Text(item.label),
+                                        _pill(
+                                          _t(
+                                            'Текущий средний',
+                                            'Current average',
+                                          ),
+                                          latestTrend.avg.toStringAsFixed(2),
+                                          _brand,
                                         ),
-                                        Expanded(
-                                          child: LinearProgressIndicator(
-                                            value: (item.avg / 100).clamp(
+                                        _pill(
+                                          _t(
+                                            'Текущая медиана',
+                                            'Current median',
+                                          ),
+                                          latestTrend.median.toStringAsFixed(2),
+                                          const Color(0xFF2563EB),
+                                        ),
+                                        _pill(
+                                          _t('Записей', 'Entries'),
+                                          '${latestTrend.count}',
+                                          _warn,
+                                        ),
+                                        if (latestDelta != null)
+                                          _pill(
+                                            _t('Изм. к прошлому', 'Delta'),
+                                            '${latestDelta >= 0 ? '+' : ''}${latestDelta.toStringAsFixed(2)}',
+                                            latestDelta >= 0 ? _ok : _err,
+                                          ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 10),
+                                  ],
+                                  for (final item in visibleTrend) ...[
+                                    Text(
+                                      '${item.label} • ${_t('средний', 'avg')}: ${item.avg.toStringAsFixed(2)} • ${_t('медиана', 'median')}: ${item.median.toStringAsFixed(2)} • ${_t('записей', 'entries')}: ${item.count}',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    LinearProgressIndicator(
+                                      value: maxTrendValue <= 0
+                                          ? 0
+                                          : (item.avg / maxTrendValue).clamp(
                                               0.0,
                                               1.0,
                                             ),
-                                            minHeight: 10,
-                                            backgroundColor: const Color(
-                                              0xFFE5E7EB,
-                                            ),
-                                            valueColor:
-                                                const AlwaysStoppedAnimation<
-                                                  Color
-                                                >(_brand),
+                                      minHeight: 8,
+                                      backgroundColor: const Color(0xFFE5E7EB),
+                                      valueColor:
+                                          const AlwaysStoppedAnimation<Color>(
+                                            _brand,
                                           ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Text(item.avg.toStringAsFixed(1)),
-                                      ],
                                     ),
-                                    const SizedBox(height: 8),
+                                    const SizedBox(height: 6),
+                                    LinearProgressIndicator(
+                                      value: maxTrendValue <= 0
+                                          ? 0
+                                          : (item.median / maxTrendValue).clamp(
+                                              0.0,
+                                              1.0,
+                                            ),
+                                      minHeight: 6,
+                                      backgroundColor: const Color(0xFFE5E7EB),
+                                      valueColor:
+                                          const AlwaysStoppedAnimation<Color>(
+                                            Color(0xFF2563EB),
+                                          ),
+                                    ),
+                                    const SizedBox(height: 12),
                                   ],
                                 ],
                               ),
@@ -1085,102 +1389,6 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                               ),
                           ],
                         ),
-                      ),
-                    ),
-                    SizedBox(
-                      width: twoColWidth,
-                      child: _panel(
-                        _t('Доля спецзначений', 'Special value share'),
-                        special.isEmpty
-                            ? Text(
-                                _t('Нет спецзначений.', 'No special values.'),
-                              )
-                            : Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children:
-                                    (special.entries.toList()..sort(
-                                          (a, b) => b.value.compareTo(a.value),
-                                        ))
-                                        .take(12)
-                                        .map(
-                                          (e) => Chip(
-                                            label: Text('${e.key}: ${e.value}'),
-                                          ),
-                                        )
-                                        .toList(),
-                              ),
-                      ),
-                    ),
-                    SizedBox(
-                      width: twoColWidth,
-                      child: _panel(
-                        _t('Воронка отработок', 'Makeup funnel'),
-                        Column(
-                          children: funnel.entries.map((e) {
-                            final total = funnel.values.fold<int>(
-                              0,
-                              (a, b) => a + b,
-                            );
-                            final rate = total == 0 ? 0.0 : e.value / total;
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 8),
-                              child: Row(
-                                children: [
-                                  SizedBox(width: 150, child: Text(e.key)),
-                                  Expanded(
-                                    child: LinearProgressIndicator(
-                                      value: rate,
-                                      minHeight: 10,
-                                      backgroundColor: const Color(0xFFE5E7EB),
-                                      valueColor:
-                                          const AlwaysStoppedAnimation<Color>(
-                                            _brand,
-                                          ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text('${e.value}'),
-                                ],
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                      ),
-                    ),
-                    SizedBox(
-                      width: twoColWidth,
-                      child: _panel(
-                        _t('SLA преподавателей', 'Teacher SLA'),
-                        sla.isEmpty
-                            ? Text(
-                                _t(
-                                  'Недостаточно событий.',
-                                  'Not enough events.',
-                                ),
-                              )
-                            : Column(
-                                children: [
-                                  for (final row in sla.take(10)) ...[
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            row.teacher,
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
-                                        ),
-                                        Text(
-                                          '${row.avgHours.toStringAsFixed(1)} h (${row.samples})',
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 8),
-                                  ],
-                                ],
-                              ),
                       ),
                     ),
                     SizedBox(
@@ -1383,109 +1591,6 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                       SizedBox(
                         width: twoColWidth,
                         child: _panel(
-                          _t(
-                            'Вклад колонок пресета',
-                            'Preset column contribution',
-                          ),
-                          (_gridByGroup[selected]?.contributions.isEmpty ??
-                                  true)
-                              ? Text(
-                                  _t(
-                                    'Нет вычисляемых колонок.',
-                                    'No computed columns.',
-                                  ),
-                                )
-                              : Column(
-                                  children: contributionRows
-                                      .take(12)
-                                      .map(
-                                        (e) => Padding(
-                                          padding: const EdgeInsets.only(
-                                            bottom: 8,
-                                          ),
-                                          child: Row(
-                                            children: [
-                                              SizedBox(
-                                                width: 140,
-                                                child: Text(
-                                                  e.key,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                ),
-                                              ),
-                                              Expanded(
-                                                child: LinearProgressIndicator(
-                                                  value: (e.value / 100).clamp(
-                                                    0.0,
-                                                    1.0,
-                                                  ),
-                                                  minHeight: 10,
-                                                ),
-                                              ),
-                                              const SizedBox(width: 8),
-                                              Text(
-                                                '${e.value.toStringAsFixed(1)}%',
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      )
-                                      .toList(),
-                                ),
-                        ),
-                      ),
-                      SizedBox(
-                        width: twoColWidth,
-                        child: _panel(
-                          _t(
-                            'Структура спецзначений',
-                            'Special values structure',
-                          ),
-                          (_gridByGroup[selected]?.studentCodeCounts.isEmpty ??
-                                  true)
-                              ? Text(
-                                  _t(
-                                    'Нет спецзначений у студентов.',
-                                    'No student special values.',
-                                  ),
-                                )
-                              : Column(
-                                  children: studentSpecialRows
-                                      .take(12)
-                                      .map(
-                                        (e) => Padding(
-                                          padding: const EdgeInsets.only(
-                                            bottom: 8,
-                                          ),
-                                          child: Row(
-                                            children: [
-                                              Expanded(
-                                                child: Text(
-                                                  e.key,
-                                                  style: const TextStyle(
-                                                    fontWeight: FontWeight.w700,
-                                                  ),
-                                                ),
-                                              ),
-                                              Text(
-                                                e.value.entries
-                                                    .map(
-                                                      (v) =>
-                                                          '${v.key}:${v.value}',
-                                                    )
-                                                    .join('  •  '),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                      )
-                                      .toList(),
-                                ),
-                        ),
-                      ),
-                      SizedBox(
-                        width: twoColWidth,
-                        child: _panel(
                           _t('Проблемные даты', 'Problem dates'),
                           problems.isEmpty
                               ? Text(
@@ -1636,14 +1741,6 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                                                   Text(
                                                     '${_t('Экзамен', 'Exam')}: ${s.examAvg!.toStringAsFixed(1)}',
                                                   ),
-                                                if (s.specialCodes.isNotEmpty)
-                                                  Text(
-                                                    '${_t('Спецзначения', 'Special values')}: ${s.specialCodes.entries.map((e) => '${e.key}:${e.value}').join(', ')}',
-                                                    style: const TextStyle(
-                                                      color: _muted,
-                                                      fontSize: 12,
-                                                    ),
-                                                  ),
                                               ],
                                             ),
                                           ),
@@ -1666,10 +1763,11 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
 }
 
 class _Trend {
-  _Trend(this.label, this.avg, this.median);
+  _Trend(this.label, this.avg, this.median, this.count);
   final String label;
   final double avg;
   final double median;
+  final int count;
 }
 
 class _GroupAgg {
@@ -1689,7 +1787,6 @@ class _GroupAgg {
   int makeupTotal = 0;
   int makeupClosed = 0;
   int makeupActive = 0;
-  int specialTotal = 0;
 
   double get gradeAvg => gradeCount == 0 ? 0 : gradeTotal / gradeCount;
   double get attRate =>
@@ -1702,62 +1799,6 @@ class _GroupAgg {
       attRate * 100 * 0.30 +
       examPassRate * 100 * 0.15 +
       makeupCloseRate * 100 * 0.10;
-}
-
-class _GridStats {
-  _GridStats({
-    required this.statusCodeCounts,
-    required this.studentCodeCounts,
-    required this.contributions,
-  });
-
-  final Map<String, int> statusCodeCounts;
-  final Map<String, Map<String, int>> studentCodeCounts;
-  final Map<String, double> contributions;
-
-  factory _GridStats.fromGrid(JournalGridDto grid) {
-    final status = <String, int>{};
-    final students = <String, Map<String, int>>{};
-    final abs = <String, double>{};
-    for (final cell in grid.dateCells) {
-      final code = (cell.statusCode ?? '').trim();
-      if (code.isEmpty) continue;
-      status[code] = (status[code] ?? 0) + 1;
-      final bucket = students.putIfAbsent(
-        cell.studentName,
-        () => <String, int>{},
-      );
-      bucket[code] = (bucket[code] ?? 0) + 1;
-    }
-    for (final row in grid.computedCells) {
-      row.values.forEach((key, value) {
-        double? v;
-        if (value is num) v = value.toDouble();
-        if (value is String) v = double.tryParse(value);
-        if (v == null) return;
-        abs[key] = (abs[key] ?? 0) + v.abs();
-      });
-    }
-    final sum = abs.values.fold<double>(0, (a, b) => a + b);
-    final contr = <String, double>{};
-    if (sum > 0) {
-      abs.forEach((key, value) {
-        contr[key] = value * 100 / sum;
-      });
-    }
-    return _GridStats(
-      statusCodeCounts: status,
-      studentCodeCounts: students,
-      contributions: contr,
-    );
-  }
-}
-
-class _TeacherSla {
-  _TeacherSla(this.teacher, this.avgHours, this.samples);
-  final String teacher;
-  final double avgHours;
-  final int samples;
 }
 
 class _ExamAgg {
@@ -1801,7 +1842,6 @@ class _StudentAgg {
   final String student;
   final List<GradeRecord> grades = <GradeRecord>[];
   final List<double> exams = <double>[];
-  final Map<String, int> specialCodes = <String, int>{};
   int attTotal = 0;
   int attPresent = 0;
   int makeupsActive = 0;
@@ -1889,4 +1929,36 @@ class _Compare {
   final double? courseMedian;
   final double? allMedian;
   final String courseKey;
+}
+
+class _AnalyticsOverview {
+  _AnalyticsOverview({
+    required this.groupCount,
+    required this.studentCount,
+    required this.teacherCount,
+    required this.averageGrade,
+    required this.attendanceRate,
+    required this.examPassRate,
+    required this.activeMakeups,
+    required this.pendingRequests,
+    required this.overdueRequests,
+    required this.averageRequestCloseHours,
+  });
+  final int groupCount;
+  final int studentCount;
+  final int teacherCount;
+  final double averageGrade;
+  final double attendanceRate;
+  final double examPassRate;
+  final int activeMakeups;
+  final int pendingRequests;
+  final int overdueRequests;
+  final double? averageRequestCloseHours;
+}
+
+class _InsightRow {
+  _InsightRow({required this.text, required this.color, required this.icon});
+  final String text;
+  final Color color;
+  final IconData icon;
 }

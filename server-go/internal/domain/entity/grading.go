@@ -89,10 +89,16 @@ type GroupPresetBinding struct {
 	UpdatedAt       time.Time
 }
 
+type JournalDate struct {
+	ClassDate  time.Time
+	LessonSlot int
+}
+
 type JournalCell struct {
 	ID           uint
 	GroupName    string
 	ClassDate    time.Time
+	LessonSlot   int
 	StudentName  string
 	RawValue     string
 	NumericValue *float64
@@ -124,7 +130,7 @@ type ComputedRow struct {
 type JournalGrid struct {
 	GroupName   string
 	Students    []string
-	Dates       []time.Time
+	Dates       []JournalDate
 	DateCells   []JournalCell
 	ManualCells []ManualCell
 	Computed    []ComputedRow

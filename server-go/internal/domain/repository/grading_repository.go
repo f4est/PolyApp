@@ -2,7 +2,6 @@ package repository
 
 import (
 	"context"
-	"time"
 
 	"polyapp/server-go/internal/domain/entity"
 )
@@ -23,7 +22,7 @@ type JournalRepository interface {
 	DeleteGroupPresetBinding(ctx context.Context, groupName string) error
 
 	ListJournalStudents(ctx context.Context, groupName string) ([]string, error)
-	ListJournalDates(ctx context.Context, groupName string) ([]time.Time, error)
+	ListJournalDates(ctx context.Context, groupName string) ([]entity.JournalDate, error)
 
 	ListDateCells(ctx context.Context, groupName string) ([]entity.JournalCell, error)
 	UpsertDateCells(ctx context.Context, cells []entity.JournalCell) error
