@@ -3020,6 +3020,8 @@ class _RoleHomePageState extends State<RoleHomePage> {
   }
 
   Widget _buildWebShell(List<_NavItem> tabs, Color color, String title) {
+    final activeTabId = tabs[_index].id;
+    final shellMaxWidth = activeTabId == 'analytics' ? 2400.0 : 1560.0;
     return Scaffold(
       body: Container(
         decoration: BoxDecoration(
@@ -3071,7 +3073,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
               Expanded(
                 child: Center(
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 1560),
+                    constraints: BoxConstraints(maxWidth: shellMaxWidth),
                     child: Card(
                       margin: const EdgeInsets.fromLTRB(20, 8, 20, 20),
                       clipBehavior: Clip.antiAlias,
@@ -4077,6 +4079,26 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
   String _tt(String en) =>
       translateEnglishUi(AppStateScope.of(context).locale.languageCode, en);
 
+  Future<void> _openExamTemplate(String extension) async {
+    final base = AppStateScope.of(context).baseUrl.replaceFirst(
+      RegExp(r'/+$'),
+      '',
+    );
+    final uri = Uri.tryParse('$base/exams/template.$extension');
+    if (uri == null) return;
+    final opened = await launchUrl(uri, mode: LaunchMode.platformDefault);
+    if (!opened && mounted) {
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = _isRu
+            ? 'Не удалось открыть шаблон файла.'
+            : 'Failed to open template file.';
+      });
+    }
+  }
+
+  bool get _isRu => AppStateScope.of(context).locale.languageCode == 'ru';
+
   List<ExamGrade> _filterGradesByRole(List<ExamGrade> source) {
     final user = AppStateScope.of(context).user;
     if (user == null) return source;
@@ -4370,6 +4392,36 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                     onSubmitted: (_) => FocusScope.of(context).unfocus(),
                   ),
                   const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: () => _openExamTemplate('csv'),
+                        icon: const Icon(Icons.description_outlined),
+                        label: Text(_isRu ? 'Шаблон CSV' : 'CSV template'),
+                      ),
+                      OutlinedButton.icon(
+                        onPressed: () => _openExamTemplate('xlsx'),
+                        icon: const Icon(Icons.table_view_rounded),
+                        label: Text(_isRu ? 'Шаблон XLSX' : 'XLSX template'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      _isRu
+                          ? 'Формат файла: 2 колонки — student_name, grade.'
+                          : 'File format: 2 columns — student_name, grade.',
+                      style: const TextStyle(
+                        color: kSecondaryText,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   Row(
                     children: [
                       Expanded(child: Text(filename ?? _tt('No file chosen'))),
@@ -4379,7 +4431,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                             ? null
                             : () async {
                                 final result = await FilePicker.platform
-                                    .pickFiles(
+                                  .pickFiles(
                                       type: FileType.custom,
                                       allowedExtensions: ['xlsx', 'csv'],
                                       withData: true,

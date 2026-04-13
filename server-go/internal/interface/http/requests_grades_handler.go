@@ -44,6 +44,27 @@ func (h *Handler) createRequest(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name is required for teacher request"})
 			return
 		}
+		if h.teacherHasDirectAssignment(c.Request.Context(), user.ID, groupName) {
+			c.JSON(http.StatusConflict, gin.H{"detail": "Вы уже назначены на эту группу"})
+			return
+		}
+		var existing persistence.DBRequestTicket
+		groupPrefix := "группа: " + strings.ToLower(groupName)
+		err := h.db.WithContext(c.Request.Context()).
+			Where("student_id = ?", user.ID).
+			Where("lower(request_type) LIKE ? AND lower(request_type) LIKE ?", "%преподаван%", "%груп%").
+			Where("lower(details) LIKE ?", groupPrefix+"%").
+			Where("lower(status) NOT IN ?", []string{"approved", "rejected", "одобрено", "отклонена", "отклонено"}).
+			Order("id desc").
+			First(&existing).Error
+		if err == nil {
+			c.JSON(http.StatusConflict, gin.H{"detail": "Заявка на эту группу уже подана"})
+			return
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to validate request"})
+			return
+		}
 		requestType = "Запрос на преподавание группы"
 		if details == "" {
 			details = "Группа: " + groupName

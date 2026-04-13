@@ -138,6 +138,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
   DateTime? _lastSync;
 
   List<String> _groups = <String>[];
+  Map<String, String> _groupLabels = <String, String>{};
   String? _groupName;
   JournalGridDto? _grid;
 
@@ -218,21 +219,70 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
     });
     try {
       await _importLegacyHiveOnce();
-      final groups = await widget.client.listJournalGroups();
+      final assignedGroups = await widget.client.listJournalGroups();
+      List<String> groups = assignedGroups;
+      final labels = <String, String>{
+        for (final group in assignedGroups) group: group,
+      };
+      if (widget.canManageGroups) {
+        try {
+          final catalog = await widget.client.listJournalGroupCatalogV2();
+          if (catalog.isNotEmpty) {
+            groups = catalog.map((item) => item.groupName).toList();
+            labels
+              ..clear()
+              ..addEntries(
+                catalog.map(
+                  (item) => MapEntry(
+                    item.groupName,
+                    item.label.isEmpty ? item.groupName : item.label,
+                  ),
+                ),
+              );
+          }
+        } catch (_) {
+          // Fallback to regular group list.
+        }
+      } else if (widget.canEdit && !widget.canManageGroups) {
+        try {
+          final catalog = await widget.client.listJournalGroupCatalog();
+          final merged = <String>{...catalog, ...assignedGroups}.toList()
+            ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+          groups = merged;
+        } catch (_) {
+          groups = assignedGroups;
+        }
+      }
       final selected = _groupName != null && groups.contains(_groupName)
           ? _groupName
           : (groups.isNotEmpty ? groups.first : null);
-      JournalGridDto? grid;
-      if (selected != null) {
-        grid = await widget.client.getGroupGridV2(selected);
-      }
       if (!mounted) return;
       setState(() {
-        _markOnline();
         _groups = groups;
+        _groupLabels = labels;
         _groupName = selected;
-        _grid = grid;
+        _grid = null;
+        _error = null;
       });
+      if (selected != null) {
+        try {
+          final grid = await widget.client.getGroupGridV2(selected);
+          if (!mounted) return;
+          setState(() {
+            _markOnline();
+            _grid = grid;
+          });
+        } catch (error) {
+          if (!mounted) return;
+          setState(() {
+            _markOffline();
+            _error = _readErrorText(error);
+            _grid = null;
+          });
+        }
+      } else {
+        setState(_markOnline);
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -628,7 +678,10 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
               ),
               items: _groups
                   .map(
-                    (item) => DropdownMenuItem(value: item, child: Text(item)),
+                    (item) => DropdownMenuItem(
+                      value: item,
+                      child: Text(_groupLabels[item] ?? item),
+                    ),
                   )
                   .toList(),
               onChanged: _loading

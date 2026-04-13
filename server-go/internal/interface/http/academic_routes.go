@@ -92,6 +92,8 @@ type examUploadUpdatePayload struct {
 
 func (h *Handler) RegisterAcademicRoutes(router *gin.Engine, auth *httpMiddleware.AuthMiddleware) {
 	router.GET("/exams/template", h.downloadExamTemplate)
+	router.GET("/exams/template.csv", h.downloadExamTemplateCSV)
+	router.GET("/exams/template.xlsx", h.downloadExamTemplateXLSX)
 
 	secured := router.Group("/")
 	secured.Use(auth.RequireAuth())
@@ -146,6 +148,7 @@ func (h *Handler) RegisterAcademicRoutes(router *gin.Engine, auth *httpMiddlewar
 		secured.POST("/grading-presets/:id/unpublish", httpMiddleware.RequireRoles("teacher", "admin"), h.unpublishGradingPresetV2)
 
 		secured.GET("/journal/v2/groups/:group_name/preset", h.getGroupPresetBindingV2)
+		secured.GET("/journal/v2/groups/catalog", httpMiddleware.RequireRoles("teacher", "admin"), h.listJournalGroupCatalogV2)
 		secured.PUT("/journal/v2/groups/:group_name/preset", httpMiddleware.RequireRoles("teacher", "admin"), h.applyGroupPresetBindingV2)
 		secured.DELETE("/journal/v2/groups/:group_name/preset", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteGroupPresetBindingV2)
 

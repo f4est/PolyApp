@@ -36,6 +36,7 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
   bool _loading = true;
   bool _globalMode = true;
   bool _monthlyTrend = true;
+  bool _wideMode = false;
   bool _initialized = false;
 
   String? _selectedGroup;
@@ -843,11 +844,14 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
-    final max = width >= 1500
+    final baseMax = width >= 1500
         ? 1380.0
         : width >= 1100
         ? 1200.0
         : double.infinity;
+    final max = _wideMode
+        ? math.max(width - 24, 2800).toDouble()
+        : baseMax;
     final horizontal = width >= 1100 ? 28.0 : 16.0;
     final twoColWidth = width >= 1100
         ? (max - horizontal * 2 - 12) / 2
@@ -1022,6 +1026,19 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                         onPressed: _reload,
                         icon: const Icon(Icons.refresh_rounded),
                         label: Text(_t('Обновить', 'Refresh')),
+                      ),
+                      FilledButton.tonalIcon(
+                        onPressed: () => setState(() => _wideMode = !_wideMode),
+                        icon: Icon(
+                          _wideMode
+                              ? Icons.close_fullscreen_rounded
+                              : Icons.open_in_full_rounded,
+                        ),
+                        label: Text(
+                          _wideMode
+                              ? _t('Стандартный вид', 'Standard view')
+                              : _t('Широкий вид', 'Wide view'),
+                        ),
                       ),
                       SegmentedButton<bool>(
                         showSelectedIcon: false,

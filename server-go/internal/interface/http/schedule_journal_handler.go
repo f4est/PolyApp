@@ -791,10 +791,11 @@ func (h *Handler) listJournalStudents(c *gin.Context) {
 			return
 		}
 	}
+	journalGroupName := scopedJournalGroupNameForUser(user, groupName)
 	var students []string
 	if err := h.db.WithContext(c.Request.Context()).
 		Model(&persistence.DBJournalStudent{}).
-		Where("group_name = ?", groupName).
+		Where("group_name = ?", journalGroupName).
 		Order("student_name asc").
 		Pluck("student_name", &students).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load students"})
@@ -859,6 +860,10 @@ func (h *Handler) upsertJournalStudent(c *gin.Context) {
 	}
 	group := strings.TrimSpace(payload.GroupName)
 	name := strings.TrimSpace(payload.StudentName)
+	baseGroup := baseJournalGroupName(group)
+	if baseGroup == "" {
+		baseGroup = group
+	}
 	if group == "" || name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name and student_name are required"})
 		return
@@ -889,32 +894,33 @@ func (h *Handler) upsertJournalStudent(c *gin.Context) {
 	}
 	name = strings.TrimSpace(approvedStudent.FullName)
 	currentGroup := strings.TrimSpace(approvedStudent.StudentGroup)
-	if currentGroup != "" && !groupsMatch(currentGroup, group) {
+	if currentGroup != "" && !groupsMatch(currentGroup, baseGroup) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"detail": "Only students without a group can be added",
 		})
 		return
 	}
 	if currentGroup == "" {
-		approvedStudent.StudentGroup = group
+		approvedStudent.StudentGroup = baseGroup
 		if err := h.db.WithContext(c.Request.Context()).
 			Model(&persistence.DBUser{}).
 			Where("id = ?", approvedStudent.ID).
-			Update("student_group", group).Error; err != nil {
+			Update("student_group", baseGroup).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to bind student to group"})
 			return
 		}
 	}
-	row := persistence.DBJournalStudent{GroupName: group, StudentName: name}
+	journalGroupName := scopedJournalGroupNameForUser(user, group)
+	row := persistence.DBJournalStudent{GroupName: journalGroupName, StudentName: name}
 	if err := h.db.WithContext(c.Request.Context()).
-		Where("group_name = ? AND student_name = ?", group, name).
+		Where("group_name = ? AND student_name = ?", journalGroupName, name).
 		FirstOrCreate(&row).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save student"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"id":           row.ID,
-		"group_name":   row.GroupName,
+		"group_name":   group,
 		"student_name": row.StudentName,
 	})
 }
@@ -962,8 +968,9 @@ func (h *Handler) deleteJournalStudent(c *gin.Context) {
 			return
 		}
 	}
+	journalGroupName := scopedJournalGroupNameForUser(user, group)
 	if err := h.db.WithContext(c.Request.Context()).
-		Where("group_name = ? AND student_name = ?", group, name).
+		Where("group_name = ? AND student_name = ?", journalGroupName, name).
 		Delete(&persistence.DBJournalStudent{}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete student"})
 		return
@@ -1010,9 +1017,10 @@ func (h *Handler) listJournalDates(c *gin.Context) {
 			return
 		}
 	}
+	journalGroupName := scopedJournalGroupNameForUser(user, group)
 	var rows []persistence.DBJournalDate
 	if err := h.db.WithContext(c.Request.Context()).
-		Where("group_name = ?", group).
+		Where("group_name = ?", journalGroupName).
 		Order("class_date asc").
 		Order("lesson_slot asc").
 		Find(&rows).Error; err != nil {
@@ -1058,30 +1066,31 @@ func (h *Handler) upsertJournalDate(c *gin.Context) {
 		}
 	}
 	row := persistence.DBJournalDate{}
+	journalGroupName := scopedJournalGroupNameForUser(user, group)
 	if err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
 		// Explicit slot keeps deterministic identity (used by rename/edit operations).
 		if payload.LessonSlot != nil && *payload.LessonSlot > 0 {
 			slot := normalizeLessonSlot(*payload.LessonSlot)
 			row = persistence.DBJournalDate{
-				GroupName:  group,
+				GroupName:  journalGroupName,
 				ClassDate:  dateValue,
 				LessonSlot: slot,
 			}
 			return tx.
-				Where("group_name = ? AND class_date = ? AND lesson_slot = ?", group, dateValue, slot).
+				Where("group_name = ? AND class_date = ? AND lesson_slot = ?", journalGroupName, dateValue, slot).
 				FirstOrCreate(&row).Error
 		}
 
 		// No slot in payload -> append next pair index for this day: p1, p2, p3...
 		var maxSlot int
 		if err := tx.Model(&persistence.DBJournalDate{}).
-			Where("group_name = ? AND class_date = ?", group, dateValue).
+			Where("group_name = ? AND class_date = ?", journalGroupName, dateValue).
 			Select("COALESCE(MAX(lesson_slot), 0)").
 			Scan(&maxSlot).Error; err != nil {
 			return err
 		}
 		row = persistence.DBJournalDate{
-			GroupName:  group,
+			GroupName:  journalGroupName,
 			ClassDate:  dateValue,
 			LessonSlot: normalizeLessonSlot(maxSlot + 1),
 		}
@@ -1092,7 +1101,7 @@ func (h *Handler) upsertJournalDate(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"id":          row.ID,
-		"group_name":  row.GroupName,
+		"group_name":  group,
 		"class_date":  dateOnly(row.ClassDate),
 		"lesson_slot": normalizeLessonSlot(row.LessonSlot),
 	})
@@ -1126,8 +1135,9 @@ func (h *Handler) deleteJournalDate(c *gin.Context) {
 			return
 		}
 	}
+	journalGroupName := scopedJournalGroupNameForUser(user, group)
 	query := h.db.WithContext(c.Request.Context()).
-		Where("group_name = ? AND class_date = ?", group, dateValue)
+		Where("group_name = ? AND class_date = ?", journalGroupName, dateValue)
 	if slotPtr != nil {
 		query = query.Where("lesson_slot = ?", *slotPtr)
 	}

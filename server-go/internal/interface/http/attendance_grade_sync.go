@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"polyapp/server-go/internal/domain/entity"
 	"polyapp/server-go/internal/infrastructure/persistence"
 	"polyapp/server-go/internal/usecase"
 
@@ -31,6 +32,9 @@ func (h *Handler) syncAttendanceToJournalV2(
 	row persistence.DBAttendanceRecord,
 ) error {
 	groupName := strings.TrimSpace(row.GroupName)
+	if strings.EqualFold(strings.TrimSpace(actor.Role), "teacher") && actor.UserID > 0 {
+		groupName = scopedJournalGroupNameForUser(&entity.User{ID: actor.UserID, Role: actor.Role}, groupName)
+	}
 	studentName := strings.TrimSpace(row.StudentName)
 	if groupName == "" || studentName == "" {
 		return nil
@@ -127,8 +131,9 @@ func (h *Handler) syncDateCellsToAttendance(
 			continue
 		}
 		present := !isAbsenceToken(rawValue)
+		attendanceGroupName := baseJournalGroupName(groupName)
 		row := persistence.DBAttendanceRecord{
-			GroupName:   groupName,
+			GroupName:   attendanceGroupName,
 			ClassDate:   item.ClassDate,
 			LessonSlot:  normalizeLessonSlot(item.LessonSlot),
 			StudentName: studentName,

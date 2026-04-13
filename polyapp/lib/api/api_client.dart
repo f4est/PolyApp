@@ -826,6 +826,21 @@ class ApiClient {
     return data.map((item) => item.toString()).toList();
   }
 
+  Future<List<JournalGroupCatalogItemDto>> listJournalGroupCatalogV2() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/journal/v2/groups/catalog'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data
+        .map(
+          (item) =>
+              JournalGroupCatalogItemDto.fromJson(item as Map<String, dynamic>),
+        )
+        .toList();
+  }
+
   Future<void> upsertJournalGroup(String name) async {
     final response = await http.post(
       Uri.parse('$baseUrl/journal/groups'),
@@ -2831,6 +2846,23 @@ class TeacherGroupAssignment {
       groupName: json['group_name'] as String,
       subject: json['subject'] as String,
       createdAt: DateTime.parse(json['created_at'] as String),
+    );
+  }
+}
+
+class JournalGroupCatalogItemDto {
+  JournalGroupCatalogItemDto({
+    required this.groupName,
+    required this.label,
+  });
+
+  final String groupName;
+  final String label;
+
+  factory JournalGroupCatalogItemDto.fromJson(Map<String, dynamic> json) {
+    return JournalGroupCatalogItemDto(
+      groupName: (json['group_name'] as String? ?? '').trim(),
+      label: (json['label'] as String? ?? '').trim(),
     );
   }
 }

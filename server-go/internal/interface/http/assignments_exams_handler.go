@@ -364,6 +364,42 @@ func (h *Handler) deletePastExamUploads(c *gin.Context) {
 	})
 }
 
+func (h *Handler) downloadExamTemplateCSV(c *gin.Context) {
+	var buffer bytes.Buffer
+	writer := csv.NewWriter(&buffer)
+	_ = writer.Write([]string{"student_name", "grade"})
+	_ = writer.Write([]string{"Ivan Petrov", "85"})
+	_ = writer.Write([]string{"Anna Sidorova", "90"})
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to build CSV template"})
+		return
+	}
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", `attachment; filename="exam_template.csv"`)
+	c.String(http.StatusOK, buffer.String())
+}
+
+func (h *Handler) downloadExamTemplateXLSX(c *gin.Context) {
+	xlsx := excelize.NewFile()
+	defer func() { _ = xlsx.Close() }()
+	sheet := xlsx.GetSheetName(0)
+	_ = xlsx.SetCellValue(sheet, "A1", "student_name")
+	_ = xlsx.SetCellValue(sheet, "B1", "grade")
+	_ = xlsx.SetCellValue(sheet, "A2", "Ivan Petrov")
+	_ = xlsx.SetCellValue(sheet, "B2", 85)
+	_ = xlsx.SetCellValue(sheet, "A3", "Anna Sidorova")
+	_ = xlsx.SetCellValue(sheet, "B3", 90)
+	content, err := xlsx.WriteToBuffer()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to build XLSX template"})
+		return
+	}
+	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	c.Header("Content-Disposition", `attachment; filename="exam_template.xlsx"`)
+	c.Data(http.StatusOK, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", content.Bytes())
+}
+
 func (h *Handler) updateExamUpload(c *gin.Context) {
 	user := httpMiddleware.CurrentUser(c)
 	id, err := parseUintParam(c, "id")

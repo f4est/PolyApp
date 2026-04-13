@@ -414,6 +414,7 @@ func (r *GradingRepo) UpsertComputedRows(ctx context.Context, rows []entity.Comp
 }
 
 func (r *GradingRepo) IsTeacherAssignedToGroup(ctx context.Context, teacherID uint, groupName string) (bool, error) {
+	groupName = baseJournalGroupNameForRepo(groupName)
 	var count int64
 	if err := r.db.WithContext(ctx).
 		Model(&DBTeacherGroupAssignment{}).
@@ -422,6 +423,28 @@ func (r *GradingRepo) IsTeacherAssignedToGroup(ctx context.Context, teacherID ui
 		return false, err
 	}
 	return count > 0, nil
+}
+
+func baseJournalGroupNameForRepo(groupName string) string {
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		return groupName
+	}
+	const suffix = "@@t"
+	idx := strings.LastIndex(groupName, suffix)
+	if idx <= 0 {
+		return groupName
+	}
+	tail := strings.TrimSpace(groupName[idx+len(suffix):])
+	if tail == "" {
+		return groupName
+	}
+	for _, ch := range tail {
+		if ch < '0' || ch > '9' {
+			return groupName
+		}
+	}
+	return strings.TrimSpace(groupName[:idx])
 }
 
 func mapPresetToDomain(model DBGradingPreset) entity.GradingPreset {
