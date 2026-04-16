@@ -3939,7 +3939,7 @@ class _ParentAttendancePageState extends State<ParentAttendancePage> {
           }
           final rows = snapshot.data ?? const <AttendanceRecord>[];
           if (rows.isEmpty) {
-            return Text(isRu ? 'Записей пока нет.' : 'No records yet.');
+            return Text(isRu ? 'Записи отсутствуют.' : 'No records available.');
           }
           return SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -4025,7 +4025,7 @@ class _ParentGradesPageState extends State<ParentGradesPage> {
           }
           final rows = snapshot.data ?? const <GradeRecord>[];
           if (rows.isEmpty) {
-            return Text(isRu ? 'Оценок пока нет.' : 'No grades yet.');
+            return Text(isRu ? 'Оценки отсутствуют.' : 'No grades available.');
           }
           return SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -4080,10 +4080,9 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
       translateEnglishUi(AppStateScope.of(context).locale.languageCode, en);
 
   Future<void> _openExamTemplate(String extension) async {
-    final base = AppStateScope.of(context).baseUrl.replaceFirst(
-      RegExp(r'/+$'),
-      '',
-    );
+    final base = AppStateScope.of(
+      context,
+    ).baseUrl.replaceFirst(RegExp(r'/+$'), '');
     final uri = Uri.tryParse('$base/exams/template.$extension');
     if (uri == null) return;
     final opened = await launchUrl(uri, mode: LaunchMode.platformDefault);
@@ -4431,7 +4430,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                             ? null
                             : () async {
                                 final result = await FilePicker.platform
-                                  .pickFiles(
+                                    .pickFiles(
                                       type: FileType.custom,
                                       allowedExtensions: ['xlsx', 'csv'],
                                       withData: true,
@@ -8152,7 +8151,7 @@ class _HomeDashboardPageState extends State<HomeDashboardPage> {
                 actionLabel: _t('Открыть', 'Open'),
                 onAction: () => _openFeature('news'),
                 child: _latestNews == null
-                    ? Text(_t('Новостей пока нет.', 'No news yet.'))
+                    ? Text(_t('Новости отсутствуют.', 'No news available.'))
                     : Builder(
                         builder: (context) {
                           final previewText = _newsPreviewText(
@@ -9279,7 +9278,9 @@ class _HomeNewsPreviewState extends State<_HomeNewsPreview> {
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 child: Text(
-                  widget.isRu ? 'Пока нет публикаций.' : 'No posts yet.',
+                  widget.isRu
+                      ? 'Публикации отсутствуют.'
+                      : 'No posts available.',
                   style: TextStyle(color: kSecondaryText),
                 ),
               )

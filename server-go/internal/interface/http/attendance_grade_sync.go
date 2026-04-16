@@ -131,7 +131,7 @@ func (h *Handler) syncDateCellsToAttendance(
 			continue
 		}
 		present := !isAbsenceToken(rawValue)
-		attendanceGroupName := baseJournalGroupName(groupName)
+		attendanceGroupName := strings.TrimSpace(groupName)
 		row := persistence.DBAttendanceRecord{
 			GroupName:   attendanceGroupName,
 			ClassDate:   item.ClassDate,

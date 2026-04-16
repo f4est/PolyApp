@@ -390,8 +390,8 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
         SnackBar(
           content: Text(
             _tr(
-              'Нет свободных подтвержденных студентов без группы.',
-              'No free approved students without a group.',
+              'Для выбранной группы нет подтвержденных студентов.',
+              'No approved students found for the selected group.',
             ),
           ),
         ),
@@ -416,8 +416,8 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
           onChanged: (value) => selectedName = value?.trim() ?? selectedName,
           decoration: InputDecoration(
             labelText: _tr(
-              'Свободный подтвержденный студент',
-              'Free approved student',
+              'Подтвержденный студент группы',
+              'Approved student in group',
             ),
           ),
         ),

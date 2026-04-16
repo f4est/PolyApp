@@ -228,6 +228,10 @@ func (h *Handler) getJournalGridV2(c *gin.Context) {
 	user := httpMiddleware.CurrentUser(c)
 	groupName := strings.TrimSpace(c.Param("group_name"))
 	scopedGroupName := scopedJournalGroupNameForUser(user, groupName)
+	if err := h.ensureJournalStudentsFromApprovedGroup(c.Request.Context(), user, groupName, scopedGroupName); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load journal grid"})
+		return
+	}
 	grid, err := h.journalUC.GetGrid(c.Request.Context(), actorFromContext(c), scopedGroupName)
 	if err != nil {
 		writeUseCaseError(c, err, "Failed to load journal grid")
@@ -308,6 +312,7 @@ func (h *Handler) listJournalGroupCatalogV2(c *gin.Context) {
 		Label     string
 	}
 	itemsByGroup := map[string]item{}
+	basesWithTeacherScope := map[string]struct{}{}
 	teacherNameByID := map[uint]string{}
 	resolveTeacherName := func(id uint) string {
 		if id == 0 {
@@ -335,6 +340,11 @@ func (h *Handler) listJournalGroupCatalogV2(c *gin.Context) {
 			return
 		}
 		base := baseJournalGroupName(groupName)
+		if _, scoped := teacherIDFromScopedJournalGroupName(groupName); !scoped {
+			if _, exists := basesWithTeacherScope[base]; exists {
+				return
+			}
+		}
 		label := base
 		if teacherID, ok := teacherIDFromScopedJournalGroupName(groupName); ok {
 			teacherName := resolveTeacherName(teacherID)
@@ -354,6 +364,10 @@ func (h *Handler) listJournalGroupCatalogV2(c *gin.Context) {
 	}
 	for _, row := range assignments {
 		scoped := scopedJournalGroupNameForUser(&entity.User{ID: row.TeacherID, Role: "teacher"}, row.GroupName)
+		base := baseJournalGroupName(scoped)
+		if strings.TrimSpace(base) != "" {
+			basesWithTeacherScope[base] = struct{}{}
+		}
 		add(scoped)
 	}
 
@@ -363,6 +377,10 @@ func (h *Handler) listJournalGroupCatalogV2(c *gin.Context) {
 		Distinct("name").
 		Pluck("name", &rawGroups).Error; err == nil {
 		for _, group := range rawGroups {
+			base := baseJournalGroupName(group)
+			if _, exists := basesWithTeacherScope[base]; exists {
+				continue
+			}
 			add(group)
 		}
 	}

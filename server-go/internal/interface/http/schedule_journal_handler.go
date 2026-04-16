@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"polyapp/server-go/internal/domain/entity"
 	"polyapp/server-go/internal/infrastructure/persistence"
 	httpMiddleware "polyapp/server-go/internal/interface/http/middleware"
 
@@ -792,6 +793,10 @@ func (h *Handler) listJournalStudents(c *gin.Context) {
 		}
 	}
 	journalGroupName := scopedJournalGroupNameForUser(user, groupName)
+	if err := h.ensureJournalStudentsFromApprovedGroup(c.Request.Context(), user, groupName, journalGroupName); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load students"})
+		return
+	}
 	var students []string
 	if err := h.db.WithContext(c.Request.Context()).
 		Model(&persistence.DBJournalStudent{}).
@@ -826,11 +831,16 @@ func (h *Handler) listConfirmedStudentsForGroup(c *gin.Context) {
 			return
 		}
 	}
-	// Only free (unbound) approved students can be added into a group.
+	baseGroupName := baseJournalGroupName(groupName)
+	if baseGroupName == "" {
+		baseGroupName = groupName
+	}
+	// Show approved students already assigned to this group. Teachers can add
+	// them into their own scoped journal without rebinding student profile.
 	var students []persistence.DBUser
 	if err := h.db.WithContext(c.Request.Context()).
 		Where("role = ? AND is_approved = ?", "student", true).
-		Where("student_group IS NULL OR btrim(student_group) = ''").
+		Where("student_group = ?", baseGroupName).
 		Order("full_name asc").
 		Find(&students).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load students"})
@@ -923,6 +933,45 @@ func (h *Handler) upsertJournalStudent(c *gin.Context) {
 		"group_name":   group,
 		"student_name": row.StudentName,
 	})
+}
+
+func (h *Handler) ensureJournalStudentsFromApprovedGroup(
+	ctx context.Context,
+	user *entity.User,
+	baseGroupName string,
+	journalGroupName string,
+) error {
+	if user == nil || strings.ToLower(strings.TrimSpace(user.Role)) != "teacher" {
+		return nil
+	}
+	baseGroupName = strings.TrimSpace(baseGroupName)
+	journalGroupName = strings.TrimSpace(journalGroupName)
+	if baseGroupName == "" || journalGroupName == "" {
+		return nil
+	}
+
+	var approved []persistence.DBUser
+	if err := h.db.WithContext(ctx).
+		Where("role = ? AND is_approved = ? AND student_group = ?", "student", true, baseGroupName).
+		Find(&approved).Error; err != nil {
+		return err
+	}
+	for _, student := range approved {
+		name := strings.TrimSpace(student.FullName)
+		if name == "" {
+			continue
+		}
+		row := persistence.DBJournalStudent{
+			GroupName:   journalGroupName,
+			StudentName: name,
+		}
+		if err := h.db.WithContext(ctx).
+			Where("group_name = ? AND student_name = ?", journalGroupName, name).
+			FirstOrCreate(&row).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (h *Handler) teacherHasDirectAssignment(ctx context.Context, teacherID uint, groupName string) bool {

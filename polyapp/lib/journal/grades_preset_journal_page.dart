@@ -1051,8 +1051,8 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
     if (candidates.isEmpty) {
       _showMessage(
         _tr(
-          'Нет свободных подтвержденных студентов без группы.',
-          'No free approved students without a group.',
+          'Для выбранной группы нет подтвержденных студентов.',
+          'No approved students found for the selected group.',
         ),
         isError: true,
       );
@@ -1078,8 +1078,8 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
           },
           decoration: InputDecoration(
             labelText: _tr(
-              'Свободный подтвержденный студент',
-              'Free approved student',
+              'Подтвержденный студент группы',
+              'Approved student in group',
             ),
           ),
         ),

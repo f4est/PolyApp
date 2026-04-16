@@ -505,7 +505,9 @@ class _MakeupWorkspacePageState extends State<MakeupWorkspacePage> {
               }
               final items = snapshot.data ?? [];
               if (items.isEmpty) {
-                return Text(_t('Отработок пока нет.', 'No makeups yet.'));
+                return Text(
+                  _t('Отработки отсутствуют.', 'No makeups available.'),
+                );
               }
               return Column(
                 children: [
@@ -1328,7 +1330,7 @@ class _MakeupCaseDetailScreenState extends State<MakeupCaseDetailScreen> {
                                     Text(
                                       teacherTaskText.isEmpty
                                           ? _t(
-                                              'Задание пока не назначено.',
+                                              'Задание не назначено.',
                                               'Task has not been assigned yet.',
                                             )
                                           : teacherTaskText,
@@ -1659,7 +1661,10 @@ class _MakeupCaseDetailScreenState extends State<MakeupCaseDetailScreen> {
                               )
                             else if (_messages.isEmpty)
                               Text(
-                                _t('Сообщений пока нет.', 'No messages yet.'),
+                                _t(
+                                  'Сообщения отсутствуют.',
+                                  'No messages available.',
+                                ),
                               )
                             else
                               Column(
@@ -1951,6 +1956,27 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     }
   }
 
+  String _roleLabel(String role) {
+    switch (role) {
+      case 'admin':
+        return _t('Администратор', 'Administrator');
+      case 'teacher':
+        return _t('Преподаватель', 'Teacher');
+      case 'student':
+        return _t('Студент', 'Student');
+      case 'parent':
+        return _t('Родитель', 'Parent');
+      case 'smm':
+        return _t('Редактор новостей', 'News editor');
+      case 'request_handler':
+        return _t('Обработчик заявок', 'Request handler');
+      case 'all':
+        return _t('Все роли', 'All roles');
+      default:
+        return role;
+    }
+  }
+
   List<String> _normalizeGroupNames(Iterable<String> rawValues) {
     final set = <String>{};
     for (final raw in rawValues) {
@@ -2112,16 +2138,19 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
               children: [
                 DropdownButtonFormField<String>(
                   initialValue: role,
-                  items: const [
-                    DropdownMenuItem(value: 'admin', child: Text('admin')),
-                    DropdownMenuItem(value: 'teacher', child: Text('teacher')),
-                    DropdownMenuItem(value: 'student', child: Text('student')),
-                    DropdownMenuItem(value: 'parent', child: Text('parent')),
-                    DropdownMenuItem(value: 'smm', child: Text('smm')),
-                    DropdownMenuItem(
-                      value: 'request_handler',
-                      child: Text('request_handler'),
-                    ),
+                  items: [
+                    for (final value in const [
+                      'admin',
+                      'teacher',
+                      'student',
+                      'parent',
+                      'smm',
+                      'request_handler',
+                    ])
+                      DropdownMenuItem(
+                        value: value,
+                        child: Text(_roleLabel(value)),
+                      ),
                   ],
                   onChanged: (value) => setDialogState(() {
                     role = value ?? role;
@@ -2396,6 +2425,42 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
       }
       return;
     }
+    if (role == 'student' && groupController.text.trim().isEmpty) {
+      if (mounted) {
+        setState(() {
+          _noticeError = true;
+          _noticeMessage = _t(
+            'Для студента обязательно укажите группу.',
+            'Student group is required for student role.',
+          );
+        });
+      }
+      return;
+    }
+    if (role == 'teacher' && teacherController.text.trim().isEmpty) {
+      if (mounted) {
+        setState(() {
+          _noticeError = true;
+          _noticeMessage = _t(
+            'Для преподавателя обязательно укажите ФИО преподавателя.',
+            'Teacher display name is required for teacher role.',
+          );
+        });
+      }
+      return;
+    }
+    if (role == 'admin' && selectedAdminPermissions.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _noticeError = true;
+          _noticeMessage = _t(
+            'Для администратора выберите хотя бы одно право.',
+            'Select at least one permission for administrator.',
+          );
+        });
+      }
+      return;
+    }
     try {
       await widget.client.createUserAsAdmin(
         role: role,
@@ -2487,16 +2552,19 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
               children: [
                 DropdownButtonFormField<String>(
                   initialValue: role,
-                  items: const [
-                    DropdownMenuItem(value: 'admin', child: Text('admin')),
-                    DropdownMenuItem(value: 'teacher', child: Text('teacher')),
-                    DropdownMenuItem(value: 'student', child: Text('student')),
-                    DropdownMenuItem(value: 'parent', child: Text('parent')),
-                    DropdownMenuItem(value: 'smm', child: Text('smm')),
-                    DropdownMenuItem(
-                      value: 'request_handler',
-                      child: Text('request_handler'),
-                    ),
+                  items: [
+                    for (final value in const [
+                      'admin',
+                      'teacher',
+                      'student',
+                      'parent',
+                      'smm',
+                      'request_handler',
+                    ])
+                      DropdownMenuItem(
+                        value: value,
+                        child: Text(_roleLabel(value)),
+                      ),
                   ],
                   onChanged: (value) =>
                       setDialogState(() => role = value ?? role),
@@ -4646,7 +4714,12 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                       },
                     ),
                     if (departments.isEmpty)
-                      Text(_t('Отделений пока нет.', 'No departments yet.'))
+                      Text(
+                        _t(
+                          'Отделения отсутствуют.',
+                          'No departments available.',
+                        ),
+                      )
                     else
                       Column(
                         children: [
@@ -5309,29 +5382,20 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                       width: 220,
                       child: DropdownButtonFormField<String>(
                         initialValue: _userRole,
-                        items: const [
-                          DropdownMenuItem(value: 'all', child: Text('all')),
-                          DropdownMenuItem(
-                            value: 'admin',
-                            child: Text('admin'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'teacher',
-                            child: Text('teacher'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'student',
-                            child: Text('student'),
-                          ),
-                          DropdownMenuItem(
-                            value: 'parent',
-                            child: Text('parent'),
-                          ),
-                          DropdownMenuItem(value: 'smm', child: Text('smm')),
-                          DropdownMenuItem(
-                            value: 'request_handler',
-                            child: Text('request_handler'),
-                          ),
+                        items: [
+                          for (final value in const [
+                            'all',
+                            'admin',
+                            'teacher',
+                            'student',
+                            'parent',
+                            'smm',
+                            'request_handler',
+                          ])
+                            DropdownMenuItem(
+                              value: value,
+                              child: Text(_roleLabel(value)),
+                            ),
                         ],
                         onChanged: (value) {
                           if (value == null) return;
@@ -5696,7 +5760,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                 final items = snapshot.data ?? [];
                 if (items.isEmpty) {
                   return Text(
-                    _t('Назначений пока нет.', 'No assignments yet.'),
+                    _t('Назначения отсутствуют.', 'No assignments available.'),
                   );
                 }
                 return Column(
@@ -5871,8 +5935,8 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                                                 if (students.isEmpty) {
                                                   return Text(
                                                     _t(
-                                                      'Студентов пока нет.',
-                                                      'No students yet.',
+                                                      'Список студентов пуст.',
+                                                      'No students available.',
                                                     ),
                                                   );
                                                 }
@@ -5936,8 +6000,8 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                                                 if (dates.isEmpty) {
                                                   return Text(
                                                     _t(
-                                                      'Дат пока нет.',
-                                                      'No dates yet.',
+                                                      'Даты отсутствуют.',
+                                                      'No dates available.',
                                                     ),
                                                   );
                                                 }
@@ -5989,7 +6053,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                 }
                 final items = snapshot.data ?? [];
                 if (items.isEmpty) {
-                  return Text(_t('Новостей пока нет.', 'No news yet.'));
+                  return Text(_t('Новости отсутствуют.', 'No news available.'));
                 }
                 return Column(
                   children: [
@@ -6038,7 +6102,10 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                 final items = snapshot.data ?? [];
                 if (items.isEmpty) {
                   return Text(
-                    _t('Загрузок экзаменов пока нет.', 'No exam uploads yet.'),
+                    _t(
+                      'Загрузки экзаменационных данных отсутствуют.',
+                      'No exam uploads available.',
+                    ),
                   );
                 }
                 return Column(

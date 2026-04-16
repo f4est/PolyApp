@@ -419,6 +419,7 @@ func (h *Handler) upsertAttendance(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
+		row.GroupName = scopedJournalGroupNameForUser(user, row.GroupName)
 	}
 	tx := h.db.WithContext(c.Request.Context())
 	actor := actorFromContext(c)
@@ -466,9 +467,12 @@ func (h *Handler) listAttendance(c *gin.Context) {
 		return
 	}
 	group := strings.TrimSpace(c.Query("group_name"))
+	if user.Role == "teacher" && group != "" {
+		group = scopedJournalGroupNameForUser(user, group)
+	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBAttendanceRecord{})
 	if group != "" {
-		query = query.Where("group_name = ?", group)
+		query = applyJournalGroupQueryFilter(query, group)
 	}
 	if user.Role == "teacher" {
 		scope, err := h.groupScopeForUser(c.Request.Context(), user)
@@ -481,12 +485,19 @@ func (h *Handler) listAttendance(c *gin.Context) {
 			return
 		}
 		allowed := scope.asList()
-		if group == "" && len(allowed) == 0 {
+		allowedScoped := make([]string, 0, len(allowed))
+		for _, item := range allowed {
+			scoped := scopedJournalGroupNameForUser(user, item)
+			if strings.TrimSpace(scoped) != "" {
+				allowedScoped = append(allowedScoped, scoped)
+			}
+		}
+		if group == "" && len(allowedScoped) == 0 {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
 		if group == "" {
-			query = query.Where("group_name IN ?", allowed)
+			query = query.Where("group_name IN ?", allowedScoped)
 		}
 	}
 	if user.Role == "parent" {
@@ -501,7 +512,7 @@ func (h *Handler) listAttendance(c *gin.Context) {
 		}
 		query = query.Where("student_name = ?", strings.TrimSpace(child.FullName))
 		if strings.TrimSpace(child.StudentGroup) != "" {
-			query = query.Where("group_name = ?", strings.TrimSpace(child.StudentGroup))
+			query = applyJournalGroupQueryFilter(query, strings.TrimSpace(child.StudentGroup))
 		}
 	}
 	var rows []persistence.DBAttendanceRecord
@@ -511,6 +522,9 @@ func (h *Handler) listAttendance(c *gin.Context) {
 	}
 	out := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
+		if user.Role == "teacher" {
+			row.GroupName = baseJournalGroupName(row.GroupName)
+		}
 		out = append(out, mapAttendance(row))
 	}
 	c.JSON(http.StatusOK, out)
@@ -523,6 +537,7 @@ func (h *Handler) deleteAttendance(c *gin.Context) {
 		return
 	}
 	group := strings.TrimSpace(c.Query("group_name"))
+	baseGroup := group
 	student := strings.TrimSpace(c.Query("student_name"))
 	classDate, err := parseDate(c.Query("class_date"))
 	slotPtr, slotErr := parseOptionalLessonSlot(c.Query("lesson_slot"))
@@ -548,6 +563,7 @@ func (h *Handler) deleteAttendance(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
+		group = scopedJournalGroupNameForUser(user, group)
 	}
 	res := h.db.WithContext(c.Request.Context()).
 		Where(
@@ -562,7 +578,7 @@ func (h *Handler) deleteAttendance(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete attendance"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"deleted": res.RowsAffected})
+	c.JSON(http.StatusOK, gin.H{"deleted": res.RowsAffected, "group_name": baseGroup})
 }
 
 func (h *Handler) attendanceSummary(c *gin.Context) {
@@ -572,9 +588,12 @@ func (h *Handler) attendanceSummary(c *gin.Context) {
 		return
 	}
 	group := strings.TrimSpace(c.Query("group_name"))
+	if user.Role == "teacher" && group != "" {
+		group = scopedJournalGroupNameForUser(user, group)
+	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBAttendanceRecord{})
 	if group != "" {
-		query = query.Where("group_name = ?", group)
+		query = applyJournalGroupQueryFilter(query, group)
 	}
 	if user.Role == "teacher" {
 		scope, err := h.groupScopeForUser(c.Request.Context(), user)
@@ -587,12 +606,19 @@ func (h *Handler) attendanceSummary(c *gin.Context) {
 			return
 		}
 		allowed := scope.asList()
-		if group == "" && len(allowed) == 0 {
+		allowedScoped := make([]string, 0, len(allowed))
+		for _, item := range allowed {
+			scoped := scopedJournalGroupNameForUser(user, item)
+			if strings.TrimSpace(scoped) != "" {
+				allowedScoped = append(allowedScoped, scoped)
+			}
+		}
+		if group == "" && len(allowedScoped) == 0 {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
 		if group == "" {
-			query = query.Where("group_name IN ?", allowed)
+			query = query.Where("group_name IN ?", allowedScoped)
 		}
 	}
 	if user.Role == "parent" {
@@ -607,7 +633,7 @@ func (h *Handler) attendanceSummary(c *gin.Context) {
 		}
 		query = query.Where("student_name = ?", strings.TrimSpace(child.FullName))
 		if strings.TrimSpace(child.StudentGroup) != "" {
-			query = query.Where("group_name = ?", strings.TrimSpace(child.StudentGroup))
+			query = applyJournalGroupQueryFilter(query, strings.TrimSpace(child.StudentGroup))
 		}
 	}
 	var rows []persistence.DBAttendanceRecord
@@ -622,6 +648,9 @@ func (h *Handler) attendanceSummary(c *gin.Context) {
 	}
 	total := map[string]summary{}
 	for _, row := range rows {
+		if user.Role == "teacher" {
+			row.GroupName = baseJournalGroupName(row.GroupName)
+		}
 		item := total[row.GroupName]
 		item.GroupName = row.GroupName
 		item.TotalCount++
@@ -679,6 +708,7 @@ func (h *Handler) upsertGrade(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
+		row.GroupName = scopedJournalGroupNameForUser(user, row.GroupName)
 	}
 	tx := h.db.WithContext(c.Request.Context())
 	var existing persistence.DBGradeRecord
@@ -721,9 +751,12 @@ func (h *Handler) listGrades(c *gin.Context) {
 		return
 	}
 	group := strings.TrimSpace(c.Query("group_name"))
+	if user.Role == "teacher" && group != "" {
+		group = scopedJournalGroupNameForUser(user, group)
+	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBGradeRecord{})
 	if group != "" {
-		query = query.Where("group_name = ?", group)
+		query = applyJournalGroupQueryFilter(query, group)
 	}
 	if user.Role == "teacher" {
 		scope, err := h.groupScopeForUser(c.Request.Context(), user)
@@ -736,12 +769,19 @@ func (h *Handler) listGrades(c *gin.Context) {
 			return
 		}
 		allowed := scope.asList()
-		if group == "" && len(allowed) == 0 {
+		allowedScoped := make([]string, 0, len(allowed))
+		for _, item := range allowed {
+			scoped := scopedJournalGroupNameForUser(user, item)
+			if strings.TrimSpace(scoped) != "" {
+				allowedScoped = append(allowedScoped, scoped)
+			}
+		}
+		if group == "" && len(allowedScoped) == 0 {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
 		if group == "" {
-			query = query.Where("group_name IN ?", allowed)
+			query = query.Where("group_name IN ?", allowedScoped)
 		}
 	}
 	if user.Role == "parent" {
@@ -756,7 +796,7 @@ func (h *Handler) listGrades(c *gin.Context) {
 		}
 		query = query.Where("student_name = ?", strings.TrimSpace(child.FullName))
 		if strings.TrimSpace(child.StudentGroup) != "" {
-			query = query.Where("group_name = ?", strings.TrimSpace(child.StudentGroup))
+			query = applyJournalGroupQueryFilter(query, strings.TrimSpace(child.StudentGroup))
 		}
 	}
 	var rows []persistence.DBGradeRecord
@@ -766,6 +806,9 @@ func (h *Handler) listGrades(c *gin.Context) {
 	}
 	out := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
+		if user.Role == "teacher" {
+			row.GroupName = baseJournalGroupName(row.GroupName)
+		}
 		out = append(out, mapGrade(row))
 	}
 	c.JSON(http.StatusOK, out)
@@ -778,6 +821,7 @@ func (h *Handler) deleteGrade(c *gin.Context) {
 		return
 	}
 	group := strings.TrimSpace(c.Query("group_name"))
+	baseGroup := group
 	student := strings.TrimSpace(c.Query("student_name"))
 	classDate, err := parseDate(c.Query("class_date"))
 	if group == "" || student == "" || err != nil {
@@ -794,6 +838,7 @@ func (h *Handler) deleteGrade(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
+		group = scopedJournalGroupNameForUser(user, group)
 	}
 	res := h.db.WithContext(c.Request.Context()).
 		Where("group_name = ? AND class_date = ? AND student_name = ?", group, classDate, student).
@@ -802,7 +847,7 @@ func (h *Handler) deleteGrade(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete grade"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"deleted": res.RowsAffected})
+	c.JSON(http.StatusOK, gin.H{"deleted": res.RowsAffected, "group_name": baseGroup})
 }
 
 func (h *Handler) gradeSummary(c *gin.Context) {
@@ -812,9 +857,12 @@ func (h *Handler) gradeSummary(c *gin.Context) {
 		return
 	}
 	group := strings.TrimSpace(c.Query("group_name"))
+	if user.Role == "teacher" && group != "" {
+		group = scopedJournalGroupNameForUser(user, group)
+	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBGradeRecord{})
 	if group != "" {
-		query = query.Where("group_name = ?", group)
+		query = applyJournalGroupQueryFilter(query, group)
 	}
 	if user.Role == "teacher" {
 		scope, err := h.groupScopeForUser(c.Request.Context(), user)
@@ -827,12 +875,19 @@ func (h *Handler) gradeSummary(c *gin.Context) {
 			return
 		}
 		allowed := scope.asList()
-		if group == "" && len(allowed) == 0 {
+		allowedScoped := make([]string, 0, len(allowed))
+		for _, item := range allowed {
+			scoped := scopedJournalGroupNameForUser(user, item)
+			if strings.TrimSpace(scoped) != "" {
+				allowedScoped = append(allowedScoped, scoped)
+			}
+		}
+		if group == "" && len(allowedScoped) == 0 {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
 		if group == "" {
-			query = query.Where("group_name IN ?", allowed)
+			query = query.Where("group_name IN ?", allowedScoped)
 		}
 	}
 	if user.Role == "parent" {
@@ -847,7 +902,7 @@ func (h *Handler) gradeSummary(c *gin.Context) {
 		}
 		query = query.Where("student_name = ?", strings.TrimSpace(child.FullName))
 		if strings.TrimSpace(child.StudentGroup) != "" {
-			query = query.Where("group_name = ?", strings.TrimSpace(child.StudentGroup))
+			query = applyJournalGroupQueryFilter(query, strings.TrimSpace(child.StudentGroup))
 		}
 	}
 	var rows []persistence.DBGradeRecord
@@ -862,6 +917,9 @@ func (h *Handler) gradeSummary(c *gin.Context) {
 	}
 	groups := map[string]sum{}
 	for _, row := range rows {
+		if user.Role == "teacher" {
+			row.GroupName = baseJournalGroupName(row.GroupName)
+		}
 		item := groups[row.GroupName]
 		item.Group = row.GroupName
 		item.Total += row.Grade
@@ -896,9 +954,12 @@ func (h *Handler) analyticsAttendance(c *gin.Context) {
 		return
 	}
 	group := strings.TrimSpace(c.Query("group_name"))
+	if user.Role == "teacher" && group != "" {
+		group = scopedJournalGroupNameForUser(user, group)
+	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBAttendanceRecord{})
 	if group != "" {
-		query = query.Where("group_name = ?", group)
+		query = applyJournalGroupQueryFilter(query, group)
 	}
 	if user.Role == "teacher" {
 		scope, err := h.groupScopeForUser(c.Request.Context(), user)
@@ -911,12 +972,19 @@ func (h *Handler) analyticsAttendance(c *gin.Context) {
 			return
 		}
 		allowed := scope.asList()
-		if group == "" && len(allowed) == 0 {
+		allowedScoped := make([]string, 0, len(allowed))
+		for _, item := range allowed {
+			scoped := scopedJournalGroupNameForUser(user, item)
+			if strings.TrimSpace(scoped) != "" {
+				allowedScoped = append(allowedScoped, scoped)
+			}
+		}
+		if group == "" && len(allowedScoped) == 0 {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
 		if group == "" {
-			query = query.Where("group_name IN ?", allowed)
+			query = query.Where("group_name IN ?", allowedScoped)
 		}
 	}
 	var rows []persistence.DBAttendanceRecord
@@ -926,6 +994,9 @@ func (h *Handler) analyticsAttendance(c *gin.Context) {
 	}
 	out := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
+		if user.Role == "teacher" {
+			row.GroupName = baseJournalGroupName(row.GroupName)
+		}
 		out = append(out, mapAttendance(row))
 	}
 	c.JSON(http.StatusOK, out)
@@ -941,9 +1012,12 @@ func (h *Handler) analyticsGrades(c *gin.Context) {
 		return
 	}
 	group := strings.TrimSpace(c.Query("group_name"))
+	if user.Role == "teacher" && group != "" {
+		group = scopedJournalGroupNameForUser(user, group)
+	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBGradeRecord{})
 	if group != "" {
-		query = query.Where("group_name = ?", group)
+		query = applyJournalGroupQueryFilter(query, group)
 	}
 	if user.Role == "teacher" {
 		scope, err := h.groupScopeForUser(c.Request.Context(), user)
@@ -956,12 +1030,19 @@ func (h *Handler) analyticsGrades(c *gin.Context) {
 			return
 		}
 		allowed := scope.asList()
-		if group == "" && len(allowed) == 0 {
+		allowedScoped := make([]string, 0, len(allowed))
+		for _, item := range allowed {
+			scoped := scopedJournalGroupNameForUser(user, item)
+			if strings.TrimSpace(scoped) != "" {
+				allowedScoped = append(allowedScoped, scoped)
+			}
+		}
+		if group == "" && len(allowedScoped) == 0 {
 			c.JSON(http.StatusOK, []gin.H{})
 			return
 		}
 		if group == "" {
-			query = query.Where("group_name IN ?", allowed)
+			query = query.Where("group_name IN ?", allowedScoped)
 		}
 	}
 	var rows []persistence.DBGradeRecord
@@ -971,6 +1052,9 @@ func (h *Handler) analyticsGrades(c *gin.Context) {
 	}
 	out := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
+		if user.Role == "teacher" {
+			row.GroupName = baseJournalGroupName(row.GroupName)
+		}
 		out = append(out, mapGrade(row))
 	}
 	c.JSON(http.StatusOK, out)
@@ -1024,7 +1108,8 @@ func mapGrade(row persistence.DBGradeRecord) gin.H {
 }
 
 func (h *Handler) notifyAttendanceChanged(ctx context.Context, row persistence.DBAttendanceRecord) error {
-	studentIDs, err := h.findStudentIDsByNameAndGroup(ctx, row.StudentName, row.GroupName)
+	displayGroup := baseJournalGroupName(row.GroupName)
+	studentIDs, err := h.findStudentIDsByNameAndGroup(ctx, row.StudentName, displayGroup)
 	if err != nil || len(studentIDs) == 0 {
 		return err
 	}
@@ -1044,10 +1129,10 @@ func (h *Handler) notifyAttendanceChanged(ctx context.Context, row persistence.D
 		ctx,
 		recipients,
 		"Обновлена посещаемость",
-		"Студент "+row.StudentName+": "+status+" ("+row.GroupName+")",
+		"Студент "+row.StudentName+": "+status+" ("+displayGroup+")",
 		map[string]any{
 			"type":         "attendance_updated",
-			"group_name":   row.GroupName,
+			"group_name":   displayGroup,
 			"class_date":   dateOnly(row.ClassDate),
 			"lesson_slot":  normalizeLessonSlot(row.LessonSlot),
 			"student_name": row.StudentName,
@@ -1057,7 +1142,8 @@ func (h *Handler) notifyAttendanceChanged(ctx context.Context, row persistence.D
 }
 
 func (h *Handler) notifyGradeChanged(ctx context.Context, row persistence.DBGradeRecord) error {
-	studentIDs, err := h.findStudentIDsByNameAndGroup(ctx, row.StudentName, row.GroupName)
+	displayGroup := baseJournalGroupName(row.GroupName)
+	studentIDs, err := h.findStudentIDsByNameAndGroup(ctx, row.StudentName, displayGroup)
 	if err != nil || len(studentIDs) == 0 {
 		return err
 	}
@@ -1073,10 +1159,10 @@ func (h *Handler) notifyGradeChanged(ctx context.Context, row persistence.DBGrad
 		ctx,
 		recipients,
 		"Обновлена оценка",
-		"Студент "+row.StudentName+": "+strconv.Itoa(row.Grade)+" ("+row.GroupName+")",
+		"Студент "+row.StudentName+": "+strconv.Itoa(row.Grade)+" ("+displayGroup+")",
 		map[string]any{
 			"type":         "grade_updated",
-			"group_name":   row.GroupName,
+			"group_name":   displayGroup,
 			"class_date":   dateOnly(row.ClassDate),
 			"student_name": row.StudentName,
 			"grade":        row.Grade,
@@ -1086,7 +1172,7 @@ func (h *Handler) notifyGradeChanged(ctx context.Context, row persistence.DBGrad
 
 func (h *Handler) findStudentIDsByNameAndGroup(ctx context.Context, studentName, groupName string) ([]uint, error) {
 	name := strings.TrimSpace(studentName)
-	group := strings.TrimSpace(groupName)
+	group := strings.TrimSpace(baseJournalGroupName(groupName))
 	if name == "" {
 		return nil, nil
 	}
@@ -1117,6 +1203,21 @@ func uniqueUintIDs(ids []uint) []uint {
 		out = append(out, id)
 	}
 	return out
+}
+
+func applyJournalGroupQueryFilter(query *gorm.DB, groupName string) *gorm.DB {
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		return query
+	}
+	if _, scoped := teacherIDFromScopedJournalGroupName(groupName); scoped {
+		return query.Where("group_name = ?", groupName)
+	}
+	return query.Where(
+		"(group_name = ? OR group_name LIKE ?)",
+		groupName,
+		groupName+teacherJournalGroupSuffix+"%",
+	)
 }
 
 func (h *Handler) allowedGroupsForTeacher(c *gin.Context, teacherID uint) ([]string, error) {
