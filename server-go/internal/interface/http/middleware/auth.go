@@ -31,6 +31,17 @@ func (m *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 		header := c.GetHeader("Authorization")
 		token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer"))
 		if token == "" {
+			if cookieToken, err := c.Cookie("polyapp_token"); err == nil {
+				token = strings.TrimSpace(cookieToken)
+			}
+		}
+		if token == "" && strings.HasPrefix(c.Request.URL.Path, "/db") {
+			token = strings.TrimSpace(c.Query("token"))
+			if token == "" {
+				token = strings.TrimSpace(c.Query("access_token"))
+			}
+		}
+		if token == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"detail": "Missing token"})
 			return
 		}

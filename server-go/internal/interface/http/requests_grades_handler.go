@@ -415,11 +415,15 @@ func (h *Handler) upsertAttendance(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save attendance"})
 			return
 		}
-		if !scope.canEditAttendance(row.GroupName) {
+		if !scope.canEditAttendance(baseJournalGroupName(row.GroupName)) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
-		row.GroupName = scopedJournalGroupNameForUser(user, row.GroupName)
+		row.GroupName = resolvedJournalGroupNameForUser(user, row.GroupName)
+	}
+	if err := h.ensureJournalDateEntry(c.Request.Context(), row.GroupName, row.ClassDate, row.LessonSlot); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save attendance date"})
+		return
 	}
 	tx := h.db.WithContext(c.Request.Context())
 	actor := actorFromContext(c)
@@ -468,7 +472,7 @@ func (h *Handler) listAttendance(c *gin.Context) {
 	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	if user.Role == "teacher" && group != "" {
-		group = scopedJournalGroupNameForUser(user, group)
+		group = resolvedJournalGroupNameForUser(user, group)
 	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBAttendanceRecord{})
 	if group != "" {
@@ -480,7 +484,7 @@ func (h *Handler) listAttendance(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load attendance"})
 			return
 		}
-		if group != "" && !scope.canView(group) {
+		if group != "" && !scope.canView(baseJournalGroupName(group)) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
@@ -522,9 +526,7 @@ func (h *Handler) listAttendance(c *gin.Context) {
 	}
 	out := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
-		if user.Role == "teacher" {
-			row.GroupName = baseJournalGroupName(row.GroupName)
-		}
+		row.GroupName = baseJournalGroupName(row.GroupName)
 		out = append(out, mapAttendance(row))
 	}
 	c.JSON(http.StatusOK, out)
@@ -559,11 +561,11 @@ func (h *Handler) deleteAttendance(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete attendance"})
 			return
 		}
-		if !scope.canEditAttendance(group) {
+		if !scope.canEditAttendance(baseJournalGroupName(group)) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
-		group = scopedJournalGroupNameForUser(user, group)
+		group = resolvedJournalGroupNameForUser(user, group)
 	}
 	res := h.db.WithContext(c.Request.Context()).
 		Where(
@@ -589,7 +591,7 @@ func (h *Handler) attendanceSummary(c *gin.Context) {
 	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	if user.Role == "teacher" && group != "" {
-		group = scopedJournalGroupNameForUser(user, group)
+		group = resolvedJournalGroupNameForUser(user, group)
 	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBAttendanceRecord{})
 	if group != "" {
@@ -601,7 +603,7 @@ func (h *Handler) attendanceSummary(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load attendance"})
 			return
 		}
-		if group != "" && !scope.canView(group) {
+		if group != "" && !scope.canView(baseJournalGroupName(group)) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
@@ -648,9 +650,7 @@ func (h *Handler) attendanceSummary(c *gin.Context) {
 	}
 	total := map[string]summary{}
 	for _, row := range rows {
-		if user.Role == "teacher" {
-			row.GroupName = baseJournalGroupName(row.GroupName)
-		}
+		row.GroupName = baseJournalGroupName(row.GroupName)
 		item := total[row.GroupName]
 		item.GroupName = row.GroupName
 		item.TotalCount++
@@ -704,11 +704,15 @@ func (h *Handler) upsertGrade(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save grade"})
 			return
 		}
-		if !scope.canEditGrades(row.GroupName) {
+		if !scope.canEditGrades(baseJournalGroupName(row.GroupName)) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
-		row.GroupName = scopedJournalGroupNameForUser(user, row.GroupName)
+		row.GroupName = resolvedJournalGroupNameForUser(user, row.GroupName)
+	}
+	if err := h.ensureJournalDateEntry(c.Request.Context(), row.GroupName, row.ClassDate, 1); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save grade date"})
+		return
 	}
 	tx := h.db.WithContext(c.Request.Context())
 	var existing persistence.DBGradeRecord
@@ -752,7 +756,7 @@ func (h *Handler) listGrades(c *gin.Context) {
 	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	if user.Role == "teacher" && group != "" {
-		group = scopedJournalGroupNameForUser(user, group)
+		group = resolvedJournalGroupNameForUser(user, group)
 	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBGradeRecord{})
 	if group != "" {
@@ -764,7 +768,7 @@ func (h *Handler) listGrades(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load grades"})
 			return
 		}
-		if group != "" && !scope.canView(group) {
+		if group != "" && !scope.canView(baseJournalGroupName(group)) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
@@ -806,9 +810,7 @@ func (h *Handler) listGrades(c *gin.Context) {
 	}
 	out := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
-		if user.Role == "teacher" {
-			row.GroupName = baseJournalGroupName(row.GroupName)
-		}
+		row.GroupName = baseJournalGroupName(row.GroupName)
 		out = append(out, mapGrade(row))
 	}
 	c.JSON(http.StatusOK, out)
@@ -834,11 +836,11 @@ func (h *Handler) deleteGrade(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete grade"})
 			return
 		}
-		if !scope.canEditGrades(group) {
+		if !scope.canEditGrades(baseJournalGroupName(group)) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
-		group = scopedJournalGroupNameForUser(user, group)
+		group = resolvedJournalGroupNameForUser(user, group)
 	}
 	res := h.db.WithContext(c.Request.Context()).
 		Where("group_name = ? AND class_date = ? AND student_name = ?", group, classDate, student).
@@ -858,7 +860,7 @@ func (h *Handler) gradeSummary(c *gin.Context) {
 	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	if user.Role == "teacher" && group != "" {
-		group = scopedJournalGroupNameForUser(user, group)
+		group = resolvedJournalGroupNameForUser(user, group)
 	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBGradeRecord{})
 	if group != "" {
@@ -870,7 +872,7 @@ func (h *Handler) gradeSummary(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load grades"})
 			return
 		}
-		if group != "" && !scope.canView(group) {
+		if group != "" && !scope.canView(baseJournalGroupName(group)) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
@@ -917,9 +919,7 @@ func (h *Handler) gradeSummary(c *gin.Context) {
 	}
 	groups := map[string]sum{}
 	for _, row := range rows {
-		if user.Role == "teacher" {
-			row.GroupName = baseJournalGroupName(row.GroupName)
-		}
+		row.GroupName = baseJournalGroupName(row.GroupName)
 		item := groups[row.GroupName]
 		item.Group = row.GroupName
 		item.Total += row.Grade
@@ -955,7 +955,7 @@ func (h *Handler) analyticsAttendance(c *gin.Context) {
 	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	if user.Role == "teacher" && group != "" {
-		group = scopedJournalGroupNameForUser(user, group)
+		group = resolvedJournalGroupNameForUser(user, group)
 	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBAttendanceRecord{})
 	if group != "" {
@@ -967,7 +967,7 @@ func (h *Handler) analyticsAttendance(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load analytics"})
 			return
 		}
-		if group != "" && !scope.canView(group) {
+		if group != "" && !scope.canView(baseJournalGroupName(group)) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
@@ -994,9 +994,7 @@ func (h *Handler) analyticsAttendance(c *gin.Context) {
 	}
 	out := make([]gin.H, 0, len(rows))
 	for _, row := range rows {
-		if user.Role == "teacher" {
-			row.GroupName = baseJournalGroupName(row.GroupName)
-		}
+		row.GroupName = baseJournalGroupName(row.GroupName)
 		out = append(out, mapAttendance(row))
 	}
 	c.JSON(http.StatusOK, out)
@@ -1013,11 +1011,13 @@ func (h *Handler) analyticsGrades(c *gin.Context) {
 	}
 	group := strings.TrimSpace(c.Query("group_name"))
 	if user.Role == "teacher" && group != "" {
-		group = scopedJournalGroupNameForUser(user, group)
+		group = resolvedJournalGroupNameForUser(user, group)
 	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBGradeRecord{})
+	v2Query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBJournalDateCellV2{})
 	if group != "" {
 		query = applyJournalGroupQueryFilter(query, group)
+		v2Query = applyJournalGroupQueryFilter(v2Query, group)
 	}
 	if user.Role == "teacher" {
 		scope, err := h.groupScopeForUser(c.Request.Context(), user)
@@ -1025,7 +1025,7 @@ func (h *Handler) analyticsGrades(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load analytics"})
 			return
 		}
-		if group != "" && !scope.canView(group) {
+		if group != "" && !scope.canView(baseJournalGroupName(group)) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
@@ -1043,6 +1043,7 @@ func (h *Handler) analyticsGrades(c *gin.Context) {
 		}
 		if group == "" {
 			query = query.Where("group_name IN ?", allowedScoped)
+			v2Query = v2Query.Where("group_name IN ?", allowedScoped)
 		}
 	}
 	var rows []persistence.DBGradeRecord
@@ -1050,10 +1051,51 @@ func (h *Handler) analyticsGrades(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load analytics"})
 		return
 	}
-	out := make([]gin.H, 0, len(rows))
+	var v2Rows []persistence.DBJournalDateCellV2
+	if err := v2Query.
+		Where("numeric_value IS NOT NULL").
+		Order("class_date desc").
+		Order("lesson_slot desc").
+		Find(&v2Rows).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load analytics"})
+		return
+	}
+	out := make([]gin.H, 0, len(rows)+len(v2Rows))
+	seen := map[string]struct{}{}
+	for _, row := range v2Rows {
+		row.GroupName = baseJournalGroupName(row.GroupName)
+		if row.NumericValue == nil {
+			continue
+		}
+		grade := int((*row.NumericValue) + 0.5)
+		if grade < 0 || grade > 100 {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(strings.Join([]string{
+			row.GroupName,
+			dateOnly(row.ClassDate),
+			row.StudentName,
+			strconv.Itoa(grade),
+		}, "|")))
+		seen[key] = struct{}{}
+		out = append(out, gin.H{
+			"id":           row.ID,
+			"group_name":   row.GroupName,
+			"class_date":   dateOnly(row.ClassDate),
+			"student_name": row.StudentName,
+			"grade":        grade,
+		})
+	}
 	for _, row := range rows {
-		if user.Role == "teacher" {
-			row.GroupName = baseJournalGroupName(row.GroupName)
+		row.GroupName = baseJournalGroupName(row.GroupName)
+		key := strings.ToLower(strings.TrimSpace(strings.Join([]string{
+			row.GroupName,
+			dateOnly(row.ClassDate),
+			row.StudentName,
+			strconv.Itoa(row.Grade),
+		}, "|")))
+		if _, exists := seen[key]; exists {
+			continue
 		}
 		out = append(out, mapGrade(row))
 	}

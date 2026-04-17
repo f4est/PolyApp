@@ -841,6 +841,138 @@ class ApiClient {
         .toList();
   }
 
+  Future<List<String>> listJournalBaseGroupCatalogV2() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/journal/v2/groups/base-catalog'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data.map((item) => item.toString()).toList();
+  }
+
+  Future<List<DbTableMetaDto>> dbListTables() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/db/tables'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data
+        .map((item) => DbTableMetaDto.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<Map<String, dynamic>>> dbListRows({
+    required String table,
+    int limit = 100,
+    int offset = 0,
+  }) async {
+    final uri = Uri.parse('$baseUrl/db/rows').replace(
+      queryParameters: {'table': table, 'limit': '$limit', 'offset': '$offset'},
+    );
+    final response = await http.get(uri, headers: _headers());
+    _ensureSuccess(response);
+    final payload = _decodeJsonObject(response.body);
+    final rowsRaw = payload['rows'];
+    if (rowsRaw is! List) return const [];
+    return rowsRaw
+        .whereType<Map>()
+        .map((item) => item.cast<String, dynamic>())
+        .toList();
+  }
+
+  Future<void> dbCreateRow({
+    required String table,
+    required Map<String, dynamic> row,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/db/rows'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({'table': table, 'row': row}),
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<void> dbUpdateRow({
+    required String table,
+    required Map<String, dynamic> pk,
+    required Map<String, dynamic> row,
+  }) async {
+    final response = await http.patch(
+      Uri.parse('$baseUrl/db/rows'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({'table': table, 'pk': pk, 'row': row}),
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<void> dbDeleteRows({
+    required String table,
+    required List<Map<String, dynamic>> pks,
+  }) async {
+    final response = await http.delete(
+      Uri.parse('$baseUrl/db/rows'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({'table': table, 'pks': pks}),
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<void> dbClearTables({
+    required bool all,
+    List<String> tables = const [],
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/db/clear'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({'all': all, 'tables': tables}),
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<void> dbSeedDemoData() async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/db/demo/seed'),
+      headers: _headers(jsonBody: true),
+      body: '{}',
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<void> dbResetDemoData() async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/db/demo/reset'),
+      headers: _headers(jsonBody: true),
+      body: '{}',
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<List<Map<String, dynamic>>> dbListDemoUsers() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/db/demo/users'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    final data = jsonDecode(response.body) as List<dynamic>;
+    return data
+        .whereType<Map>()
+        .map((item) => item.cast<String, dynamic>())
+        .toList();
+  }
+
+  Future<void> dbUpsertDemoUsers({
+    required List<Map<String, dynamic>> users,
+  }) async {
+    final response = await http.put(
+      Uri.parse('$baseUrl/db/demo/users'),
+      headers: _headers(jsonBody: true),
+      body: jsonEncode({'users': users}),
+    );
+    _ensureSuccess(response);
+  }
+
   Future<void> upsertJournalGroup(String name) async {
     final response = await http.post(
       Uri.parse('$baseUrl/journal/groups'),
@@ -1180,6 +1312,7 @@ class ApiClient {
 
   Future<TeacherGroupAssignment> updateTeacherAssignment(
     int assignmentId, {
+    int? teacherId,
     String? groupName,
     String? subject,
   }) async {
@@ -1187,6 +1320,7 @@ class ApiClient {
       Uri.parse('$baseUrl/teacher-assignments/$assignmentId'),
       headers: _headers(jsonBody: true),
       body: jsonEncode({
+        if (teacherId != null) 'teacher_id': teacherId,
         if (groupName != null) 'group_name': groupName,
         if (subject != null) 'subject': subject,
       }),
@@ -2851,10 +2985,7 @@ class TeacherGroupAssignment {
 }
 
 class JournalGroupCatalogItemDto {
-  JournalGroupCatalogItemDto({
-    required this.groupName,
-    required this.label,
-  });
+  JournalGroupCatalogItemDto({required this.groupName, required this.label});
 
   final String groupName;
   final String label;
@@ -3645,6 +3776,30 @@ class MakeupMessageDto {
       createdAt: DateTime.parse(
         (json['created_at'] as String?) ?? DateTime.now().toIso8601String(),
       ),
+    );
+  }
+}
+
+class DbTableMetaDto {
+  DbTableMetaDto({
+    required this.name,
+    required this.primaryKeys,
+    required this.columns,
+  });
+
+  final String name;
+  final List<String> primaryKeys;
+  final List<String> columns;
+
+  factory DbTableMetaDto.fromJson(Map<String, dynamic> json) {
+    return DbTableMetaDto(
+      name: (json['name'] as String? ?? '').trim(),
+      primaryKeys: (json['primary_keys'] as List<dynamic>? ?? const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
+      columns: (json['columns'] as List<dynamic>? ?? const [])
+          .map((item) => item.toString())
+          .toList(growable: false),
     );
   }
 }

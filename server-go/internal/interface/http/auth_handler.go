@@ -149,6 +149,7 @@ func (h *Handler) register(c *gin.Context) {
 		})
 		return
 	}
+	h.setAuthCookie(c, result.AccessToken)
 	c.JSON(http.StatusOK, gin.H{
 		"access_token": result.AccessToken,
 		"token_type":   result.TokenType,
@@ -179,6 +180,7 @@ func (h *Handler) login(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Internal error"})
 		return
 	}
+	h.setAuthCookie(c, result.AccessToken)
 	c.JSON(http.StatusOK, gin.H{
 		"access_token": result.AccessToken,
 		"token_type":   result.TokenType,
@@ -251,7 +253,17 @@ func (h *Handler) logout(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to logout"})
 		return
 	}
+	c.SetCookie("polyapp_token", "", -1, "/", "", false, true)
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+func (h *Handler) setAuthCookie(c *gin.Context, token string) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return
+	}
+	// Development convenience for hidden admin tools (/db) opened directly in browser.
+	c.SetCookie("polyapp_token", token, 60*60*24*30, "/", "", false, true)
 }
 
 func (h *Handler) createUser(c *gin.Context) {
@@ -645,6 +657,10 @@ func (h *Handler) updateUser(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load user"})
 		return
 	}
+	originalRole := strings.ToLower(strings.TrimSpace(user.Role))
+	originalName := strings.TrimSpace(user.FullName)
+	originalGroup := strings.TrimSpace(user.StudentGroup)
+	originalApproved := user.IsApproved
 	if payload.Role != nil && currentUser.Role == "admin" {
 		user.Role = strings.TrimSpace(*payload.Role)
 	}
@@ -778,6 +794,36 @@ func (h *Handler) updateUser(c *gin.Context) {
 	if err := h.userRepo.Update(c.Request.Context(), user); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to update user"})
 		return
+	}
+	updatedRole := strings.ToLower(strings.TrimSpace(user.Role))
+	if originalRole == "student" || updatedRole == "student" {
+		groups := []string{
+			strings.TrimSpace(baseJournalGroupName(originalGroup)),
+			strings.TrimSpace(baseJournalGroupName(user.StudentGroup)),
+		}
+		seen := map[string]struct{}{}
+		for _, group := range groups {
+			group = strings.TrimSpace(group)
+			if group == "" {
+				continue
+			}
+			if _, ok := seen[group]; ok {
+				continue
+			}
+			seen[group] = struct{}{}
+			if err := h.syncStudentsForBaseGroup(c.Request.Context(), group); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to synchronize student groups"})
+				return
+			}
+		}
+		if originalApproved != user.IsApproved || !strings.EqualFold(originalName, strings.TrimSpace(user.FullName)) {
+			for group := range seen {
+				if err := h.syncStudentsForBaseGroup(c.Request.Context(), group); err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to synchronize student groups"})
+					return
+				}
+			}
+		}
 	}
 	c.JSON(http.StatusOK, toUserPublic(*user))
 }

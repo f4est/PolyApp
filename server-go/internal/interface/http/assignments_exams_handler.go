@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"polyapp/server-go/internal/domain/entity"
 	"polyapp/server-go/internal/infrastructure/persistence"
 	httpMiddleware "polyapp/server-go/internal/interface/http/middleware"
 
@@ -63,6 +65,19 @@ func (h *Handler) createTeacherAssignment(c *gin.Context) {
 		Subject:   strings.TrimSpace(payload.Subject),
 		CreatedAt: time.Now().UTC(),
 	}
+	var existing persistence.DBTeacherGroupAssignment
+	if err := h.db.WithContext(c.Request.Context()).
+		Where("teacher_id = ? AND lower(group_name) = lower(?)",
+			row.TeacherID,
+			row.GroupName,
+		).
+		First(&existing).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"detail": "Такая связь преподаватель-группа уже существует"})
+		return
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to validate assignment"})
+		return
+	}
 	if err := h.db.WithContext(c.Request.Context()).Create(&row).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to create assignment"})
 		return
@@ -98,13 +113,49 @@ func (h *Handler) updateTeacherAssignment(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load assignment"})
 		return
 	}
+	oldTeacherID := row.TeacherID
+	oldGroupName := strings.TrimSpace(row.GroupName)
+	if payload.TeacherID != nil && *payload.TeacherID > 0 {
+		row.TeacherID = *payload.TeacherID
+	}
 	if payload.GroupName != nil {
 		row.GroupName = strings.TrimSpace(*payload.GroupName)
 	}
 	if payload.Subject != nil {
 		row.Subject = strings.TrimSpace(*payload.Subject)
 	}
-	if err := h.db.WithContext(c.Request.Context()).Save(&row).Error; err != nil {
+	var duplicate persistence.DBTeacherGroupAssignment
+	if err := h.db.WithContext(c.Request.Context()).
+		Where("id <> ? AND teacher_id = ? AND lower(group_name) = lower(?)",
+			row.ID,
+			row.TeacherID,
+			row.GroupName,
+		).
+		First(&duplicate).Error; err == nil {
+		c.JSON(http.StatusConflict, gin.H{"detail": "Такая связь преподаватель-группа уже существует"})
+		return
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to validate assignment"})
+		return
+	}
+	if err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&row).Error; err != nil {
+			return err
+		}
+		if oldTeacherID != row.TeacherID || !strings.EqualFold(oldGroupName, strings.TrimSpace(row.GroupName)) {
+			if err := h.remapTeacherScopedJournalData(
+				c.Request.Context(),
+				tx,
+				oldTeacherID,
+				oldGroupName,
+				row.TeacherID,
+				strings.TrimSpace(row.GroupName),
+			); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to update assignment"})
 		return
 	}
@@ -114,6 +165,52 @@ func (h *Handler) updateTeacherAssignment(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, items[0])
+}
+
+func (h *Handler) remapTeacherScopedJournalData(
+	ctx context.Context,
+	tx *gorm.DB,
+	oldTeacherID uint,
+	oldGroupName string,
+	newTeacherID uint,
+	newGroupName string,
+) error {
+	oldGroupName = strings.TrimSpace(oldGroupName)
+	newGroupName = strings.TrimSpace(newGroupName)
+	if oldTeacherID == 0 || newTeacherID == 0 || oldGroupName == "" || newGroupName == "" {
+		return nil
+	}
+	oldScoped := scopedJournalGroupNameForUser(
+		&entity.User{ID: oldTeacherID, Role: "teacher"},
+		oldGroupName,
+	)
+	newScoped := scopedJournalGroupNameForUser(
+		&entity.User{ID: newTeacherID, Role: "teacher"},
+		newGroupName,
+	)
+	if oldScoped == newScoped {
+		return nil
+	}
+
+	models := []any{
+		&persistence.DBJournalStudent{},
+		&persistence.DBJournalDate{},
+		&persistence.DBAttendanceRecord{},
+		&persistence.DBGradeRecord{},
+		&persistence.DBGroupPresetBinding{},
+		&persistence.DBJournalDateCellV2{},
+		&persistence.DBJournalManualCellV2{},
+		&persistence.DBJournalComputedRowV2{},
+	}
+	for _, model := range models {
+		if err := tx.WithContext(ctx).
+			Model(model).
+			Where("group_name = ?", oldScoped).
+			Update("group_name", newScoped).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (h *Handler) deleteTeacherAssignment(c *gin.Context) {

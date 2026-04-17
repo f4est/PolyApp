@@ -42,6 +42,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
 
   Group? _group;
   List<Group> _groups = <Group>[];
+  Map<String, String> _groupLabels = <String, String>{};
   List<Student> _students = <Student>[];
   List<LessonDate> _dates = <LessonDate>[];
   String _helpText = '';
@@ -199,17 +200,37 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
 
   Future<void> _mergeServerGroups() async {
     try {
-      final localGroups = _service.getAllGroups();
-      for (final group in localGroups) {
-        await widget.client.upsertJournalGroup(group.name);
+      final labels = <String, String>{};
+      List<String> serverGroups;
+      try {
+        final catalog = await widget.client.listJournalGroupCatalogV2();
+        serverGroups = catalog
+            .map((item) => item.groupName)
+            .toList(growable: false);
+        for (final item in catalog) {
+          labels[item.groupName] = item.label;
+        }
+      } catch (_) {
+        serverGroups = await widget.client.listJournalGroups();
       }
-      final serverGroups = await widget.client.listJournalGroups();
+
       for (final name in serverGroups) {
         final existing = _service.getGroupByName(name);
         if (existing == null) {
           await _service.addGroup(Group(name: name));
         }
       }
+      final allowed = serverGroups
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toSet();
+      final localNow = _service.getAllGroups();
+      for (final local in localNow) {
+        if (!allowed.contains(local.name.trim())) {
+          await _service.deleteGroup(local);
+        }
+      }
+      _groupLabels = labels;
     } catch (_) {}
   }
 
@@ -242,7 +263,9 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
     try {
       final localGroups = _service.getAllGroups();
       for (final group in localGroups) {
-        await widget.client.upsertJournalGroup(group.name);
+        if (widget.canManageGroups) {
+          await widget.client.upsertJournalGroup(group.name);
+        }
         final localStudents = _service.getStudentsByGroup(group);
         for (final student in localStudents) {
           await widget.client.upsertJournalStudent(
@@ -260,7 +283,16 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
         }
       }
 
-      final serverGroups = await widget.client.listJournalGroups();
+      List<String> serverGroups;
+      try {
+        final catalog = await widget.client.listJournalGroupCatalogV2();
+        serverGroups = catalog
+            .map((item) => item.groupName)
+            .toList(growable: false);
+        _groupLabels = {for (final item in catalog) item.groupName: item.label};
+      } catch (_) {
+        serverGroups = await widget.client.listJournalGroups();
+      }
       for (final name in serverGroups) {
         var group = _service.getGroupByName(name);
         if (group == null) {
@@ -398,42 +430,8 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
       );
       return;
     }
-    var selectedName = candidates.first.fullName.trim();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(_tr('Добавить студента', 'Add student')),
-        content: DropdownButtonFormField<String>(
-          initialValue: selectedName,
-          items: candidates
-              .map(
-                (item) => DropdownMenuItem(
-                  value: item.fullName.trim(),
-                  child: Text(item.fullName.trim()),
-                ),
-              )
-              .toList(),
-          onChanged: (value) => selectedName = value?.trim() ?? selectedName,
-          decoration: InputDecoration(
-            labelText: _tr(
-              'Подтвержденный студент группы',
-              'Approved student in group',
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(_tr('Отмена', 'Cancel')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(_tr('Добавить', 'Add')),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
+    final selectedName = await _pickStudentName(candidates);
+    if (selectedName == null) return;
     final name = selectedName.trim();
     if (name.isEmpty) return;
     setState(() => _busy = true);
@@ -461,6 +459,108 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
         setState(() => _busy = false);
       }
     }
+  }
+
+  Future<String?> _pickStudentName(List<UserPublicProfile> candidates) async {
+    final names =
+        candidates
+            .map((item) => item.fullName.trim())
+            .where((value) => value.isNotEmpty)
+            .toSet()
+            .toList(growable: false)
+          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    if (names.isEmpty) {
+      return null;
+    }
+    final queryController = TextEditingController();
+    String selected = names.first;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        var filtered = names;
+        return StatefulBuilder(
+          builder: (context, setStateDialog) => AlertDialog(
+            title: Text(_tr('Добавить студента', 'Add student')),
+            content: SizedBox(
+              width: 460,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: queryController,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      labelText: _tr('Поиск студента', 'Search student'),
+                      border: const OutlineInputBorder(),
+                    ),
+                    onChanged: (value) {
+                      final needle = value.trim().toLowerCase();
+                      setStateDialog(() {
+                        if (needle.isEmpty) {
+                          filtered = names;
+                        } else {
+                          filtered = names
+                              .where(
+                                (item) => item.toLowerCase().contains(needle),
+                              )
+                              .toList(growable: false);
+                        }
+                        if (filtered.isNotEmpty &&
+                            !filtered.contains(selected)) {
+                          selected = filtered.first;
+                        }
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  if (filtered.isEmpty)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(_tr('Совпадений нет.', 'No matches found.')),
+                    )
+                  else
+                    DropdownButtonFormField<String>(
+                      initialValue: selected,
+                      items: filtered
+                          .map(
+                            (item) => DropdownMenuItem(
+                              value: item,
+                              child: Text(item),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        selected = value;
+                      },
+                      decoration: InputDecoration(
+                        labelText: _tr(
+                          'Подтвержденный студент группы',
+                          'Approved student in group',
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(_tr('Отмена', 'Cancel')),
+              ),
+              FilledButton(
+                onPressed: filtered.isEmpty
+                    ? null
+                    : () => Navigator.of(context).pop(selected),
+                child: Text(_tr('Добавить', 'Add')),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    queryController.dispose();
+    return result;
   }
 
   Future<void> _addDate() async {
@@ -802,14 +902,6 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
                     fontSize: compact ? 22 : 27,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  _tr(
-                    'Посещаемость по датам + синхронизация с сервером',
-                    'Date attendance + server synchronization',
-                  ),
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.9)),
-                ),
               ],
             ),
           ),
@@ -897,7 +989,10 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
               isExpanded: true,
               items: [
                 for (final g in _groups)
-                  DropdownMenuItem(value: g, child: Text(g.name)),
+                  DropdownMenuItem(
+                    value: g,
+                    child: Text(_groupLabels[g.name] ?? g.name),
+                  ),
               ],
               onChanged: (value) async {
                 if (value == null) return;
@@ -911,9 +1006,129 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
               ),
             ),
           ),
+          OutlinedButton.icon(
+            onPressed: (_syncing || _groups.isEmpty)
+                ? null
+                : () async {
+                    final selected = await _pickGroupWithSearch();
+                    if (!mounted || selected == null) return;
+                    if (_group?.groupId == selected.groupId) return;
+                    setState(() => _group = selected);
+                    await _loadGroupData(sync: true);
+                  },
+            icon: const Icon(Icons.search_rounded),
+            label: Text(_tr('Поиск группы', 'Search group')),
+          ),
         ],
       ),
     );
+  }
+
+  List<Group> _filterGroupsByQuery(String query) {
+    final needle = query.trim().toLowerCase();
+    if (needle.isEmpty) {
+      return _groups;
+    }
+    final startsWith = <Group>[];
+    final contains = <Group>[];
+    for (final group in _groups) {
+      final label = (_groupLabels[group.name] ?? group.name).toLowerCase();
+      final raw = group.name.toLowerCase();
+      if (label.startsWith(needle) || raw.startsWith(needle)) {
+        startsWith.add(group);
+      } else if (label.contains(needle) || raw.contains(needle)) {
+        contains.add(group);
+      }
+    }
+    return [...startsWith, ...contains];
+  }
+
+  Future<Group?> _pickGroupWithSearch() async {
+    if (_groups.isEmpty) {
+      return null;
+    }
+    final queryController = TextEditingController();
+    Group selected = _group ?? _groups.first;
+    final result = await showDialog<Group>(
+      context: context,
+      builder: (context) {
+        var filtered = _groups;
+        return StatefulBuilder(
+          builder: (context, setStateDialog) => AlertDialog(
+            title: Text(_tr('Выбор группы', 'Select group')),
+            content: SizedBox(
+              width: 460,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: queryController,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      labelText: _tr('Поиск группы', 'Search group'),
+                      border: const OutlineInputBorder(),
+                    ),
+                    onChanged: (value) {
+                      setStateDialog(() {
+                        filtered = _filterGroupsByQuery(value);
+                        if (filtered.isNotEmpty &&
+                            !filtered.any(
+                              (item) => item.groupId == selected.groupId,
+                            )) {
+                          selected = filtered.first;
+                        }
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  if (filtered.isEmpty)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(_tr('Совпадений нет.', 'No matches found.')),
+                    )
+                  else
+                    DropdownButtonFormField<Group>(
+                      initialValue: filtered.firstWhere(
+                        (item) => item.groupId == selected.groupId,
+                        orElse: () => filtered.first,
+                      ),
+                      items: filtered
+                          .map(
+                            (item) => DropdownMenuItem(
+                              value: item,
+                              child: Text(_groupLabels[item.name] ?? item.name),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        selected = value;
+                      },
+                      decoration: InputDecoration(
+                        labelText: _tr('Группа', 'Group'),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(_tr('Отмена', 'Cancel')),
+              ),
+              FilledButton(
+                onPressed: filtered.isEmpty
+                    ? null
+                    : () => Navigator.of(context).pop(selected),
+                child: Text(_tr('Открыть', 'Open')),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    queryController.dispose();
+    return result;
   }
 
   Widget _buildQuickAddPanel(bool compact) {

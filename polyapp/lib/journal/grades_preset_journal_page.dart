@@ -245,10 +245,20 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
         }
       } else if (widget.canEdit && !widget.canManageGroups) {
         try {
-          final catalog = await widget.client.listJournalGroupCatalog();
-          final merged = <String>{...catalog, ...assignedGroups}.toList()
-            ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-          groups = merged;
+          final catalog = await widget.client.listJournalGroupCatalogV2();
+          if (catalog.isNotEmpty) {
+            groups = catalog.map((item) => item.groupName).toList();
+            labels
+              ..clear()
+              ..addEntries(
+                catalog.map(
+                  (item) => MapEntry(
+                    item.groupName,
+                    item.label.isEmpty ? item.groupName : item.label,
+                  ),
+                ),
+              );
+          }
         } catch (_) {
           groups = assignedGroups;
         }
@@ -635,20 +645,12 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _tr('Журнал пресетов', 'Preset Journal'),
+                  _tr('Журнал оценок', 'Grades Journal'),
                   style: TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w800,
                     fontSize: compact ? 22 : 27,
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _tr(
-                    'Оценки по датам + спецколонки + пересчёт на сервере',
-                    'Date grades + custom columns + server recalculation',
-                  ),
-                  style: TextStyle(color: Colors.white.withValues(alpha: 0.9)),
                 ),
               ],
             ),
@@ -656,6 +658,110 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
         ],
       ),
     );
+  }
+
+  List<String> _filterGroupsByQuery(String query) {
+    final needle = query.trim().toLowerCase();
+    if (needle.isEmpty) {
+      return _groups;
+    }
+    final startsWith = <String>[];
+    final contains = <String>[];
+    for (final groupName in _groups) {
+      final label = (_groupLabels[groupName] ?? groupName).toLowerCase();
+      final raw = groupName.toLowerCase();
+      if (label.startsWith(needle) || raw.startsWith(needle)) {
+        startsWith.add(groupName);
+      } else if (label.contains(needle) || raw.contains(needle)) {
+        contains.add(groupName);
+      }
+    }
+    return [...startsWith, ...contains];
+  }
+
+  Future<String?> _pickGroupNameWithSearch() async {
+    if (_groups.isEmpty) {
+      return null;
+    }
+    final queryController = TextEditingController();
+    String selected = _groupName != null && _groups.contains(_groupName)
+        ? _groupName!
+        : _groups.first;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        var filtered = _groups;
+        return StatefulBuilder(
+          builder: (context, setStateDialog) => AlertDialog(
+            title: Text(_tr('Выбор группы', 'Select group')),
+            content: SizedBox(
+              width: 460,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: queryController,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      labelText: _tr('Поиск группы', 'Search group'),
+                      border: const OutlineInputBorder(),
+                    ),
+                    onChanged: (value) {
+                      setStateDialog(() {
+                        filtered = _filterGroupsByQuery(value);
+                        if (filtered.isNotEmpty &&
+                            !filtered.contains(selected)) {
+                          selected = filtered.first;
+                        }
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  if (filtered.isEmpty)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(_tr('Совпадений нет.', 'No matches found.')),
+                    )
+                  else
+                    DropdownButtonFormField<String>(
+                      initialValue: selected,
+                      items: filtered
+                          .map(
+                            (item) => DropdownMenuItem(
+                              value: item,
+                              child: Text(_groupLabels[item] ?? item),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        selected = value;
+                      },
+                      decoration: InputDecoration(
+                        labelText: _tr('Группа', 'Group'),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(_tr('Отмена', 'Cancel')),
+              ),
+              FilledButton(
+                onPressed: filtered.isEmpty
+                    ? null
+                    : () => Navigator.of(context).pop(selected),
+                child: Text(_tr('Открыть', 'Open')),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    queryController.dispose();
+    return result;
   }
 
   Widget _buildToolbar(bool compact) {
@@ -700,6 +806,25 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
             onPressed: _loading ? null : _load,
             icon: const Icon(Icons.refresh_rounded),
             label: Text(_tr('Обновить', 'Refresh')),
+          ),
+          OutlinedButton.icon(
+            onPressed: (_loading || _groups.isEmpty)
+                ? null
+                : () async {
+                    final selected = await _pickGroupNameWithSearch();
+                    if (!mounted ||
+                        selected == null ||
+                        selected == _groupName) {
+                      return;
+                    }
+                    setState(() {
+                      _groupName = selected;
+                      _grid = null;
+                    });
+                    await _reloadGrid();
+                  },
+            icon: const Icon(Icons.search_rounded),
+            label: Text(_tr('Поиск группы', 'Search group')),
           ),
         ],
       ),
@@ -1058,44 +1183,8 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
       );
       return;
     }
-    var selectedName = candidates.first.fullName.trim();
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(_tr('Добавить студента', 'Add student')),
-        content: DropdownButtonFormField<String>(
-          initialValue: selectedName,
-          items: candidates
-              .map(
-                (item) => DropdownMenuItem(
-                  value: item.fullName.trim(),
-                  child: Text(item.fullName.trim()),
-                ),
-              )
-              .toList(),
-          onChanged: (value) {
-            selectedName = value?.trim() ?? selectedName;
-          },
-          decoration: InputDecoration(
-            labelText: _tr(
-              'Подтвержденный студент группы',
-              'Approved student in group',
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(_tr('Отмена', 'Cancel')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(_tr('Добавить', 'Add')),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
+    final selectedName = await _pickStudentName(candidates);
+    if (selectedName == null) return;
     final studentName = selectedName.trim();
     if (studentName.isEmpty) return;
     setState(() => _saving = true);
@@ -1116,6 +1205,108 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
         setState(() => _saving = false);
       }
     }
+  }
+
+  Future<String?> _pickStudentName(List<UserPublicProfile> candidates) async {
+    final names =
+        candidates
+            .map((item) => item.fullName.trim())
+            .where((value) => value.isNotEmpty)
+            .toSet()
+            .toList(growable: false)
+          ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    if (names.isEmpty) {
+      return null;
+    }
+    final queryController = TextEditingController();
+    String selected = names.first;
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        var filtered = names;
+        return StatefulBuilder(
+          builder: (context, setStateDialog) => AlertDialog(
+            title: Text(_tr('Добавить студента', 'Add student')),
+            content: SizedBox(
+              width: 460,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: queryController,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      labelText: _tr('Поиск студента', 'Search student'),
+                      border: const OutlineInputBorder(),
+                    ),
+                    onChanged: (value) {
+                      final needle = value.trim().toLowerCase();
+                      setStateDialog(() {
+                        if (needle.isEmpty) {
+                          filtered = names;
+                        } else {
+                          filtered = names
+                              .where(
+                                (item) => item.toLowerCase().contains(needle),
+                              )
+                              .toList(growable: false);
+                        }
+                        if (filtered.isNotEmpty &&
+                            !filtered.contains(selected)) {
+                          selected = filtered.first;
+                        }
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  if (filtered.isEmpty)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(_tr('Совпадений нет.', 'No matches found.')),
+                    )
+                  else
+                    DropdownButtonFormField<String>(
+                      initialValue: selected,
+                      items: filtered
+                          .map(
+                            (item) => DropdownMenuItem(
+                              value: item,
+                              child: Text(item),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        selected = value;
+                      },
+                      decoration: InputDecoration(
+                        labelText: _tr(
+                          'Подтвержденный студент группы',
+                          'Approved student in group',
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text(_tr('Отмена', 'Cancel')),
+              ),
+              FilledButton(
+                onPressed: filtered.isEmpty
+                    ? null
+                    : () => Navigator.of(context).pop(selected),
+                child: Text(_tr('Добавить', 'Add')),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    queryController.dispose();
+    return result;
   }
 
   Future<void> _renameStudent(String fromName) async {
@@ -1832,9 +2023,6 @@ class _PresetLibraryPageState extends State<PresetLibraryPage> {
   List<GradingPreset> _items = <GradingPreset>[];
   int? _actorId;
 
-  bool get _isRu => Localizations.localeOf(
-    context,
-  ).languageCode.toLowerCase().startsWith('ru');
   String _tr(String ru, String en) =>
       trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
 
@@ -2100,9 +2288,6 @@ class _PresetDetailsPageState extends State<PresetDetailsPage> {
   String? _error;
   GradingPreset? _preset;
 
-  bool get _isRu => Localizations.localeOf(
-    context,
-  ).languageCode.toLowerCase().startsWith('ru');
   String _tr(String ru, String en) =>
       trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
 
@@ -2430,9 +2615,6 @@ class _PresetEditorPageState extends State<PresetEditorPage> {
   String? _error;
   bool get _isEditing => widget.initialPreset != null;
 
-  bool get _isRu => Localizations.localeOf(
-    context,
-  ).languageCode.toLowerCase().startsWith('ru');
   String _tr(String ru, String en) =>
       trTextByCode(Localizations.localeOf(context).languageCode, ru, en);
 

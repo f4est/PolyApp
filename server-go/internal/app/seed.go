@@ -30,6 +30,7 @@ func SeedDemo(ctx context.Context, db *gorm.DB, hasher passwordHasher) error {
 	}
 
 	type demoUser struct {
+		Key          string
 		Role         string
 		FullName     string
 		Email        string
@@ -37,12 +38,17 @@ func SeedDemo(ctx context.Context, db *gorm.DB, hasher passwordHasher) error {
 		TeacherName  string
 	}
 	users := []demoUser{
-		{Role: "admin", FullName: "Admin Demo", Email: "admin@demo.local"},
-		{Role: "student", FullName: "Student Demo", Email: "student@demo.local", StudentGroup: "P22-3E"},
-		{Role: "teacher", FullName: "Teacher Demo", Email: "teacher@demo.local", TeacherName: "Teacher Demo"},
-		{Role: "parent", FullName: "Parent Demo", Email: "parent@demo.local", StudentGroup: "P22-3E"},
-		{Role: "request_handler", FullName: "Handler Demo", Email: "handler@demo.local"},
-		{Role: "smm", FullName: "SMM Demo", Email: "smm@demo.local"},
+		{Key: "admin", Role: "admin", FullName: "Admin Demo", Email: "admin@demo.local"},
+		{Key: "student", Role: "student", FullName: "Student Demo", Email: "student@demo.local", StudentGroup: "P22-3E"},
+		{Key: "student2", Role: "student", FullName: "Ivan Petrov", Email: "ivan@demo.local", StudentGroup: "P22-3E"},
+		{Key: "student3", Role: "student", FullName: "Anna Sidorova", Email: "anna@demo.local", StudentGroup: "P22-3E"},
+		{Key: "student4", Role: "student", FullName: "Alina Karim", Email: "alina@demo.local", StudentGroup: "P22-3E"},
+		{Key: "student5", Role: "student", FullName: "Nikita Smirnov", Email: "nikita@demo.local", StudentGroup: "P22-3E"},
+		{Key: "teacher", Role: "teacher", FullName: "Teacher Demo", Email: "teacher@demo.local", TeacherName: "Teacher Demo"},
+		{Key: "teacher2", Role: "teacher", FullName: "Teacher Demo 2", Email: "teacher2@demo.local", TeacherName: "Teacher Demo 2"},
+		{Key: "parent", Role: "parent", FullName: "Parent Demo", Email: "parent@demo.local", StudentGroup: "P22-3E"},
+		{Key: "handler", Role: "request_handler", FullName: "Handler Demo", Email: "handler@demo.local"},
+		{Key: "smm", Role: "smm", FullName: "SMM Demo", Email: "smm@demo.local"},
 	}
 
 	hash, err := hasher.Hash(demoPassword)
@@ -85,7 +91,7 @@ func SeedDemo(ctx context.Context, db *gorm.DB, hasher passwordHasher) error {
 					return err
 				}
 			}
-			userIDs[item.Role] = row.ID
+			userIDs[item.Key] = row.ID
 			continue
 		case !errors.Is(err, gorm.ErrRecordNotFound):
 			return err
@@ -105,14 +111,27 @@ func SeedDemo(ctx context.Context, db *gorm.DB, hasher passwordHasher) error {
 		if err := db.WithContext(ctx).Create(&row).Error; err != nil {
 			return err
 		}
-		userIDs[item.Role] = row.ID
+		userIDs[item.Key] = row.ID
 	}
 
 	group := "P22-3E"
 	if err := db.WithContext(ctx).Where("name = ?", group).FirstOrCreate(&persistence.DBJournalGroup{Name: group}).Error; err != nil {
 		return err
 	}
-	students := []string{"Ivan Petrov", "Anna Sidorova", "Alina Karim", "Nikita Smirnov"}
+	students := make([]string, 0, 8)
+	var demoStudents []persistence.DBUser
+	if err := db.WithContext(ctx).
+		Where("role = ? AND is_approved = ? AND student_group = ?", "student", true, group).
+		Order("full_name asc").
+		Find(&demoStudents).Error; err != nil {
+		return err
+	}
+	for _, item := range demoStudents {
+		name := item.FullName
+		if name != "" {
+			students = append(students, name)
+		}
+	}
 	for _, name := range students {
 		row := persistence.DBJournalStudent{GroupName: group, StudentName: name}
 		if err := db.WithContext(ctx).Where("group_name = ? AND student_name = ?", group, name).FirstOrCreate(&row).Error; err != nil {
@@ -172,6 +191,15 @@ func SeedDemo(ctx context.Context, db *gorm.DB, hasher passwordHasher) error {
 		CreatedAt: now,
 	}
 	if err := db.WithContext(ctx).Where("teacher_id = ? AND group_name = ? AND subject = ?", assignment.TeacherID, assignment.GroupName, assignment.Subject).FirstOrCreate(&assignment).Error; err != nil {
+		return err
+	}
+	assignment2 := persistence.DBTeacherGroupAssignment{
+		TeacherID: userIDs["teacher2"],
+		GroupName: group,
+		Subject:   "Programming",
+		CreatedAt: now,
+	}
+	if err := db.WithContext(ctx).Where("teacher_id = ? AND group_name = ? AND subject = ?", assignment2.TeacherID, assignment2.GroupName, assignment2.Subject).FirstOrCreate(&assignment2).Error; err != nil {
 		return err
 	}
 

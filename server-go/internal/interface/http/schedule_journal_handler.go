@@ -548,7 +548,7 @@ func (h *Handler) scheduleForGroup(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load schedule"})
 			return
 		}
-		if !scope.canView(groupName) {
+		if !scope.canView(baseJournalGroupName(groupName)) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
@@ -687,15 +687,34 @@ func (h *Handler) listJournalGroupCatalog(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"detail": "Unauthorized"})
 		return
 	}
-	var groups []string
+	var rawGroups []string
 	if err := h.db.WithContext(c.Request.Context()).
 		Model(&persistence.DBJournalGroup{}).
 		Order("name asc").
-		Pluck("name", &groups).Error; err != nil {
+		Pluck("name", &rawGroups).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load groups"})
 		return
 	}
+	groups := sanitizeGroupCatalog(rawGroups)
 	c.JSON(http.StatusOK, groups)
+}
+
+func sanitizeGroupCatalog(rawGroups []string) []string {
+	unique := make(map[string]struct{}, len(rawGroups))
+	groups := make([]string, 0, len(rawGroups))
+	for _, value := range rawGroups {
+		base := normalizeGroupName(baseJournalGroupName(value))
+		if base == "" {
+			continue
+		}
+		if _, exists := unique[base]; exists {
+			continue
+		}
+		unique[base] = struct{}{}
+		groups = append(groups, base)
+	}
+	sort.Strings(groups)
+	return groups
 }
 
 func (h *Handler) upsertJournalGroup(c *gin.Context) {
@@ -770,7 +789,7 @@ func (h *Handler) listJournalStudents(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load students"})
 			return
 		}
-		if !scope.canView(groupName) {
+		if !scope.canView(baseJournalGroupName(groupName)) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
@@ -792,7 +811,11 @@ func (h *Handler) listJournalStudents(c *gin.Context) {
 			return
 		}
 	}
-	journalGroupName := scopedJournalGroupNameForUser(user, groupName)
+	journalGroupName := resolvedJournalGroupNameForUser(user, groupName)
+	if err := h.syncStudentsForBaseGroup(c.Request.Context(), groupName); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load students"})
+		return
+	}
 	if err := h.ensureJournalStudentsFromApprovedGroup(c.Request.Context(), user, groupName, journalGroupName); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load students"})
 		return
@@ -826,7 +849,7 @@ func (h *Handler) listConfirmedStudentsForGroup(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load students"})
 			return
 		}
-		if !scope.canView(groupName) {
+		if !scope.canView(baseJournalGroupName(groupName)) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
@@ -884,7 +907,7 @@ func (h *Handler) upsertJournalStudent(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save student"})
 			return
 		}
-		if !scope.canEditGrades(group) && !h.teacherHasDirectAssignment(c.Request.Context(), user.ID, group) {
+		if !scope.canEditGrades(baseJournalGroupName(group)) && !h.teacherHasDirectAssignment(c.Request.Context(), user.ID, group) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
@@ -920,18 +943,46 @@ func (h *Handler) upsertJournalStudent(c *gin.Context) {
 			return
 		}
 	}
-	journalGroupName := scopedJournalGroupNameForUser(user, group)
-	row := persistence.DBJournalStudent{GroupName: journalGroupName, StudentName: name}
-	if err := h.db.WithContext(c.Request.Context()).
-		Where("group_name = ? AND student_name = ?", journalGroupName, name).
-		FirstOrCreate(&row).Error; err != nil {
+	if err := h.syncStudentsForBaseGroup(c.Request.Context(), baseGroup); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save student"})
 		return
 	}
+	journalGroupNames, err := h.journalGroupNamesForBaseGroup(
+		c.Request.Context(),
+		user,
+		group,
+		baseGroup,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save student"})
+		return
+	}
+	seenGroups := make(map[string]struct{}, len(journalGroupNames))
+	var responseRow persistence.DBJournalStudent
+	for _, journalGroupName := range journalGroupNames {
+		journalGroupName = strings.TrimSpace(journalGroupName)
+		if journalGroupName == "" {
+			continue
+		}
+		if _, exists := seenGroups[journalGroupName]; exists {
+			continue
+		}
+		seenGroups[journalGroupName] = struct{}{}
+		row := persistence.DBJournalStudent{GroupName: journalGroupName, StudentName: name}
+		if err := h.db.WithContext(c.Request.Context()).
+			Where("group_name = ? AND student_name = ?", journalGroupName, name).
+			FirstOrCreate(&row).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save student"})
+			return
+		}
+		if responseRow.ID == 0 && strings.EqualFold(journalGroupName, resolvedJournalGroupNameForUser(user, group)) {
+			responseRow = row
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"id":           row.ID,
+		"id":           responseRow.ID,
 		"group_name":   group,
-		"student_name": row.StudentName,
+		"student_name": name,
 	})
 }
 
@@ -941,7 +992,7 @@ func (h *Handler) ensureJournalStudentsFromApprovedGroup(
 	baseGroupName string,
 	journalGroupName string,
 ) error {
-	if user == nil || strings.ToLower(strings.TrimSpace(user.Role)) != "teacher" {
+	if user == nil {
 		return nil
 	}
 	baseGroupName = strings.TrimSpace(baseGroupName)
@@ -956,22 +1007,75 @@ func (h *Handler) ensureJournalStudentsFromApprovedGroup(
 		Find(&approved).Error; err != nil {
 		return err
 	}
-	for _, student := range approved {
-		name := strings.TrimSpace(student.FullName)
-		if name == "" {
-			continue
-		}
-		row := persistence.DBJournalStudent{
-			GroupName:   journalGroupName,
-			StudentName: name,
-		}
-		if err := h.db.WithContext(ctx).
-			Where("group_name = ? AND student_name = ?", journalGroupName, name).
-			FirstOrCreate(&row).Error; err != nil {
-			return err
+	groupNames, err := h.journalGroupNamesForBaseGroup(ctx, user, journalGroupName, baseGroupName)
+	if err != nil {
+		return err
+	}
+	for _, groupName := range groupNames {
+		for _, student := range approved {
+			name := strings.TrimSpace(student.FullName)
+			if name == "" {
+				continue
+			}
+			row := persistence.DBJournalStudent{
+				GroupName:   groupName,
+				StudentName: name,
+			}
+			if err := h.db.WithContext(ctx).
+				Where("group_name = ? AND student_name = ?", groupName, name).
+				FirstOrCreate(&row).Error; err != nil {
+				return err
+			}
 		}
 	}
 	return nil
+}
+
+func (h *Handler) journalGroupNamesForBaseGroup(
+	ctx context.Context,
+	user *entity.User,
+	requestGroup string,
+	baseGroup string,
+) ([]string, error) {
+	baseGroup = strings.TrimSpace(baseJournalGroupName(baseGroup))
+	if baseGroup == "" {
+		baseGroup = strings.TrimSpace(baseJournalGroupName(requestGroup))
+	}
+	if baseGroup == "" {
+		baseGroup = strings.TrimSpace(requestGroup)
+	}
+	names := []string{}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		for _, existing := range names {
+			if strings.EqualFold(existing, value) {
+				return
+			}
+		}
+		names = append(names, value)
+	}
+	if user != nil {
+		add(resolvedJournalGroupNameForUser(user, requestGroup))
+	}
+	add(baseGroup)
+	var assignments []persistence.DBTeacherGroupAssignment
+	if err := h.db.WithContext(ctx).
+		Where("group_name = ?", baseGroup).
+		Find(&assignments).Error; err != nil {
+		return nil, err
+	}
+	for _, assignment := range assignments {
+		add(
+			scopedJournalGroupNameForUser(
+				&entity.User{ID: assignment.TeacherID, Role: "teacher"},
+				baseGroup,
+			),
+		)
+	}
+	return names, nil
 }
 
 func (h *Handler) teacherHasDirectAssignment(ctx context.Context, teacherID uint, groupName string) bool {
@@ -1012,16 +1116,46 @@ func (h *Handler) deleteJournalStudent(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete student"})
 			return
 		}
-		if !scope.canEditGrades(group) && !h.teacherHasDirectAssignment(c.Request.Context(), user.ID, group) {
+		if !scope.canEditGrades(baseJournalGroupName(group)) && !h.teacherHasDirectAssignment(c.Request.Context(), user.ID, group) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
 	}
-	journalGroupName := scopedJournalGroupNameForUser(user, group)
+	baseGroup := baseJournalGroupName(group)
+	if baseGroup == "" {
+		baseGroup = group
+	}
 	if err := h.db.WithContext(c.Request.Context()).
-		Where("group_name = ? AND student_name = ?", journalGroupName, name).
-		Delete(&persistence.DBJournalStudent{}).Error; err != nil {
+		Model(&persistence.DBUser{}).
+		Where("role = ? AND is_approved = ? AND lower(btrim(full_name)) = lower(?) AND lower(btrim(student_group)) = lower(?)",
+			"student", true, name, baseGroup).
+		Update("student_group", "").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to unbind student from group"})
+		return
+	}
+	journalGroupNames, err := h.journalGroupNamesForBaseGroup(
+		c.Request.Context(),
+		user,
+		group,
+		baseGroup,
+	)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete student"})
+		return
+	}
+	if err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		for _, journalGroupName := range journalGroupNames {
+			if err := h.deleteStudentFromJournalGroupTx(tx, journalGroupName, name); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete student"})
+		return
+	}
+	if err := h.syncStudentsForBaseGroup(c.Request.Context(), baseGroup); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to sync students"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -1044,7 +1178,7 @@ func (h *Handler) listJournalDates(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load dates"})
 			return
 		}
-		if !scope.canView(group) {
+		if !scope.canView(baseJournalGroupName(group)) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
@@ -1066,7 +1200,7 @@ func (h *Handler) listJournalDates(c *gin.Context) {
 			return
 		}
 	}
-	journalGroupName := scopedJournalGroupNameForUser(user, group)
+	journalGroupName := resolvedJournalGroupNameForUser(user, group)
 	var rows []persistence.DBJournalDate
 	if err := h.db.WithContext(c.Request.Context()).
 		Where("group_name = ?", journalGroupName).
@@ -1109,13 +1243,13 @@ func (h *Handler) upsertJournalDate(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save date"})
 			return
 		}
-		if !scope.canEditGrades(group) && !h.teacherHasDirectAssignment(c.Request.Context(), user.ID, group) {
+		if !scope.canEditGrades(baseJournalGroupName(group)) && !h.teacherHasDirectAssignment(c.Request.Context(), user.ID, group) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
 	}
 	row := persistence.DBJournalDate{}
-	journalGroupName := scopedJournalGroupNameForUser(user, group)
+	journalGroupName := resolvedJournalGroupNameForUser(user, group)
 	if err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
 		// Explicit slot keeps deterministic identity (used by rename/edit operations).
 		if payload.LessonSlot != nil && *payload.LessonSlot > 0 {
@@ -1179,18 +1313,34 @@ func (h *Handler) deleteJournalDate(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete date"})
 			return
 		}
-		if !scope.canEditGrades(group) && !h.teacherHasDirectAssignment(c.Request.Context(), user.ID, group) {
+		if !scope.canEditGrades(baseJournalGroupName(group)) && !h.teacherHasDirectAssignment(c.Request.Context(), user.ID, group) {
 			c.JSON(http.StatusForbidden, gin.H{"detail": "Forbidden"})
 			return
 		}
 	}
-	journalGroupName := scopedJournalGroupNameForUser(user, group)
+	journalGroupName := resolvedJournalGroupNameForUser(user, group)
 	query := h.db.WithContext(c.Request.Context()).
 		Where("group_name = ? AND class_date = ?", journalGroupName, dateValue)
 	if slotPtr != nil {
 		query = query.Where("lesson_slot = ?", *slotPtr)
 	}
 	if err := query.Delete(&persistence.DBJournalDate{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete date"})
+		return
+	}
+	dateCellQuery := h.db.WithContext(c.Request.Context()).
+		Where("group_name = ? AND class_date = ?", journalGroupName, dateValue)
+	attendanceQuery := h.db.WithContext(c.Request.Context()).
+		Where("group_name = ? AND class_date = ?", journalGroupName, dateValue)
+	if slotPtr != nil {
+		dateCellQuery = dateCellQuery.Where("lesson_slot = ?", *slotPtr)
+		attendanceQuery = attendanceQuery.Where("lesson_slot = ?", *slotPtr)
+	}
+	if err := dateCellQuery.Delete(&persistence.DBJournalDateCellV2{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete date"})
+		return
+	}
+	if err := attendanceQuery.Delete(&persistence.DBAttendanceRecord{}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete date"})
 		return
 	}

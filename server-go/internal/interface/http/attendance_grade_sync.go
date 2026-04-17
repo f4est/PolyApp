@@ -33,11 +33,14 @@ func (h *Handler) syncAttendanceToJournalV2(
 ) error {
 	groupName := strings.TrimSpace(row.GroupName)
 	if strings.EqualFold(strings.TrimSpace(actor.Role), "teacher") && actor.UserID > 0 {
-		groupName = scopedJournalGroupNameForUser(&entity.User{ID: actor.UserID, Role: actor.Role}, groupName)
+		groupName = resolvedJournalGroupNameForUser(&entity.User{ID: actor.UserID, Role: actor.Role}, groupName)
 	}
 	studentName := strings.TrimSpace(row.StudentName)
 	if groupName == "" || studentName == "" {
 		return nil
+	}
+	if err := h.ensureJournalDateEntry(ctx, groupName, row.ClassDate, row.LessonSlot); err != nil {
+		return err
 	}
 
 	if row.Present {
@@ -140,6 +143,9 @@ func (h *Handler) syncDateCellsToAttendance(
 			Present:     present,
 			TeacherID:   actor.UserID,
 		}
+		if err := h.ensureJournalDateEntry(ctx, attendanceGroupName, item.ClassDate, item.LessonSlot); err != nil {
+			return err
+		}
 		if err := h.db.WithContext(ctx).
 			Clauses(clause.OnConflict{
 				Columns: []clause.Column{
@@ -170,6 +176,9 @@ func (h *Handler) syncGradeToAttendance(
 	studentName := strings.TrimSpace(row.StudentName)
 	if groupName == "" || studentName == "" {
 		return nil
+	}
+	if err := h.ensureJournalDateEntry(ctx, groupName, row.ClassDate, 1); err != nil {
+		return err
 	}
 	attendance := persistence.DBAttendanceRecord{
 		GroupName:   groupName,

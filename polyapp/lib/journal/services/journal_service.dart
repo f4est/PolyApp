@@ -19,13 +19,36 @@ class JournalService {
     dateBox = await Hive.openBox<LessonDate>('dates');
     gradeBox = await Hive.openBox<Grade>('grades');
     attendanceBox = await Hive.openBox<Attendance>('attendance');
+    await _cleanupInvalidBoxEntries<Student>(studentBox);
+    await _cleanupInvalidBoxEntries<Group>(groupBox);
+    await _cleanupInvalidBoxEntries<LessonDate>(dateBox);
+    await _cleanupInvalidBoxEntries<Grade>(gradeBox);
+    await _cleanupInvalidBoxEntries<Attendance>(attendanceBox);
   }
 
-  List<Group> getAllGroups() => groupBox.values.toList();
+  Future<void> _cleanupInvalidBoxEntries<T>(Box box) async {
+    final invalidKeys = <dynamic>[];
+    for (final key in box.keys) {
+      dynamic value;
+      try {
+        value = box.get(key);
+      } catch (_) {
+        invalidKeys.add(key);
+        continue;
+      }
+      if (value is! T) {
+        invalidKeys.add(key);
+      }
+    }
+    if (invalidKeys.isEmpty) return;
+    await box.deleteAll(invalidKeys);
+  }
+
+  List<Group> getAllGroups() => groupBox.values.whereType<Group>().toList();
 
   Group? getGroupById(String id) {
     try {
-      return groupBox.values.firstWhere((g) => g.groupId == id);
+      return groupBox.values.whereType<Group>().firstWhere((g) => g.groupId == id);
     } catch (_) {
       return null;
     }
@@ -33,7 +56,7 @@ class JournalService {
 
   Group? getGroupByName(String name) {
     try {
-      return groupBox.values.firstWhere((g) => g.name == name);
+      return groupBox.values.whereType<Group>().firstWhere((g) => g.name == name);
     } catch (_) {
       return null;
     }
@@ -55,11 +78,14 @@ class JournalService {
   }
 
   List<Student> getStudentsByGroup(Group group) =>
-      studentBox.values.where((st) => st.groupId == group.groupId).toList();
+      studentBox.values
+          .whereType<Student>()
+          .where((st) => st.groupId == group.groupId)
+          .toList();
 
   Student? getStudentByNameAndGroup(String name, String groupId) {
     try {
-      return studentBox.values.firstWhere(
+      return studentBox.values.whereType<Student>().firstWhere(
         (st) => st.name == name && st.groupId == groupId,
       );
     } catch (_) {
@@ -83,7 +109,10 @@ class JournalService {
   }
 
   List<LessonDate> getDatesByGroup(Group group) =>
-      dateBox.values.where((d) => d.groupId == group.groupId).toList()
+      dateBox.values
+          .whereType<LessonDate>()
+          .where((d) => d.groupId == group.groupId)
+          .toList()
         ..sort((a, b) => a.date.compareTo(b.date));
 
   Future<void> addDate(LessonDate date) async => dateBox.add(date);
@@ -102,22 +131,28 @@ class JournalService {
   }
 
   List<Attendance> getAttendanceByGroup(Group group) =>
-      attendanceBox.values.where((a) => a.groupId == group.groupId).toList();
+      attendanceBox.values
+          .whereType<Attendance>()
+          .where((a) => a.groupId == group.groupId)
+          .toList();
 
-  List<Attendance> getAttendanceByStudent(Student student) => attendanceBox
-      .values
-      .where(
-        (a) => a.studentName == student.name && a.groupId == student.groupId,
-      )
-      .toList();
+  List<Attendance> getAttendanceByStudent(Student student) =>
+      attendanceBox.values
+          .whereType<Attendance>()
+          .where(
+            (a) => a.studentName == student.name && a.groupId == student.groupId,
+          )
+          .toList();
 
-  List<Attendance> getAttendanceByDate(LessonDate date) => attendanceBox.values
-      .where((a) => a.dateId == date.key.toString())
-      .toList();
+  List<Attendance> getAttendanceByDate(LessonDate date) =>
+      attendanceBox.values
+          .whereType<Attendance>()
+          .where((a) => a.dateId == date.key.toString())
+          .toList();
 
   Attendance? getAttendance(String studentName, String groupId, String dateId) {
     try {
-      return attendanceBox.values.firstWhere(
+      return attendanceBox.values.whereType<Attendance>().firstWhere(
         (a) =>
             a.studentName == studentName &&
             a.groupId == groupId &&
@@ -130,7 +165,7 @@ class JournalService {
 
   Future<void> addOrUpdateAttendance(Attendance attendance) async {
     try {
-      final existing = attendanceBox.values.firstWhere(
+      final existing = attendanceBox.values.whereType<Attendance>().firstWhere(
         (a) =>
             a.studentName == attendance.studentName &&
             a.groupId == attendance.groupId &&
@@ -149,17 +184,19 @@ class JournalService {
       attendance.delete();
 
   List<Grade> getGradesByStudent(Student student) => gradeBox.values
-      .where(
-        (g) => g.studentName == student.name && g.groupId == student.groupId,
-      )
+      .whereType<Grade>()
+      .where((g) => g.studentName == student.name && g.groupId == student.groupId)
       .toList();
 
   List<Grade> getGradesByDate(LessonDate date) =>
-      gradeBox.values.where((g) => g.dateId == date.key.toString()).toList();
+      gradeBox.values
+          .whereType<Grade>()
+          .where((g) => g.dateId == date.key.toString())
+          .toList();
 
   Grade? getGrade(String studentName, String groupId, String dateId) {
     try {
-      return gradeBox.values.firstWhere(
+      return gradeBox.values.whereType<Grade>().firstWhere(
         (g) =>
             g.studentName == studentName &&
             g.groupId == groupId &&
@@ -172,7 +209,7 @@ class JournalService {
 
   Future<void> addOrUpdateGrade(Grade grade) async {
     try {
-      final existing = gradeBox.values.firstWhere(
+      final existing = gradeBox.values.whereType<Grade>().firstWhere(
         (g) =>
             g.studentName == grade.studentName &&
             g.groupId == grade.groupId &&

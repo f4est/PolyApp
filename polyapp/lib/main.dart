@@ -1863,8 +1863,8 @@ class _AuthPageState extends State<AuthPage> {
                                           context,
                                         ).locale.languageCode ==
                                         'ru'
-                                    ? 'ФИО преподавателя (для журнала)'
-                                    : 'Teacher name (for journal)',
+                                    ? 'ФИО(для расписания)'
+                                    : 'Full name (for schedule)',
                               ),
                               validator: (value) {
                                 if (!_isRegister ||
@@ -1876,8 +1876,8 @@ class _AuthPageState extends State<AuthPage> {
                                             context,
                                           ).locale.languageCode ==
                                           'ru'
-                                      ? 'Укажите ФИО преподавателя.'
-                                      : 'Teacher name is required.';
+                                      ? 'Укажите ФИО для расписания.'
+                                      : 'Full name for schedule is required.';
                                 }
                                 return null;
                               },
@@ -2792,6 +2792,25 @@ class _RoleHomePageState extends State<RoleHomePage> {
     }
   }
 
+  String _localizedRoleTitle(String role, String localeCode) {
+    switch (role.trim()) {
+      case 'admin':
+        return trTextByCode(localeCode, 'Администратор', 'Administrator');
+      case 'teacher':
+        return trTextByCode(localeCode, 'Преподаватель', 'Teacher');
+      case 'student':
+        return trTextByCode(localeCode, 'Студент', 'Student');
+      case 'parent':
+        return trTextByCode(localeCode, 'Родитель', 'Parent');
+      case 'smm':
+        return trTextByCode(localeCode, 'Редактор ленты', 'News editor');
+      case 'request_handler':
+        return trTextByCode(localeCode, 'Обработчик заявок', 'Request handler');
+      default:
+        return role.trim().isEmpty ? 'PolyApp' : role.trim();
+    }
+  }
+
   int _featureOrderRank(String id) {
     final idx = _navFeatureOrder.indexOf(id);
     if (idx >= 0) {
@@ -2901,6 +2920,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
   }
 
   Widget _buildDesktopShell(List<_NavItem> tabs, Color color, String title) {
+    final localeCode = AppStateScope.of(context).locale.languageCode;
     return Scaffold(
       body: Row(
         children: [
@@ -2924,7 +2944,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 18),
                     child: Text(
-                      widget.role.title,
+                      'PolyApp',
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.w800,
                       ),
@@ -2934,7 +2954,10 @@ class _RoleHomePageState extends State<RoleHomePage> {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 18),
                     child: Text(
-                      widget.role.subtitle,
+                      _localizedRoleTitle(
+                        AppStateScope.of(context).user?.role ?? widget.role.id,
+                        localeCode,
+                      ),
                       style: TextStyle(color: kSecondaryText),
                     ),
                   ),
@@ -3039,7 +3062,7 @@ class _RoleHomePageState extends State<RoleHomePage> {
                 child: Row(
                   children: [
                     Text(
-                      widget.role.title,
+                      'PolyApp',
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                     const SizedBox(width: 20),
@@ -3631,7 +3654,7 @@ class _SchedulePageState extends State<SchedulePage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Admin tools',
+                    'Инструменты администратора',
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   const SizedBox(height: 12),
@@ -3643,11 +3666,11 @@ class _SchedulePageState extends State<SchedulePage> {
                             height: 18,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Text('Upload DOCX'),
+                        : const Text('Загрузить DOCX'),
                   ),
                   if (_groups.isNotEmpty) ...[
                     const SizedBox(height: 12),
-                    const Text('Groups'),
+                    const Text('Группы'),
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
@@ -4165,7 +4188,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
     try {
       final collected = <String>{};
       try {
-        collected.addAll(await client.listJournalGroupCatalog());
+        collected.addAll(await client.listJournalBaseGroupCatalogV2());
       } catch (_) {}
       try {
         collected.addAll(await client.listJournalGroups());
@@ -4215,7 +4238,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
     required String title,
     String initialQuery = '',
   }) async {
-    final queryController = TextEditingController(text: initialQuery);
+    String query = initialQuery;
     final selected = await showDialog<String>(
       context: context,
       builder: (context) {
@@ -4228,8 +4251,8 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextField(
-                    controller: queryController,
+                  TextFormField(
+                    initialValue: query,
                     autofocus: true,
                     decoration: InputDecoration(
                       labelText: _tt('Search group'),
@@ -4237,6 +4260,7 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
                     ),
                     onChanged: (value) {
                       setStateDialog(() {
+                        query = value;
                         filtered = _filterGroupCatalog(value);
                       });
                     },
@@ -4275,7 +4299,6 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
         );
       },
     );
-    queryController.dispose();
     return selected;
   }
 
@@ -5683,6 +5706,8 @@ class _RequestComposePageState extends State<RequestComposePage> {
   String? _selectedType;
   String? _selectedTeacherGroup;
   Future<List<String>>? _teacherGroupsFuture;
+  final _teacherGroupFilterController = TextEditingController();
+  final _teacherGroupController = TextEditingController();
   bool _initialized = false;
   bool _sending = false;
 
@@ -5700,11 +5725,12 @@ class _RequestComposePageState extends State<RequestComposePage> {
       _selectedType = kTeacherGroupRequestType;
       _teacherGroupsFuture = AppStateScope.of(
         context,
-      ).client.listJournalGroupCatalog();
+      ).client.listJournalBaseGroupCatalogV2();
       _teacherGroupsFuture!.then((groups) {
         if (!mounted || groups.isEmpty) return;
         setState(() {
           _selectedTeacherGroup ??= groups.first;
+          _teacherGroupController.text = _selectedTeacherGroup ?? '';
         });
       });
     }
@@ -5731,7 +5757,9 @@ class _RequestComposePageState extends State<RequestComposePage> {
       return;
     }
     final groupName = user?.role == 'teacher'
-        ? (_selectedTeacherGroup ?? '').trim()
+        ? (_teacherGroupController.text.trim().isNotEmpty
+              ? _teacherGroupController.text.trim()
+              : (_selectedTeacherGroup ?? '').trim())
         : '';
     if (user?.role == 'teacher' && groupName.isEmpty) {
       setState(() {
@@ -5764,6 +5792,8 @@ class _RequestComposePageState extends State<RequestComposePage> {
 
   @override
   void dispose() {
+    _teacherGroupFilterController.dispose();
+    _teacherGroupController.dispose();
     _detailsController.dispose();
     super.dispose();
   }
@@ -5790,22 +5820,62 @@ class _RequestComposePageState extends State<RequestComposePage> {
               future: _teacherGroupsFuture,
               builder: (context, snapshot) {
                 final groups = snapshot.data ?? const <String>[];
-                final selected = groups.contains(_selectedTeacherGroup)
+                final filterNeedle = _teacherGroupFilterController.text
+                    .trim()
+                    .toLowerCase();
+                final filteredGroups = filterNeedle.isEmpty
+                    ? groups
+                    : groups
+                          .where((item) {
+                            final raw = item.toLowerCase();
+                            return raw.contains(filterNeedle);
+                          })
+                          .toList(growable: false);
+                final sourceGroups = filteredGroups.isEmpty
+                    ? groups
+                    : filteredGroups;
+                final selected = sourceGroups.contains(_selectedTeacherGroup)
                     ? _selectedTeacherGroup
-                    : (groups.isNotEmpty ? groups.first : null);
-                return DropdownButtonFormField<String>(
-                  initialValue: selected,
-                  items: groups
-                      .map(
-                        (group) =>
-                            DropdownMenuItem(value: group, child: Text(group)),
-                      )
-                      .toList(),
-                  onChanged: groups.isEmpty
-                      ? null
-                      : (value) =>
-                            setState(() => _selectedTeacherGroup = value),
-                  decoration: const InputDecoration(labelText: 'Group'),
+                    : (sourceGroups.isNotEmpty ? sourceGroups.first : null);
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      controller: _teacherGroupFilterController,
+                      onChanged: (_) => setState(() {}),
+                      decoration: const InputDecoration(
+                        labelText: 'Search group',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: selected,
+                      items: sourceGroups
+                          .map(
+                            (group) => DropdownMenuItem(
+                              value: group,
+                              child: Text(group),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: sourceGroups.isEmpty
+                          ? null
+                          : (value) => setState(() {
+                              _selectedTeacherGroup = value;
+                              if (value != null) {
+                                _teacherGroupController.text = value;
+                              }
+                            }),
+                      decoration: const InputDecoration(labelText: 'Group'),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _teacherGroupController,
+                      decoration: const InputDecoration(
+                        labelText: 'Group (manual input)',
+                      ),
+                    ),
+                  ],
                 );
               },
             ),
@@ -6295,7 +6365,9 @@ class _ProfilePageState extends State<ProfilePage> {
                         TextField(
                           controller: _teacherController,
                           decoration: InputDecoration(
-                            labelText: l10n.t('teacher_name_label'),
+                            labelText: _isRu
+                                ? 'ФИО(для расписания)'
+                                : 'Full name (for schedule)',
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
@@ -6387,9 +6459,9 @@ class _ProfilePageState extends State<ProfilePage> {
                   _ProfileInfoPill(
                     text: (user.teacherName ?? '').trim().isEmpty
                         ? (isRu
-                              ? 'ФИО преподавателя не заполнено'
-                              : 'Teacher name not set')
-                        : '${isRu ? 'ФИО в журнале' : 'Journal name'}: ${user.teacherName}',
+                              ? 'ФИО для расписания не заполнено'
+                              : 'Full name for schedule is not set')
+                        : '${isRu ? 'ФИО для расписания' : 'Full name for schedule'}: ${user.teacherName}',
                     backgroundColor: const Color(0xFFEFF6FF),
                   ),
                 ],
@@ -6452,7 +6524,9 @@ class _ProfilePageState extends State<ProfilePage> {
                 children: [
                   approvalChip,
                   _ProfileInfoPill(
-                    text: isRu ? 'Полный CRUD по системе' : 'Full system CRUD',
+                    text: isRu
+                        ? 'Полный доступ к системе'
+                        : 'Full system access',
                     backgroundColor: const Color(0xFFEFF6FF),
                   ),
                   if (permissions.isNotEmpty)
@@ -6632,7 +6706,9 @@ class _ProfilePageState extends State<ProfilePage> {
             const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.co_present_outlined),
-              title: Text(l10n.t('teacher_name_label')),
+              title: Text(
+                isRu ? 'ФИО(для расписания)' : 'Full name (for schedule)',
+              ),
               dense: isPhoneLayout,
               visualDensity: compactTileDensity,
               contentPadding: compactTilePadding,
@@ -8417,7 +8493,7 @@ class HomePage extends StatelessWidget {
         case 'makeup':
           return 'Missed class makeups';
         case 'admin_panel':
-          return 'Users and system CRUD';
+          return 'Administration and system access';
         case 'exams':
           return 'Exam results';
         case 'profile':
@@ -9817,12 +9893,12 @@ class _NewsFeedPageState extends State<NewsFeedPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isRu = AppStateScope.of(context).locale.languageCode == 'ru';
     return FeatureScaffold(
-      title: 'News feed',
-      subtitle:
-          '\u041b\u0435\u043d\u0442\u0430 \u0438 \u0441\u043e\u0431\u044b\u0442\u0438\u044f \u043a\u0430\u043c\u043f\u0443\u0441\u0430',
+      title: isRu ? 'Лента новостей' : 'News feed',
+      subtitle: isRu ? 'Лента и события' : 'Feed and events',
       actionLabel: widget.canEdit
-          ? '\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u043e\u0441\u0442'
+          ? (isRu ? 'Создать пост' : 'Create post')
           : null,
       onAction: widget.canEdit ? _openCompose : null,
       bodyScrollable: false,

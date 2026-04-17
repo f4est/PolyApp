@@ -101,3 +101,20 @@ func TestIsAbsenceToken(t *testing.T) {
 	}
 }
 
+func TestSanitizeGroupCatalog(t *testing.T) {
+	in := []string{
+		" P22-3E ",
+		"P22-3E@@t1",
+		"P22-3E@@t2",
+		"  ",
+		"П22-4Д",
+		"П22-4Д@@t5",
+	}
+	got := sanitizeGroupCatalog(in)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 groups, got %d: %#v", len(got), got)
+	}
+	if got[0] != "P22-3E" || got[1] != "П22-4Д" {
+		t.Fatalf("unexpected sanitized groups: %#v", got)
+	}
+}

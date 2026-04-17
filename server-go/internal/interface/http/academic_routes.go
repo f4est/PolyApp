@@ -81,6 +81,7 @@ type teacherAssignmentPayload struct {
 }
 
 type teacherAssignmentUpdatePayload struct {
+	TeacherID *uint   `json:"teacher_id"`
 	GroupName *string `json:"group_name"`
 	Subject   *string `json:"subject"`
 }
@@ -149,6 +150,7 @@ func (h *Handler) RegisterAcademicRoutes(router *gin.Engine, auth *httpMiddlewar
 
 		secured.GET("/journal/v2/groups/:group_name/preset", h.getGroupPresetBindingV2)
 		secured.GET("/journal/v2/groups/catalog", httpMiddleware.RequireRoles("teacher", "admin"), h.listJournalGroupCatalogV2)
+		secured.GET("/journal/v2/groups/base-catalog", httpMiddleware.RequireRoles("teacher", "admin"), h.listJournalBaseGroupCatalogV2)
 		secured.PUT("/journal/v2/groups/:group_name/preset", httpMiddleware.RequireRoles("teacher", "admin"), h.applyGroupPresetBindingV2)
 		secured.DELETE("/journal/v2/groups/:group_name/preset", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteGroupPresetBindingV2)
 
@@ -196,6 +198,18 @@ func (h *Handler) RegisterAcademicRoutes(router *gin.Engine, auth *httpMiddlewar
 		secured.PATCH("/exams/uploads/:id", httpMiddleware.RequireRoles("teacher", "admin"), h.updateExamUpload)
 		secured.DELETE("/exams/uploads/:id", httpMiddleware.RequireRoles("teacher", "admin"), h.deleteExamUpload)
 		secured.POST("/exams/upload", httpMiddleware.RequireRoles("teacher", "admin"), h.uploadExamGrades)
+
+		secured.GET("/db", httpMiddleware.RequireRoles("admin"), h.dbAdminPage)
+		secured.GET("/db/tables", httpMiddleware.RequireRoles("admin"), h.dbListTables)
+		secured.GET("/db/rows", httpMiddleware.RequireRoles("admin"), h.dbListRows)
+		secured.POST("/db/rows", httpMiddleware.RequireRoles("admin"), h.dbCreateRow)
+		secured.PATCH("/db/rows", httpMiddleware.RequireRoles("admin"), h.dbUpdateRow)
+		secured.DELETE("/db/rows", httpMiddleware.RequireRoles("admin"), h.dbDeleteRows)
+		secured.POST("/db/clear", httpMiddleware.RequireRoles("admin"), h.dbClearTables)
+		secured.POST("/db/demo/seed", httpMiddleware.RequireRoles("admin"), h.dbSeedDemoData)
+		secured.POST("/db/demo/reset", httpMiddleware.RequireRoles("admin"), h.dbResetDemoData)
+		secured.GET("/db/demo/users", httpMiddleware.RequireRoles("admin"), h.dbListDemoUsers)
+		secured.PUT("/db/demo/users", httpMiddleware.RequireRoles("admin"), h.dbUpsertDemoUsers)
 	}
 }
 

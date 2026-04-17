@@ -849,9 +849,7 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
         : width >= 1100
         ? 1200.0
         : double.infinity;
-    final max = _wideMode
-        ? math.max(width - 24, 2800).toDouble()
-        : baseMax;
+    final max = _wideMode ? math.max(width - 24, 2800).toDouble() : baseMax;
     final horizontal = width >= 1100 ? 28.0 : 16.0;
     final twoColWidth = width >= 1100
         ? (max - horizontal * 2 - 12) / 2
@@ -900,9 +898,7 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
         : trend;
     final maxTrendValue = visibleTrend.isEmpty
         ? 0.0
-        : visibleTrend
-              .map((e) => math.max(e.avg, e.median))
-              .reduce((a, b) => math.max(a, b));
+        : visibleTrend.map((e) => e.avg).reduce((a, b) => math.max(a, b));
     final latestTrend = visibleTrend.isEmpty ? null : visibleTrend.last;
     final previousTrend = visibleTrend.length < 2
         ? null
@@ -1176,7 +1172,7 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                     SizedBox(
                       width: twoColWidth,
                       child: _panel(
-                        _t('Динамика среднего/медианы', 'Average/median trend'),
+                        _t('Динамика среднего', 'Average trend'),
                         subtitle: _t(
                           'Считается по оценкам из журнала: группировка по дате занятия (месяц/неделя) и по выбранному срезу группы.',
                           'Computed from journal grades: grouped by class date (month/week) and selected group scope.',
@@ -1205,14 +1201,6 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                                           _brand,
                                         ),
                                         _pill(
-                                          _t(
-                                            'Текущая медиана',
-                                            'Current median',
-                                          ),
-                                          latestTrend.median.toStringAsFixed(2),
-                                          const Color(0xFF2563EB),
-                                        ),
-                                        _pill(
                                           _t('Записей', 'Entries'),
                                           '${latestTrend.count}',
                                           _warn,
@@ -1229,7 +1217,7 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                                   ],
                                   for (final item in visibleTrend) ...[
                                     Text(
-                                      '${item.label} • ${_t('средний', 'avg')}: ${item.avg.toStringAsFixed(2)} • ${_t('медиана', 'median')}: ${item.median.toStringAsFixed(2)} • ${_t('записей', 'entries')}: ${item.count}',
+                                      '${item.label} • ${_t('средний', 'avg')}: ${item.avg.toStringAsFixed(2)} • ${_t('записей', 'entries')}: ${item.count}',
                                       style: const TextStyle(
                                         fontWeight: FontWeight.w600,
                                       ),
@@ -1247,21 +1235,6 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                                       valueColor:
                                           const AlwaysStoppedAnimation<Color>(
                                             _brand,
-                                          ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    LinearProgressIndicator(
-                                      value: maxTrendValue <= 0
-                                          ? 0
-                                          : (item.median / maxTrendValue).clamp(
-                                              0.0,
-                                              1.0,
-                                            ),
-                                      minHeight: 6,
-                                      backgroundColor: const Color(0xFFE5E7EB),
-                                      valueColor:
-                                          const AlwaysStoppedAnimation<Color>(
-                                            Color(0xFF2563EB),
                                           ),
                                     ),
                                     const SizedBox(height: 12),

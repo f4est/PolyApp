@@ -20,6 +20,22 @@ func scopedJournalGroupNameForUser(user *entity.User, groupName string) string {
 	return groupName + teacherJournalGroupSuffix + strconv.FormatUint(uint64(user.ID), 10)
 }
 
+func resolvedJournalGroupNameForUser(user *entity.User, groupName string) string {
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" || user == nil {
+		return groupName
+	}
+	if strings.ToLower(strings.TrimSpace(user.Role)) != "teacher" {
+		return groupName
+	}
+	if teacherID, ok := teacherIDFromScopedJournalGroupName(groupName); ok {
+		if teacherID == user.ID {
+			return groupName
+		}
+	}
+	return scopedJournalGroupNameForUser(user, baseJournalGroupName(groupName))
+}
+
 func baseJournalGroupName(groupName string) string {
 	groupName = strings.TrimSpace(groupName)
 	if groupName == "" {

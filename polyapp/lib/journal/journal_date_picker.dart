@@ -60,8 +60,8 @@ class _JournalDatePickerDialogState extends State<JournalDatePickerDialog> {
   // Режимы для мобильных устройств
   String _selectionMode = 'single'; // 'single', 'multiple', 'range'
 
-  bool get _isRu => (widget.locale?.languageCode ?? 'ru') == 'ru';
-  String _t(String ru, String en) => trTextByCode(widget.locale?.languageCode ?? 'ru', ru, en);
+  String _t(String ru, String en) =>
+      trTextByCode(widget.locale?.languageCode ?? 'ru', ru, en);
   String _intlLocale() {
     final code = (widget.locale?.languageCode ?? 'ru').toLowerCase();
     if (code == 'ru') return 'ru_RU';
@@ -410,4 +410,3 @@ class _JournalDatePickerDialogState extends State<JournalDatePickerDialog> {
     });
   }
 }
-

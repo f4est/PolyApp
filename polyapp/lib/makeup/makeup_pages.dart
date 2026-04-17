@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -171,7 +172,6 @@ class _MakeupWorkspacePageState extends State<MakeupWorkspacePage> {
   bool _messageError = false;
   Timer? _autoRefreshTimer;
 
-  bool get _isRu => widget.locale.languageCode == 'ru';
   bool get _canManage =>
       widget.currentUser.role == 'teacher' ||
       widget.currentUser.role == 'admin';
@@ -597,7 +597,6 @@ class _MakeupCaseDetailScreenState extends State<MakeupCaseDetailScreen> {
   PlatformFile? _chatAttachment;
   Timer? _autoRefreshTimer;
 
-  bool get _isRu => widget.locale.languageCode == 'ru';
   String _t(String ru, String en) =>
       trTextByCode(widget.locale.languageCode, ru, en);
   bool get _canTeacherEdit =>
@@ -1803,7 +1802,6 @@ class UserPublicProfileScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isRu = locale.languageCode == 'ru';
     String t(String ru, String en) => trTextByCode(locale.languageCode, ru, en);
     return ModulePanel(
       title: t('Профиль пользователя', 'User profile'),
@@ -1905,6 +1903,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
   String _userApproval = 'all';
   String _userSort = 'id_asc';
   String _makeupStatus = 'all';
+  String _assignmentSearch = '';
   String? _noticeMessage;
   bool _noticeError = false;
   Future<List<UserProfile>>? _usersFuture;
@@ -1928,7 +1927,6 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
   Future<List<DateTime>>? _journalDatesFuture;
   String? _journalGroup;
 
-  bool get _isRu => widget.locale.languageCode == 'ru';
   String _t(String ru, String en) =>
       trTextByCode(widget.locale.languageCode, ru, en);
   String _readError(Object error) => widget.errorText(error);
@@ -1978,9 +1976,16 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
   }
 
   List<String> _normalizeGroupNames(Iterable<String> rawValues) {
+    String normalizeOne(String value) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) return '';
+      final marker = trimmed.lastIndexOf('@@t');
+      if (marker <= 0) return trimmed;
+      return trimmed.substring(0, marker).trim();
+    }
     final set = <String>{};
     for (final raw in rawValues) {
-      final value = raw.trim();
+      final value = normalizeOne(raw);
       if (value.isNotEmpty) {
         set.add(value);
       }
@@ -2005,14 +2010,39 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
 
     addAll(seed);
     try {
-      addAll(await widget.client.listJournalGroupCatalog());
-    } catch (_) {}
-    try {
-      addAll(await widget.client.listJournalGroups());
+      addAll(await widget.client.listJournalBaseGroupCatalogV2());
     } catch (_) {}
     try {
       final students = await widget.client.listUsers(role: 'student');
       addAll(students.map((user) => user.studentGroup ?? ''));
+    } catch (_) {}
+    return _normalizeGroupNames(collected);
+  }
+
+  Future<List<String>> _loadConfirmedGroupsForTeaching() async {
+    final collected = <String>{};
+    try {
+      final departments = await widget.client.listDepartments();
+      for (final department in departments) {
+        for (final group in department.groups) {
+          final value = group.trim();
+          if (value.isNotEmpty) {
+            collected.add(value);
+          }
+        }
+      }
+    } catch (_) {}
+    try {
+      final students = await widget.client.listUsers(
+        role: 'student',
+        approved: true,
+      );
+      for (final student in students) {
+        final value = (student.studentGroup ?? '').trim();
+        if (value.isNotEmpty) {
+          collected.add(value);
+        }
+      }
     } catch (_) {}
     return _normalizeGroupNames(collected);
   }
@@ -2085,7 +2115,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
         ? widget.client.listAnalyticsGroups()
         : Future.value(const <GroupAnalytics>[]);
     _journalGroupsFuture = _hasAdminPermission('academic_manage')
-        ? widget.client.listJournalGroups()
+        ? widget.client.listJournalBaseGroupCatalogV2()
         : Future.value(const <String>[]);
     _setJournalGroupSelection(_journalGroup);
     setState(() {});
@@ -2267,7 +2297,10 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                   TextField(
                     controller: teacherController,
                     decoration: InputDecoration(
-                      labelText: _t('ФИО преподавателя', 'Teacher name'),
+                      labelText: _t(
+                        'ФИО(для расписания)',
+                        'Full name (for schedule)',
+                      ),
                     ),
                   ),
                 if (role == 'admin') ...[
@@ -2442,8 +2475,8 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
         setState(() {
           _noticeError = true;
           _noticeMessage = _t(
-            'Для преподавателя обязательно укажите ФИО преподавателя.',
-            'Teacher display name is required for teacher role.',
+            'Для преподавателя обязательно укажите ФИО(для расписания).',
+            'Full name for schedule is required for teacher role.',
           );
         });
       }
@@ -2674,7 +2707,10 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                   TextField(
                     controller: teacherController,
                     decoration: InputDecoration(
-                      labelText: _t('ФИО преподавателя', 'Teacher name'),
+                      labelText: _t(
+                        'ФИО(для расписания)',
+                        'Full name (for schedule)',
+                      ),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -3016,15 +3052,18 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     final teachers =
         await (_teachersFuture ??
             widget.client.listUsers(role: 'teacher', approved: true));
-    if (teachers.isEmpty) return;
+    final groups = await _loadConfirmedGroupsForTeaching();
+    if (teachers.isEmpty || groups.isEmpty) return;
     if (!mounted) return;
     int teacherId = teachers.first.id;
-    final groupController = TextEditingController();
+    String groupName = groups.first;
     final subjectController = TextEditingController();
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(_t('Создать назначение', 'Create assignment')),
+        title: Text(
+          _t('Создать связь преподаватель-группа', 'Create teaching link'),
+        ),
         content: SizedBox(
           width: 560,
           child: Column(
@@ -3042,8 +3081,13 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                 ),
               ),
               const SizedBox(height: 8),
-              TextField(
-                controller: groupController,
+              DropdownButtonFormField<String>(
+                initialValue: groupName,
+                items: [
+                  for (final group in groups)
+                    DropdownMenuItem(value: group, child: Text(group)),
+                ],
+                onChanged: (value) => groupName = value ?? groupName,
                 decoration: InputDecoration(labelText: _t('Группа', 'Group')),
               ),
               const SizedBox(height: 8),
@@ -3071,28 +3115,61 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     if (ok != true) return;
     await widget.client.createTeacherAssignment(
       teacherId: teacherId,
-      groupName: groupController.text.trim(),
+      groupName: groupName.trim(),
       subject: subjectController.text.trim(),
     );
     _reloadAll();
   }
 
   Future<void> _editAssignment(TeacherGroupAssignment item) async {
-    final groupController = TextEditingController(text: item.groupName);
+    final teachers =
+        await (_teachersFuture ??
+            widget.client.listUsers(role: 'teacher', approved: true));
+    final groups = await _loadConfirmedGroupsForTeaching();
+    if (!mounted) return;
+    int teacherId = item.teacherId;
+    String groupName = groups.contains(item.groupName) && groups.isNotEmpty
+        ? item.groupName
+        : (groups.isNotEmpty ? groups.first : item.groupName);
     final subjectController = TextEditingController(text: item.subject);
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(_t('Изменить назначение', 'Edit assignment')),
+        title: Text(
+          _t('Изменить связь преподаватель-группа', 'Edit teaching link'),
+        ),
         content: SizedBox(
           width: 520,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              TextField(
-                controller: groupController,
-                decoration: InputDecoration(labelText: _t('Группа', 'Group')),
+              DropdownButtonFormField<int>(
+                initialValue: teacherId,
+                items: [
+                  for (final t in teachers)
+                    DropdownMenuItem(value: t.id, child: Text(t.fullName)),
+                ],
+                onChanged: (value) => teacherId = value ?? teacherId,
+                decoration: InputDecoration(
+                  labelText: _t('Преподаватель', 'Teacher'),
+                ),
               ),
+              const SizedBox(height: 8),
+              if (groups.isEmpty)
+                InputDecorator(
+                  decoration: InputDecoration(labelText: _t('Группа', 'Group')),
+                  child: Text(groupName),
+                )
+              else
+                DropdownButtonFormField<String>(
+                  initialValue: groupName,
+                  items: [
+                    for (final group in groups)
+                      DropdownMenuItem(value: group, child: Text(group)),
+                  ],
+                  onChanged: (value) => groupName = value ?? groupName,
+                  decoration: InputDecoration(labelText: _t('Группа', 'Group')),
+                ),
               const SizedBox(height: 8),
               TextField(
                 controller: subjectController,
@@ -3118,7 +3195,8 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     if (ok != true) return;
     await widget.client.updateTeacherAssignment(
       item.id,
-      groupName: groupController.text.trim(),
+      teacherId: teacherId,
+      groupName: groupName.trim(),
       subject: subjectController.text.trim(),
     );
     _reloadAll();
@@ -3128,7 +3206,9 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(_t('Удалить назначение?', 'Delete assignment?')),
+        title: Text(
+          _t('Удалить связь преподаватель-группа?', 'Delete teaching link?'),
+        ),
         content: Text(
           '${item.teacherName} / ${item.groupName} / ${item.subject}',
         ),
@@ -3701,7 +3781,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
   }
 
   Future<void> _addDepartmentGroup(DepartmentDto item) async {
-    final groups = await widget.client.listJournalGroups();
+    final groups = await widget.client.listJournalBaseGroupCatalogV2();
     String groupName = groups.isNotEmpty ? groups.first : '';
     final customController = TextEditingController();
     if (!mounted) return;
@@ -3782,7 +3862,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
         await (_teachersFuture ??
             widget.client.listUsers(role: 'teacher', approved: true));
     if (teachers.isEmpty) return;
-    final groups = await widget.client.listJournalGroups();
+    final groups = await widget.client.listJournalBaseGroupCatalogV2();
     int curatorId = teachers.first.id;
     String groupName = groups.isNotEmpty ? groups.first : '';
     final customController = TextEditingController();
@@ -4365,7 +4445,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
         ),
         const SizedBox(height: 12),
         Text(
-          _t('Посещаемость (CRUD)', 'Attendance (CRUD)'),
+          _t('Журнал посещаемости', 'Attendance journal'),
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 8),
@@ -4433,7 +4513,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
         ),
         const SizedBox(height: 12),
         Text(
-          _t('Оценки (CRUD)', 'Grades (CRUD)'),
+          _t('Журнал оценок', 'Grades journal'),
           style: const TextStyle(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 8),
@@ -4618,19 +4698,28 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
               future: _journalGroupsFuture,
               builder: (context, groupsSnapshot) {
                 final groupCatalog = groupsSnapshot.data ?? const <String>[];
+                String normalizeGroupLabel(String value) {
+                  final raw = value.trim();
+                  final marker = raw.lastIndexOf('@@t');
+                  final base = marker > 0
+                      ? raw.substring(0, marker).trim()
+                      : raw;
+                  return base;
+                }
+
                 final allGroups = <String>{
                   ...groupCatalog
-                      .map((item) => item.trim())
+                      .map((item) => normalizeGroupLabel(item))
                       .where((item) => item.isNotEmpty),
                   for (final department in departments)
                     ...department.groups
-                        .map((item) => item.trim())
+                        .map((item) => normalizeGroupLabel(item))
                         .where((item) => item.isNotEmpty),
                 };
                 final assigned = <String>{
                   for (final department in departments)
                     ...department.groups
-                        .map((item) => item.trim())
+                        .map((item) => normalizeGroupLabel(item))
                         .where((item) => item.isNotEmpty),
                 };
                 final unassigned =
@@ -5214,7 +5303,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
       },
       {
         'index': 3,
-        'label': _t('Назначения', 'Assignments'),
+        'label': _t('Преподавание', 'Teaching'),
         'perm': 'academic_manage',
       },
       {'index': 4, 'label': _t('Журнал', 'Journal'), 'perm': 'academic_manage'},
@@ -5257,897 +5346,1805 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
         });
       });
     }
-    return ModulePanel(
-      title: _t('Админ панель', 'Admin panel'),
-      subtitle: _t(
-        'Управление пользователями, отделениями, расписанием, посещаемостью, аналитикой и учебными данными.',
-        'Manage users, departments, schedule, attendance, analytics and academic data.',
-      ),
-      trailing: () {
-        if (_tab == 0) {
-          return FilledButton.icon(
-            onPressed: _createUser,
-            icon: const Icon(Icons.person_add_alt_1),
-            label: Text(_t('Создать', 'Create')),
-          );
-        }
-        if (_tab == 3) {
-          return FilledButton.icon(
-            onPressed: _createAssignment,
-            icon: const Icon(Icons.add_task),
-            label: Text(_t('Назначение', 'Assignment')),
-          );
-        }
-        if (_tab == 5) {
-          return FilledButton.icon(
-            onPressed: _createNews,
-            icon: const Icon(Icons.post_add),
-            label: Text(_t('Новость', 'News')),
-          );
-        }
-        if (_tab == 7) {
-          return FilledButton.icon(
-            onPressed: _createDepartment,
-            icon: const Icon(Icons.account_tree_outlined),
-            label: Text(_t('Отделение', 'Department')),
-          );
-        }
-        if (_tab == 8 || _tab == 9 || _tab == 10 || _tab == 11) {
-          return FilledButton.icon(
-            onPressed: _reloadAll,
-            icon: const Icon(Icons.refresh),
-            label: Text(_t('Обновить', 'Refresh')),
-          );
-        }
-        return null;
-      }(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (_noticeMessage != null) ...[
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.only(bottom: 10),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color:
-                    (_noticeError
-                            ? const Color(0xFFDC2626)
-                            : const Color(0xFF16A34A))
-                        .withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                _noticeMessage!,
-                style: TextStyle(
-                  color: _noticeError
-                      ? const Color(0xFFB91C1C)
-                      : const Color(0xFF166534),
-                ),
-              ),
-            ),
-          ],
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _t(
-                      'CRUD доступ: пользователи, отделения, кураторство, расписание, посещаемость, аналитика и академические сущности.',
-                      'CRUD scope: users, departments, curator mapping, schedule, attendance, analytics and academic entities.',
-                    ),
+    return Shortcuts(
+      shortcuts: const <ShortcutActivator, Intent>{
+        SingleActivator(LogicalKeyboardKey.keyD, control: true, shift: true):
+            _OpenDbConsoleIntent(),
+      },
+      child: Actions(
+        actions: <Type, Action<Intent>>{
+          _OpenDbConsoleIntent: CallbackAction<_OpenDbConsoleIntent>(
+            onInvoke: (_) {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => _DbConsolePage(
+                    client: widget.client,
+                    t: _t,
+                    readError: _readError,
                   ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
-                    children: [
-                      for (final permission
-                          in (_isSuperAdmin
-                              ? const <String>['all']
-                              : widget.currentUser.adminPermissions))
-                        Chip(label: Text(_adminPermLabel(permission))),
-                    ],
+                ),
+              );
+              return null;
+            },
+          ),
+        },
+        child: Focus(
+          autofocus: true,
+          child: ModulePanel(
+            title: _t('Админ панель', 'Admin panel'),
+            subtitle: _t(
+              'Управление пользователями, отделениями, расписанием, посещаемостью, аналитикой и учебными данными.',
+              'Manage users, departments, schedule, attendance, analytics and academic data.',
+            ),
+            trailing: () {
+              if (_tab == 0) {
+                return FilledButton.icon(
+                  onPressed: _createUser,
+                  icon: const Icon(Icons.person_add_alt_1),
+                  label: Text(_t('Создать', 'Create')),
+                );
+              }
+              if (_tab == 3) {
+                return FilledButton.icon(
+                  onPressed: _createAssignment,
+                  icon: const Icon(Icons.add_task),
+                  label: Text(_t('Связь', 'Link')),
+                );
+              }
+              if (_tab == 5) {
+                return FilledButton.icon(
+                  onPressed: _createNews,
+                  icon: const Icon(Icons.post_add),
+                  label: Text(_t('Новость', 'News')),
+                );
+              }
+              if (_tab == 7) {
+                return FilledButton.icon(
+                  onPressed: _createDepartment,
+                  icon: const Icon(Icons.account_tree_outlined),
+                  label: Text(_t('Отделение', 'Department')),
+                );
+              }
+              if (_tab == 8 || _tab == 9 || _tab == 10 || _tab == 11) {
+                return FilledButton.icon(
+                  onPressed: _reloadAll,
+                  icon: const Icon(Icons.refresh),
+                  label: Text(_t('Обновить', 'Refresh')),
+                );
+              }
+              return null;
+            }(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_noticeMessage != null) ...[
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color:
+                          (_noticeError
+                                  ? const Color(0xFFDC2626)
+                                  : const Color(0xFF16A34A))
+                              .withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      _noticeMessage!,
+                      style: TextStyle(
+                        color: _noticeError
+                            ? const Color(0xFFB91C1C)
+                            : const Color(0xFF166534),
+                      ),
+                    ),
                   ),
                 ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final item in visibleTabs)
-                ChoiceChip(
-                  selected: _tab == (item['index'] as int),
-                  label: Text(item['label'] as String),
-                  onSelected: (_) =>
-                      setState(() => _tab = item['index'] as int),
-                ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          if (_tab == 0)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
                 Wrap(
-                  spacing: 12,
+                  spacing: 8,
                   runSpacing: 8,
                   children: [
-                    SizedBox(
-                      width: 220,
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _userRole,
-                        items: [
-                          for (final value in const [
-                            'all',
-                            'admin',
-                            'teacher',
-                            'student',
-                            'parent',
-                            'smm',
-                            'request_handler',
-                          ])
-                            DropdownMenuItem(
-                              value: value,
-                              child: Text(_roleLabel(value)),
-                            ),
-                        ],
-                        onChanged: (value) {
-                          if (value == null) return;
-                          setState(() => _userRole = value);
-                          _reloadAll();
-                        },
-                        decoration: InputDecoration(
-                          labelText: _t('Фильтр роли', 'Role filter'),
-                        ),
+                    for (final item in visibleTabs)
+                      ChoiceChip(
+                        selected: _tab == (item['index'] as int),
+                        label: Text(item['label'] as String),
+                        onSelected: (_) =>
+                            setState(() => _tab = item['index'] as int),
                       ),
-                    ),
-                    SizedBox(
-                      width: 220,
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _userApproval,
-                        items: [
-                          DropdownMenuItem(
-                            value: 'all',
-                            child: Text(_t('Все', 'All')),
-                          ),
-                          DropdownMenuItem(
-                            value: 'approved',
-                            child: Text(_t('Подтвержденные', 'Approved')),
-                          ),
-                          DropdownMenuItem(
-                            value: 'pending',
-                            child: Text(_t('Ожидают', 'Pending')),
-                          ),
-                        ],
-                        onChanged: (value) {
-                          if (value == null) return;
-                          setState(() => _userApproval = value);
-                          _reloadAll();
-                        },
-                        decoration: InputDecoration(
-                          labelText: _t('Статус', 'Status'),
-                        ),
-                      ),
-                    ),
-                    SizedBox(
-                      width: 240,
-                      child: DropdownButtonFormField<String>(
-                        initialValue: _userSort,
-                        items: [
-                          DropdownMenuItem(
-                            value: 'id_asc',
-                            child: Text(_t('По ID', 'By ID')),
-                          ),
-                          DropdownMenuItem(
-                            value: 'name_asc',
-                            child: Text(_t('Имя A-Я', 'Name A-Z')),
-                          ),
-                          DropdownMenuItem(
-                            value: 'name_desc',
-                            child: Text(_t('Имя Я-A', 'Name Z-A')),
-                          ),
-                          DropdownMenuItem(
-                            value: 'created_desc',
-                            child: Text(_t('Новые сверху', 'Newest first')),
-                          ),
-                        ],
-                        onChanged: (value) {
-                          if (value == null) return;
-                          setState(() => _userSort = value);
-                          _reloadAll();
-                        },
-                        decoration: InputDecoration(
-                          labelText: _t('Сортировка', 'Sort'),
-                        ),
-                      ),
-                    ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                FutureBuilder<List<UserProfile>>(
-                  future: _usersFuture,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    if (snapshot.hasError) {
-                      return Text(widget.errorText(snapshot.error!));
-                    }
-                    final items = snapshot.data ?? [];
-                    return Column(
-                      children: [
-                        for (final user in items)
-                          Card(
-                            child: ListTile(
-                              title: Wrap(
-                                spacing: 8,
-                                runSpacing: 6,
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                children: [
-                                  Text('${user.fullName} (${user.role})'),
-                                  Chip(
-                                    label: Text(
-                                      (user.isApproved ?? true)
-                                          ? _t('Подтвержден', 'Approved')
-                                          : _t('Ожидает', 'Pending'),
-                                    ),
-                                    backgroundColor: (user.isApproved ?? true)
-                                        ? const Color(0xFFD1FAE5)
-                                        : const Color(0xFFFFEDD5),
+                const SizedBox(height: 10),
+                if (_tab == 0)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 8,
+                        children: [
+                          SizedBox(
+                            width: 220,
+                            child: DropdownButtonFormField<String>(
+                              initialValue: _userRole,
+                              items: [
+                                for (final value in const [
+                                  'all',
+                                  'admin',
+                                  'teacher',
+                                  'student',
+                                  'parent',
+                                  'smm',
+                                  'request_handler',
+                                ])
+                                  DropdownMenuItem(
+                                    value: value,
+                                    child: Text(_roleLabel(value)),
                                   ),
-                                ],
-                              ),
-                              subtitle: Text(user.email),
-                              trailing: PopupMenuButton<String>(
-                                onSelected: (action) async {
-                                  if (action == 'profile') {
-                                    if (!mounted) return;
-                                    Navigator.of(context).push(
-                                      MaterialPageRoute(
-                                        builder: (_) => UserPublicProfileScreen(
-                                          userId: user.id,
-                                          client: widget.client,
-                                          locale: widget.locale,
-                                          errorText: widget.errorText,
-                                        ),
-                                      ),
-                                    );
-                                  } else if (action == 'edit') {
-                                    await _editUser(user);
-                                  } else if (action == 'approve') {
-                                    await _approveUser(user, approved: true);
-                                  } else if (action == 'unapprove') {
-                                    await _approveUser(user, approved: false);
-                                  } else if (action == 'delete') {
-                                    await _deleteUser(user);
-                                  }
-                                },
-                                itemBuilder: (context) => [
-                                  PopupMenuItem(
-                                    value: 'profile',
-                                    child: Text(_t('Профиль', 'Profile')),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'edit',
-                                    child: Text(_t('Редактировать', 'Edit')),
-                                  ),
-                                  if (!(user.isApproved ?? true))
-                                    PopupMenuItem(
-                                      value: 'approve',
-                                      child: Text(_t('Подтвердить', 'Approve')),
-                                    ),
-                                  if (user.isApproved ?? true)
-                                    PopupMenuItem(
-                                      value: 'unapprove',
-                                      child: Text(
-                                        _t(
-                                          'Снять подтверждение',
-                                          'Remove approval',
-                                        ),
-                                      ),
-                                    ),
-                                  PopupMenuItem(
-                                    value: 'delete',
-                                    child: Text(_t('Удалить', 'Delete')),
-                                  ),
-                                ],
+                              ],
+                              onChanged: (value) {
+                                if (value == null) return;
+                                setState(() => _userRole = value);
+                                _reloadAll();
+                              },
+                              decoration: InputDecoration(
+                                labelText: _t('Фильтр роли', 'Role filter'),
                               ),
                             ),
                           ),
-                      ],
-                    );
-                  },
-                ),
-              ],
-            ),
-          if (_tab == 1)
-            FutureBuilder<List<RequestTicket>>(
-              future: _requestsFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  return Text(widget.errorText(snapshot.error!));
-                }
-                final items = snapshot.data ?? [];
-                return Column(
-                  children: [
-                    for (final item in items)
-                      Card(
-                        child: ListTile(
-                          title: Text(item.requestType),
-                          subtitle: Text(
-                            '${item.studentName} / ${item.status}',
-                          ),
-                          trailing: Wrap(
-                            spacing: 4,
-                            children: [
-                              if (item.requestType.toLowerCase().contains(
-                                'преподавание группы',
-                              )) ...[
-                                IconButton(
-                                  tooltip: _t('Одобрить', 'Approve'),
-                                  onPressed: () =>
-                                      _setRequestStatusQuick(item, 'approved'),
-                                  icon: const Icon(
-                                    Icons.check_circle_outline_rounded,
-                                  ),
+                          SizedBox(
+                            width: 220,
+                            child: DropdownButtonFormField<String>(
+                              initialValue: _userApproval,
+                              items: [
+                                DropdownMenuItem(
+                                  value: 'all',
+                                  child: Text(_t('Все', 'All')),
                                 ),
-                                IconButton(
-                                  tooltip: _t('Отклонить', 'Reject'),
-                                  onPressed: () =>
-                                      _setRequestStatusQuick(item, 'rejected'),
-                                  icon: const Icon(Icons.highlight_off_rounded),
+                                DropdownMenuItem(
+                                  value: 'approved',
+                                  child: Text(_t('Подтвержденные', 'Approved')),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'pending',
+                                  child: Text(_t('Ожидают', 'Pending')),
                                 ),
                               ],
-                              PopupMenuButton<String>(
-                                onSelected: (value) {
-                                  if (value == 'status') {
-                                    _updateRequestStatus(item);
-                                  } else if (value == 'delete') {
-                                    _deleteRequest(item);
-                                  }
-                                },
-                                itemBuilder: (context) => [
-                                  if (!item.requestType.toLowerCase().contains(
-                                    'преподавание группы',
-                                  ))
-                                    PopupMenuItem(
-                                      value: 'status',
-                                      child: Text(
-                                        _t('Изменить статус', 'Change status'),
-                                      ),
-                                    ),
-                                  PopupMenuItem(
-                                    value: 'delete',
-                                    child: Text(_t('Удалить', 'Delete')),
-                                  ),
-                                ],
+                              onChanged: (value) {
+                                if (value == null) return;
+                                setState(() => _userApproval = value);
+                                _reloadAll();
+                              },
+                              decoration: InputDecoration(
+                                labelText: _t('Статус', 'Status'),
                               ),
-                            ],
-                          ),
-                        ),
-                      ),
-                  ],
-                );
-              },
-            ),
-          if (_tab == 2)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  width: 240,
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _makeupStatus,
-                    items: [
-                      DropdownMenuItem(
-                        value: 'all',
-                        child: Text(_t('Все статусы', 'All statuses')),
-                      ),
-                      for (final status in kMakeupStatuses)
-                        DropdownMenuItem(
-                          value: status,
-                          child: Text(
-                            makeupStatusLabel(
-                              status,
-                              widget.locale.languageCode,
                             ),
                           ),
-                        ),
+                          SizedBox(
+                            width: 240,
+                            child: DropdownButtonFormField<String>(
+                              initialValue: _userSort,
+                              items: [
+                                DropdownMenuItem(
+                                  value: 'id_asc',
+                                  child: Text(_t('По ID', 'By ID')),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'name_asc',
+                                  child: Text(_t('Имя A-Я', 'Name A-Z')),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'name_desc',
+                                  child: Text(_t('Имя Я-A', 'Name Z-A')),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'created_desc',
+                                  child: Text(
+                                    _t('Новые сверху', 'Newest first'),
+                                  ),
+                                ),
+                              ],
+                              onChanged: (value) {
+                                if (value == null) return;
+                                setState(() => _userSort = value);
+                                _reloadAll();
+                              },
+                              decoration: InputDecoration(
+                                labelText: _t('Сортировка', 'Sort'),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      FutureBuilder<List<UserProfile>>(
+                        future: _usersFuture,
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return const Center(
+                              child: CircularProgressIndicator(),
+                            );
+                          }
+                          if (snapshot.hasError) {
+                            return Text(widget.errorText(snapshot.error!));
+                          }
+                          final items = snapshot.data ?? [];
+                          return Column(
+                            children: [
+                              for (final user in items)
+                                Card(
+                                  child: ListTile(
+                                    title: Wrap(
+                                      spacing: 8,
+                                      runSpacing: 6,
+                                      crossAxisAlignment:
+                                          WrapCrossAlignment.center,
+                                      children: [
+                                        Text('${user.fullName} (${user.role})'),
+                                        Chip(
+                                          label: Text(
+                                            (user.isApproved ?? true)
+                                                ? _t('Подтвержден', 'Approved')
+                                                : _t('Ожидает', 'Pending'),
+                                          ),
+                                          backgroundColor:
+                                              (user.isApproved ?? true)
+                                              ? const Color(0xFFD1FAE5)
+                                              : const Color(0xFFFFEDD5),
+                                        ),
+                                      ],
+                                    ),
+                                    subtitle: Text(user.email),
+                                    trailing: PopupMenuButton<String>(
+                                      onSelected: (action) async {
+                                        if (action == 'profile') {
+                                          if (!mounted) return;
+                                          Navigator.of(context).push(
+                                            MaterialPageRoute(
+                                              builder: (_) =>
+                                                  UserPublicProfileScreen(
+                                                    userId: user.id,
+                                                    client: widget.client,
+                                                    locale: widget.locale,
+                                                    errorText: widget.errorText,
+                                                  ),
+                                            ),
+                                          );
+                                        } else if (action == 'edit') {
+                                          await _editUser(user);
+                                        } else if (action == 'approve') {
+                                          await _approveUser(
+                                            user,
+                                            approved: true,
+                                          );
+                                        } else if (action == 'unapprove') {
+                                          await _approveUser(
+                                            user,
+                                            approved: false,
+                                          );
+                                        } else if (action == 'delete') {
+                                          await _deleteUser(user);
+                                        }
+                                      },
+                                      itemBuilder: (context) => [
+                                        PopupMenuItem(
+                                          value: 'profile',
+                                          child: Text(_t('Профиль', 'Profile')),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 'edit',
+                                          child: Text(
+                                            _t('Редактировать', 'Edit'),
+                                          ),
+                                        ),
+                                        if (!(user.isApproved ?? true))
+                                          PopupMenuItem(
+                                            value: 'approve',
+                                            child: Text(
+                                              _t('Подтвердить', 'Approve'),
+                                            ),
+                                          ),
+                                        if (user.isApproved ?? true)
+                                          PopupMenuItem(
+                                            value: 'unapprove',
+                                            child: Text(
+                                              _t(
+                                                'Снять подтверждение',
+                                                'Remove approval',
+                                              ),
+                                            ),
+                                          ),
+                                        PopupMenuItem(
+                                          value: 'delete',
+                                          child: Text(_t('Удалить', 'Delete')),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
+                      ),
                     ],
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setState(() => _makeupStatus = value);
-                      _reloadAll();
+                  ),
+                if (_tab == 1)
+                  FutureBuilder<List<RequestTicket>>(
+                    future: _requestsFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      if (snapshot.hasError) {
+                        return Text(widget.errorText(snapshot.error!));
+                      }
+                      final items = snapshot.data ?? [];
+                      return Column(
+                        children: [
+                          for (final item in items)
+                            Card(
+                              child: ListTile(
+                                title: Text(item.requestType),
+                                subtitle: Text(
+                                  '${item.studentName} / ${item.status}',
+                                ),
+                                trailing: Wrap(
+                                  spacing: 4,
+                                  children: [
+                                    if (item.requestType.toLowerCase().contains(
+                                      'преподавание группы',
+                                    )) ...[
+                                      IconButton(
+                                        tooltip: _t('Одобрить', 'Approve'),
+                                        onPressed: () => _setRequestStatusQuick(
+                                          item,
+                                          'approved',
+                                        ),
+                                        icon: const Icon(
+                                          Icons.check_circle_outline_rounded,
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: _t('Отклонить', 'Reject'),
+                                        onPressed: () => _setRequestStatusQuick(
+                                          item,
+                                          'rejected',
+                                        ),
+                                        icon: const Icon(
+                                          Icons.highlight_off_rounded,
+                                        ),
+                                      ),
+                                    ],
+                                    PopupMenuButton<String>(
+                                      onSelected: (value) {
+                                        if (value == 'status') {
+                                          _updateRequestStatus(item);
+                                        } else if (value == 'delete') {
+                                          _deleteRequest(item);
+                                        }
+                                      },
+                                      itemBuilder: (context) => [
+                                        if (!item.requestType
+                                            .toLowerCase()
+                                            .contains('преподавание группы'))
+                                          PopupMenuItem(
+                                            value: 'status',
+                                            child: Text(
+                                              _t(
+                                                'Изменить статус',
+                                                'Change status',
+                                              ),
+                                            ),
+                                          ),
+                                        PopupMenuItem(
+                                          value: 'delete',
+                                          child: Text(_t('Удалить', 'Delete')),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                        ],
+                      );
                     },
-                    decoration: InputDecoration(
-                      labelText: _t('Фильтр статуса', 'Status filter'),
+                  ),
+                if (_tab == 2)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 240,
+                        child: DropdownButtonFormField<String>(
+                          initialValue: _makeupStatus,
+                          items: [
+                            DropdownMenuItem(
+                              value: 'all',
+                              child: Text(_t('Все статусы', 'All statuses')),
+                            ),
+                            for (final status in kMakeupStatuses)
+                              DropdownMenuItem(
+                                value: status,
+                                child: Text(
+                                  makeupStatusLabel(
+                                    status,
+                                    widget.locale.languageCode,
+                                  ),
+                                ),
+                              ),
+                          ],
+                          onChanged: (value) {
+                            if (value == null) return;
+                            setState(() => _makeupStatus = value);
+                            _reloadAll();
+                          },
+                          decoration: InputDecoration(
+                            labelText: _t('Фильтр статуса', 'Status filter'),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      FutureBuilder<List<MakeupCaseDto>>(
+                        future: _makeupsFuture,
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return const Center(
+                              child: CircularProgressIndicator(),
+                            );
+                          }
+                          if (snapshot.hasError) {
+                            return Text(widget.errorText(snapshot.error!));
+                          }
+                          final items = snapshot.data ?? [];
+                          return Column(
+                            children: [
+                              for (final item in items)
+                                Card(
+                                  child: ListTile(
+                                    title: Text(
+                                      '${item.groupName} - ${item.studentName}',
+                                    ),
+                                    subtitle: Text(
+                                      '${DateFormat('dd.MM.yyyy').format(item.classDate)} / ${makeupStatusLabel(item.status, widget.locale.languageCode)}',
+                                    ),
+                                    onTap: () {
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) =>
+                                              MakeupCaseDetailScreen(
+                                                caseId: item.id,
+                                                client: widget.client,
+                                                currentUser: widget.currentUser,
+                                                locale: widget.locale,
+                                                baseUrl: widget.baseUrl,
+                                                errorText: widget.errorText,
+                                              ),
+                                        ),
+                                      );
+                                    },
+                                    trailing: PopupMenuButton<String>(
+                                      onSelected: (value) {
+                                        if (value == 'open') {
+                                          Navigator.of(context).push(
+                                            MaterialPageRoute(
+                                              builder: (_) =>
+                                                  MakeupCaseDetailScreen(
+                                                    caseId: item.id,
+                                                    client: widget.client,
+                                                    currentUser:
+                                                        widget.currentUser,
+                                                    locale: widget.locale,
+                                                    baseUrl: widget.baseUrl,
+                                                    errorText: widget.errorText,
+                                                  ),
+                                            ),
+                                          );
+                                        } else if (value == 'delete') {
+                                          _deleteMakeup(item);
+                                        }
+                                      },
+                                      itemBuilder: (context) => [
+                                        PopupMenuItem(
+                                          value: 'open',
+                                          child: Text(_t('Открыть', 'Open')),
+                                        ),
+                                        PopupMenuItem(
+                                          value: 'delete',
+                                          child: Text(_t('Удалить', 'Delete')),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                if (_tab == 3)
+                  FutureBuilder<List<TeacherGroupAssignment>>(
+                    future: _assignmentsFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      if (snapshot.hasError) {
+                        return Text(widget.errorText(snapshot.error!));
+                      }
+                      final items = snapshot.data ?? [];
+                      final needle = _assignmentSearch.trim().toLowerCase();
+                      final filtered = needle.isEmpty
+                          ? items
+                          : items
+                                .where((item) {
+                                  return item.teacherName
+                                          .toLowerCase()
+                                          .contains(needle) ||
+                                      item.groupName.toLowerCase().contains(
+                                        needle,
+                                      ) ||
+                                      item.subject.toLowerCase().contains(
+                                        needle,
+                                      );
+                                })
+                                .toList(growable: false);
+                      if (items.isEmpty) {
+                        return Text(
+                          _t(
+                            'Связи преподаватель-группа отсутствуют.',
+                            'No teaching links available.',
+                          ),
+                        );
+                      }
+                      return Column(
+                        children: [
+                          TextField(
+                            decoration: InputDecoration(
+                              labelText: _t(
+                                'Поиск по преподавателю, группе или предмету',
+                                'Search by teacher, group or subject',
+                              ),
+                              prefixIcon: const Icon(Icons.search),
+                            ),
+                            onChanged: (value) =>
+                                setState(() => _assignmentSearch = value),
+                          ),
+                          const SizedBox(height: 10),
+                          if (filtered.isEmpty)
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                _t('Совпадений нет.', 'No matches found.'),
+                              ),
+                            ),
+                          for (final item in filtered)
+                            Card(
+                              child: ListTile(
+                                title: Text(
+                                  '${item.teacherName} - ${item.groupName}',
+                                ),
+                                subtitle: Text(item.subject),
+                                trailing: PopupMenuButton<String>(
+                                  onSelected: (value) {
+                                    if (value == 'edit') {
+                                      _editAssignment(item);
+                                    } else if (value == 'delete') {
+                                      _deleteAssignment(item);
+                                    }
+                                  },
+                                  itemBuilder: (context) => [
+                                    PopupMenuItem(
+                                      value: 'edit',
+                                      child: Text(_t('Изменить', 'Edit')),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'delete',
+                                      child: Text(_t('Удалить', 'Delete')),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                if (_tab == 4)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      FutureBuilder<List<String>>(
+                        future: _journalGroupsFuture,
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return const Center(
+                              child: CircularProgressIndicator(),
+                            );
+                          }
+                          if (snapshot.hasError) {
+                            return Text(widget.errorText(snapshot.error!));
+                          }
+                          final groups = snapshot.data ?? [];
+                          if (groups.isNotEmpty &&
+                              (_journalGroup == null ||
+                                  !groups.contains(_journalGroup))) {
+                            _journalGroup = groups.first;
+                            _journalStudentsFuture = widget.client
+                                .listJournalStudents(_journalGroup!);
+                            _journalDatesFuture = widget.client
+                                .listJournalDates(_journalGroup!);
+                            _attendanceCrudFuture = widget.client
+                                .listAttendance(_journalGroup!);
+                            _gradesCrudFuture = widget.client.listGrades(
+                              _journalGroup!,
+                            );
+                          }
+                          return Card(
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: DropdownButtonFormField<String>(
+                                          initialValue: _journalGroup,
+                                          items: [
+                                            for (final g in groups)
+                                              DropdownMenuItem(
+                                                value: g,
+                                                child: Text(g),
+                                              ),
+                                          ],
+                                          onChanged: (value) {
+                                            if (value == null) return;
+                                            setState(() {
+                                              _journalGroup = value;
+                                            });
+                                            _reloadAll();
+                                          },
+                                          decoration: InputDecoration(
+                                            labelText: _t('Группа', 'Group'),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      OutlinedButton.icon(
+                                        onPressed: _reloadAll,
+                                        icon: const Icon(Icons.refresh),
+                                        label: Text(_t('Обновить', 'Refresh')),
+                                      ),
+                                      if (_journalGroup != null) ...[
+                                        const SizedBox(width: 8),
+                                        OutlinedButton.icon(
+                                          onPressed: () => _deleteJournalGroup(
+                                            _journalGroup!,
+                                          ),
+                                          icon: const Icon(
+                                            Icons.delete_outline,
+                                          ),
+                                          label: Text(
+                                            _t(
+                                              'Удалить группу',
+                                              'Delete group',
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                  const SizedBox(height: 10),
+                                  if (_journalGroup != null) ...[
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 8,
+                                      children: [
+                                        FilledButton.tonalIcon(
+                                          onPressed: _addJournalStudent,
+                                          icon: const Icon(
+                                            Icons.person_add_alt_1,
+                                          ),
+                                          label: Text(_t('Студент', 'Student')),
+                                        ),
+                                        FilledButton.tonalIcon(
+                                          onPressed: _addJournalDates,
+                                          icon: const Icon(
+                                            Icons.event_available,
+                                          ),
+                                          label: Text(_t('Даты', 'Dates')),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(
+                                          child: Card(
+                                            child: Padding(
+                                              padding: const EdgeInsets.all(12),
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    _t('Студенты', 'Students'),
+                                                    style: const TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 8),
+                                                  FutureBuilder<List<String>>(
+                                                    future:
+                                                        _journalStudentsFuture,
+                                                    builder: (context, snapshot) {
+                                                      if (snapshot
+                                                              .connectionState ==
+                                                          ConnectionState
+                                                              .waiting) {
+                                                        return const Center(
+                                                          child:
+                                                              CircularProgressIndicator(),
+                                                        );
+                                                      }
+                                                      if (snapshot.hasError) {
+                                                        return Text(
+                                                          widget.errorText(
+                                                            snapshot.error!,
+                                                          ),
+                                                        );
+                                                      }
+                                                      final students =
+                                                          snapshot.data ?? [];
+                                                      if (students.isEmpty) {
+                                                        return Text(
+                                                          _t(
+                                                            'Список студентов пуст.',
+                                                            'No students available.',
+                                                          ),
+                                                        );
+                                                      }
+                                                      return Wrap(
+                                                        spacing: 8,
+                                                        runSpacing: 8,
+                                                        children: [
+                                                          for (final student
+                                                              in students)
+                                                            Chip(
+                                                              label: Text(
+                                                                student,
+                                                              ),
+                                                              onDeleted: () =>
+                                                                  _deleteJournalStudent(
+                                                                    student,
+                                                                  ),
+                                                            ),
+                                                        ],
+                                                      );
+                                                    },
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Card(
+                                            child: Padding(
+                                              padding: const EdgeInsets.all(12),
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    _t('Даты', 'Dates'),
+                                                    style: const TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 8),
+                                                  FutureBuilder<List<DateTime>>(
+                                                    future: _journalDatesFuture,
+                                                    builder: (context, snapshot) {
+                                                      if (snapshot
+                                                              .connectionState ==
+                                                          ConnectionState
+                                                              .waiting) {
+                                                        return const Center(
+                                                          child:
+                                                              CircularProgressIndicator(),
+                                                        );
+                                                      }
+                                                      if (snapshot.hasError) {
+                                                        return Text(
+                                                          widget.errorText(
+                                                            snapshot.error!,
+                                                          ),
+                                                        );
+                                                      }
+                                                      final dates =
+                                                          snapshot.data ?? [];
+                                                      if (dates.isEmpty) {
+                                                        return Text(
+                                                          _t(
+                                                            'Даты отсутствуют.',
+                                                            'No dates available.',
+                                                          ),
+                                                        );
+                                                      }
+                                                      return Wrap(
+                                                        spacing: 8,
+                                                        runSpacing: 8,
+                                                        children: [
+                                                          for (final date
+                                                              in dates)
+                                                            Chip(
+                                                              label: Text(
+                                                                DateFormat(
+                                                                  'dd.MM.yyyy',
+                                                                ).format(date),
+                                                              ),
+                                                              onDeleted: () =>
+                                                                  _deleteJournalDate(
+                                                                    date,
+                                                                  ),
+                                                            ),
+                                                        ],
+                                                      );
+                                                    },
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                if (_tab == 5)
+                  FutureBuilder<List<NewsPost>>(
+                    future: _newsFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      if (snapshot.hasError) {
+                        return Text(widget.errorText(snapshot.error!));
+                      }
+                      final items = snapshot.data ?? [];
+                      if (items.isEmpty) {
+                        return Text(
+                          _t('Новости отсутствуют.', 'No news available.'),
+                        );
+                      }
+                      return Column(
+                        children: [
+                          for (final post in items)
+                            Card(
+                              child: ListTile(
+                                title: Text(post.title),
+                                subtitle: Text(
+                                  '${post.category} / ${DateFormat('dd.MM.yyyy HH:mm').format(post.createdAt)}',
+                                ),
+                                trailing: PopupMenuButton<String>(
+                                  onSelected: (value) {
+                                    if (value == 'edit') {
+                                      _editNews(post);
+                                    } else if (value == 'delete') {
+                                      _deleteNews(post);
+                                    }
+                                  },
+                                  itemBuilder: (context) => [
+                                    PopupMenuItem(
+                                      value: 'edit',
+                                      child: Text(_t('Изменить', 'Edit')),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'delete',
+                                      child: Text(_t('Удалить', 'Delete')),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                if (_tab == 6)
+                  FutureBuilder<List<ExamUpload>>(
+                    future: _examUploadsFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      if (snapshot.hasError) {
+                        return Text(widget.errorText(snapshot.error!));
+                      }
+                      final items = snapshot.data ?? [];
+                      if (items.isEmpty) {
+                        return Text(
+                          _t(
+                            'Загрузки экзаменационных данных отсутствуют.',
+                            'No exam uploads available.',
+                          ),
+                        );
+                      }
+                      return Column(
+                        children: [
+                          for (final item in items)
+                            Card(
+                              child: ListTile(
+                                title: Text(
+                                  '${item.groupName} - ${item.examName}',
+                                ),
+                                subtitle: Text(
+                                  '${item.filename} / ${item.rowsCount} / ${DateFormat('dd.MM.yyyy HH:mm').format(item.uploadedAt)}',
+                                ),
+                                trailing: PopupMenuButton<String>(
+                                  onSelected: (value) {
+                                    if (value == 'edit') {
+                                      _editExamUpload(item);
+                                    } else if (value == 'delete') {
+                                      _deleteExamUpload(item);
+                                    }
+                                  },
+                                  itemBuilder: (context) => [
+                                    PopupMenuItem(
+                                      value: 'edit',
+                                      child: Text(_t('Изменить', 'Edit')),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'delete',
+                                      child: Text(_t('Удалить', 'Delete')),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                if (_tab == 7) _buildDepartmentsTreeService(),
+                if (_tab == 8) _buildScheduleCrudService(),
+                if (_tab == 9) _buildAttendanceCrudService(),
+                if (_tab == 10) _buildGradesCrudService(),
+                if (_tab == 11) _buildAnalyticsCrudService(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OpenDbConsoleIntent extends Intent {
+  const _OpenDbConsoleIntent();
+}
+
+class _DbConsolePage extends StatefulWidget {
+  const _DbConsolePage({
+    required this.client,
+    required this.t,
+    required this.readError,
+  });
+
+  final ApiClient client;
+  final String Function(String ru, String en) t;
+  final String Function(Object error) readError;
+
+  @override
+  State<_DbConsolePage> createState() => _DbConsolePageState();
+}
+
+class _DbConsolePageState extends State<_DbConsolePage> {
+  List<DbTableMetaDto> _tables = const [];
+  String? _table;
+  List<Map<String, dynamic>> _rows = const [];
+  bool _loadingTables = true;
+  bool _loadingRows = false;
+  bool _loadingDemoUsers = false;
+  bool _busy = false;
+  String? _notice;
+  bool _noticeError = false;
+  int _limit = 100;
+  int _offset = 0;
+  String _demoUsersJson = '{\n  "users": []\n}';
+  final Set<String> _selectedTables = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTables();
+    _loadDemoUsers();
+  }
+
+  void _showNotice(String text, {bool isError = false}) {
+    if (!mounted) return;
+    setState(() {
+      _notice = text;
+      _noticeError = isError;
+    });
+  }
+
+  Future<void> _loadTables() async {
+    setState(() => _loadingTables = true);
+    try {
+      final tables = await widget.client.dbListTables();
+      final selected = tables.any((item) => item.name == _table)
+          ? _table
+          : (tables.isNotEmpty ? tables.first.name : null);
+      if (!mounted) return;
+      setState(() {
+        _tables = tables;
+        _table = selected;
+      });
+      if (selected != null) {
+        await _loadRows();
+      } else {
+        setState(() => _rows = const []);
+      }
+    } catch (error) {
+      _showNotice(widget.readError(error), isError: true);
+    } finally {
+      if (mounted) {
+        setState(() => _loadingTables = false);
+      }
+    }
+  }
+
+  Future<void> _loadRows() async {
+    final table = _table;
+    if (table == null || table.isEmpty) return;
+    setState(() => _loadingRows = true);
+    try {
+      final rows = await widget.client.dbListRows(
+        table: table,
+        limit: _limit,
+        offset: _offset,
+      );
+      if (!mounted) return;
+      setState(() => _rows = rows);
+    } catch (error) {
+      _showNotice(widget.readError(error), isError: true);
+    } finally {
+      if (mounted) {
+        setState(() => _loadingRows = false);
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>?> _showJsonEditor({
+    required String title,
+    Map<String, dynamic>? initial,
+  }) async {
+    final controller = TextEditingController(
+      text: const JsonEncoder.withIndent(
+        '  ',
+      ).convert(initial ?? <String, dynamic>{}),
+    );
+    String? localError;
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setStateDialog) => AlertDialog(
+          title: Text(title),
+          content: SizedBox(
+            width: 640,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: controller,
+                  minLines: 12,
+                  maxLines: 20,
+                  decoration: const InputDecoration(
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                if (localError != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    localError!,
+                    style: const TextStyle(color: Color(0xFFB91C1C)),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(widget.t('Отмена', 'Cancel')),
+            ),
+            FilledButton(
+              onPressed: () {
+                try {
+                  final parsed = jsonDecode(controller.text);
+                  if (parsed is! Map<String, dynamic>) {
+                    setStateDialog(() {
+                      localError = widget.t(
+                        'Нужен JSON-объект.',
+                        'JSON object expected.',
+                      );
+                    });
+                    return;
+                  }
+                  Navigator.of(context).pop(parsed);
+                } catch (_) {
+                  setStateDialog(() {
+                    localError = widget.t(
+                      'Некорректный JSON.',
+                      'Invalid JSON.',
+                    );
+                  });
+                }
+              },
+              child: Text(widget.t('Сохранить', 'Save')),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    return result;
+  }
+
+  Future<void> _createRow() async {
+    final table = _table;
+    if (table == null) return;
+    final row = await _showJsonEditor(
+      title: widget.t('Новая запись', 'Create row'),
+      initial: const <String, dynamic>{},
+    );
+    if (row == null) return;
+    setState(() => _busy = true);
+    try {
+      await widget.client.dbCreateRow(table: table, row: row);
+      _showNotice(widget.t('Запись создана.', 'Row created.'));
+      await _loadRows();
+    } catch (error) {
+      _showNotice(widget.readError(error), isError: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _editRow(Map<String, dynamic> row) async {
+    final table = _table;
+    if (table == null) return;
+    final meta = _tables.firstWhere(
+      (item) => item.name == table,
+      orElse: () =>
+          DbTableMetaDto(name: table, primaryKeys: const [], columns: const []),
+    );
+    if (meta.primaryKeys.isEmpty) {
+      _showNotice(
+        widget.t(
+          'Для таблицы нет PK, редактирование отключено.',
+          'No PK found for table, edit disabled.',
+        ),
+        isError: true,
+      );
+      return;
+    }
+    final pk = <String, dynamic>{};
+    for (final key in meta.primaryKeys) {
+      pk[key] = row[key];
+    }
+    final updated = await _showJsonEditor(
+      title: widget.t('Редактировать запись', 'Edit row'),
+      initial: row,
+    );
+    if (updated == null) return;
+    setState(() => _busy = true);
+    try {
+      await widget.client.dbUpdateRow(table: table, pk: pk, row: updated);
+      _showNotice(widget.t('Запись обновлена.', 'Row updated.'));
+      await _loadRows();
+    } catch (error) {
+      _showNotice(widget.readError(error), isError: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _deleteRow(Map<String, dynamic> row) async {
+    final table = _table;
+    if (table == null) return;
+    final meta = _tables.firstWhere(
+      (item) => item.name == table,
+      orElse: () =>
+          DbTableMetaDto(name: table, primaryKeys: const [], columns: const []),
+    );
+    if (meta.primaryKeys.isEmpty) {
+      _showNotice(
+        widget.t(
+          'Для таблицы нет PK, удаление отключено.',
+          'No PK found for table, delete disabled.',
+        ),
+        isError: true,
+      );
+      return;
+    }
+    final pk = <String, dynamic>{};
+    for (final key in meta.primaryKeys) {
+      pk[key] = row[key];
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(widget.t('Удалить запись?', 'Delete row?')),
+        content: Text(const JsonEncoder.withIndent('  ').convert(pk)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(widget.t('Отмена', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(widget.t('Удалить', 'Delete')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _busy = true);
+    try {
+      await widget.client.dbDeleteRows(table: table, pks: [pk]);
+      _showNotice(widget.t('Запись удалена.', 'Row deleted.'));
+      await _loadRows();
+    } catch (error) {
+      _showNotice(widget.readError(error), isError: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _clearSelectedTables({required bool all}) async {
+    final selected = all
+        ? _tables.map((item) => item.name).toList(growable: false)
+        : _selectedTables.toList(growable: false);
+    if (selected.isEmpty) {
+      _showNotice(
+        widget.t('Выберите таблицы.', 'Select tables.'),
+        isError: true,
+      );
+      return;
+    }
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(widget.t('Очистить таблицы?', 'Clear tables?')),
+        content: Text(selected.join(', ')),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(widget.t('Отмена', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(widget.t('Очистить', 'Clear')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _busy = true);
+    try {
+      await widget.client.dbClearTables(all: all, tables: selected);
+      _showNotice(widget.t('Таблицы очищены.', 'Tables cleared.'));
+      await _loadTables();
+    } catch (error) {
+      _showNotice(widget.readError(error), isError: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _loadDemoUsers() async {
+    setState(() => _loadingDemoUsers = true);
+    try {
+      final users = await widget.client.dbListDemoUsers();
+      if (!mounted) return;
+      setState(() {
+        _demoUsersJson = const JsonEncoder.withIndent(
+          '  ',
+        ).convert({'users': users});
+      });
+      _showNotice(widget.t('Демоданные загружены.', 'Demo data loaded.'));
+    } catch (error) {
+      _showNotice(widget.readError(error), isError: true);
+    } finally {
+      if (mounted) {
+        setState(() => _loadingDemoUsers = false);
+      }
+    }
+  }
+
+  Future<void> _seedDemoData() async {
+    setState(() => _busy = true);
+    try {
+      await widget.client.dbSeedDemoData();
+      _showNotice(widget.t('Демоданные созданы.', 'Demo data seeded.'));
+      await _loadTables();
+      await _loadDemoUsers();
+    } catch (error) {
+      _showNotice(widget.readError(error), isError: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _resetDemoData() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(widget.t('Сбросить БД?', 'Reset DB?')),
+        content: Text(
+          widget.t(
+            'Будут удалены все данные, кроме защищённого admin@demo.local.',
+            'All data will be removed except protected admin@demo.local.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(widget.t('Отмена', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(widget.t('Сбросить', 'Reset')),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    setState(() => _busy = true);
+    try {
+      await widget.client.dbResetDemoData();
+      _showNotice(
+        widget.t(
+          'БД сброшена и демоданные созданы.',
+          'DB reset and demo data seeded.',
+        ),
+      );
+      await _loadTables();
+      await _loadDemoUsers();
+    } catch (error) {
+      _showNotice(widget.readError(error), isError: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _editDemoUsersJson() async {
+    final parsed = jsonDecode(_demoUsersJson);
+    final initial = parsed is Map<String, dynamic>
+        ? parsed
+        : <String, dynamic>{'users': <dynamic>[]};
+    final updated = await _showJsonEditor(
+      title: widget.t('Демоданные (JSON)', 'Demo data (JSON)'),
+      initial: initial,
+    );
+    if (updated == null) return;
+    if (updated['users'] is! List) {
+      _showNotice(
+        widget.t(
+          'Поле users должно быть списком.',
+          'Field users must be a list.',
+        ),
+        isError: true,
+      );
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final users = (updated['users'] as List)
+          .whereType<Map>()
+          .map((item) => item.cast<String, dynamic>())
+          .toList(growable: false);
+      await widget.client.dbUpsertDemoUsers(users: users);
+      _demoUsersJson = const JsonEncoder.withIndent(
+        '  ',
+      ).convert({'users': users});
+      _showNotice(widget.t('Демоданные обновлены.', 'Demo data updated.'));
+      await _loadTables();
+      await _loadRows();
+    } catch (error) {
+      _showNotice(widget.readError(error), isError: true);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final columns = _rows.isEmpty
+        ? const <String>[]
+        : _rows.first.keys.toList(growable: false);
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.t('DB Консоль', 'DB Console')),
+        actions: [
+          IconButton(
+            onPressed: (_busy || _loadingTables) ? null : _loadTables,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_notice != null) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      color:
+                          (_noticeError
+                                  ? const Color(0xFFDC2626)
+                                  : const Color(0xFF16A34A))
+                              .withValues(alpha: 0.1),
+                    ),
+                    child: Text(
+                      _notice!,
+                      style: TextStyle(
+                        color: _noticeError
+                            ? const Color(0xFFB91C1C)
+                            : const Color(0xFF166534),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          widget.t('Демо-данные', 'Demo data'),
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            FilledButton.icon(
+                              onPressed: (_busy || _loadingDemoUsers)
+                                  ? null
+                                  : _seedDemoData,
+                              icon: const Icon(Icons.auto_fix_high),
+                              label: Text(
+                                widget.t('Создать/обновить', 'Seed/update'),
+                              ),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: (_busy || _loadingDemoUsers)
+                                  ? null
+                                  : _loadDemoUsers,
+                              icon: const Icon(Icons.download_outlined),
+                              label: Text(
+                                widget.t('Загрузить JSON', 'Load JSON'),
+                              ),
+                            ),
+                            FilledButton.tonalIcon(
+                              onPressed: (_busy || _loadingDemoUsers)
+                                  ? null
+                                  : _editDemoUsersJson,
+                              icon: const Icon(Icons.edit_outlined),
+                              label: Text(
+                                widget.t('Изменить JSON', 'Edit JSON'),
+                              ),
+                            ),
+                            FilledButton.icon(
+                              onPressed: (_busy || _loadingDemoUsers)
+                                  ? null
+                                  : _resetDemoData,
+                              icon: const Icon(Icons.delete_sweep_outlined),
+                              style: FilledButton.styleFrom(
+                                backgroundColor: const Color(0xFFB91C1C),
+                              ),
+                              label: Text(widget.t('Сбросить БД', 'Reset DB')),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          widget.t(
+                            'Удаление/очистка всегда сохраняет защищённый аккаунт admin@demo.local (пароль Demo1234).',
+                            'Delete/clear always preserves protected account admin@demo.local (password Demo1234).',
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-                const SizedBox(height: 8),
-                FutureBuilder<List<MakeupCaseDto>>(
-                  future: _makeupsFuture,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    if (snapshot.hasError) {
-                      return Text(widget.errorText(snapshot.error!));
-                    }
-                    final items = snapshot.data ?? [];
-                    return Column(
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        for (final item in items)
-                          Card(
-                            child: ListTile(
-                              title: Text(
-                                '${item.groupName} - ${item.studentName}',
-                              ),
-                              subtitle: Text(
-                                '${DateFormat('dd.MM.yyyy').format(item.classDate)} / ${makeupStatusLabel(item.status, widget.locale.languageCode)}',
-                              ),
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => MakeupCaseDetailScreen(
-                                      caseId: item.id,
-                                      client: widget.client,
-                                      currentUser: widget.currentUser,
-                                      locale: widget.locale,
-                                      baseUrl: widget.baseUrl,
-                                      errorText: widget.errorText,
-                                    ),
-                                  ),
-                                );
-                              },
-                              trailing: PopupMenuButton<String>(
-                                onSelected: (value) {
-                                  if (value == 'open') {
-                                    Navigator.of(context).push(
-                                      MaterialPageRoute(
-                                        builder: (_) => MakeupCaseDetailScreen(
-                                          caseId: item.id,
-                                          client: widget.client,
-                                          currentUser: widget.currentUser,
-                                          locale: widget.locale,
-                                          baseUrl: widget.baseUrl,
-                                          errorText: widget.errorText,
-                                        ),
-                                      ),
-                                    );
-                                  } else if (value == 'delete') {
-                                    _deleteMakeup(item);
-                                  }
-                                },
-                                itemBuilder: (context) => [
-                                  PopupMenuItem(
-                                    value: 'open',
-                                    child: Text(_t('Открыть', 'Open')),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'delete',
-                                    child: Text(_t('Удалить', 'Delete')),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                      ],
-                    );
-                  },
-                ),
-              ],
-            ),
-          if (_tab == 3)
-            FutureBuilder<List<TeacherGroupAssignment>>(
-              future: _assignmentsFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  return Text(widget.errorText(snapshot.error!));
-                }
-                final items = snapshot.data ?? [];
-                if (items.isEmpty) {
-                  return Text(
-                    _t('Назначения отсутствуют.', 'No assignments available.'),
-                  );
-                }
-                return Column(
-                  children: [
-                    for (final item in items)
-                      Card(
-                        child: ListTile(
-                          title: Text(
-                            '${item.teacherName} - ${item.groupName}',
-                          ),
-                          subtitle: Text(item.subject),
-                          trailing: PopupMenuButton<String>(
-                            onSelected: (value) {
-                              if (value == 'edit') {
-                                _editAssignment(item);
-                              } else if (value == 'delete') {
-                                _deleteAssignment(item);
-                              }
-                            },
-                            itemBuilder: (context) => [
-                              PopupMenuItem(
-                                value: 'edit',
-                                child: Text(_t('Изменить', 'Edit')),
-                              ),
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Text(_t('Удалить', 'Delete')),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                  ],
-                );
-              },
-            ),
-          if (_tab == 4)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                FutureBuilder<List<String>>(
-                  future: _journalGroupsFuture,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    if (snapshot.hasError) {
-                      return Text(widget.errorText(snapshot.error!));
-                    }
-                    final groups = snapshot.data ?? [];
-                    if (groups.isNotEmpty &&
-                        (_journalGroup == null ||
-                            !groups.contains(_journalGroup))) {
-                      _journalGroup = groups.first;
-                      _journalStudentsFuture = widget.client
-                          .listJournalStudents(_journalGroup!);
-                      _journalDatesFuture = widget.client.listJournalDates(
-                        _journalGroup!,
-                      );
-                      _attendanceCrudFuture = widget.client.listAttendance(
-                        _journalGroup!,
-                      );
-                      _gradesCrudFuture = widget.client.listGrades(
-                        _journalGroup!,
-                      );
-                    }
-                    return Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        Row(
                           children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: DropdownButtonFormField<String>(
-                                    initialValue: _journalGroup,
-                                    items: [
-                                      for (final g in groups)
-                                        DropdownMenuItem(
-                                          value: g,
-                                          child: Text(g),
-                                        ),
-                                    ],
-                                    onChanged: (value) {
-                                      if (value == null) return;
+                            Checkbox(
+                              value:
+                                  _selectedTables.length == _tables.length &&
+                                  _tables.isNotEmpty,
+                              onChanged: (_busy || _loadingTables)
+                                  ? null
+                                  : (value) {
                                       setState(() {
-                                        _journalGroup = value;
+                                        _selectedTables.clear();
+                                        if (value == true) {
+                                          _selectedTables.addAll(
+                                            _tables.map((item) => item.name),
+                                          );
+                                        }
                                       });
-                                      _reloadAll();
                                     },
-                                    decoration: InputDecoration(
-                                      labelText: _t('Группа', 'Group'),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                OutlinedButton.icon(
-                                  onPressed: _reloadAll,
-                                  icon: const Icon(Icons.refresh),
-                                  label: Text(_t('Обновить', 'Refresh')),
-                                ),
-                                if (_journalGroup != null) ...[
-                                  const SizedBox(width: 8),
-                                  OutlinedButton.icon(
-                                    onPressed: () =>
-                                        _deleteJournalGroup(_journalGroup!),
-                                    icon: const Icon(Icons.delete_outline),
-                                    label: Text(
-                                      _t('Удалить группу', 'Delete group'),
-                                    ),
-                                  ),
-                                ],
-                              ],
                             ),
-                            const SizedBox(height: 10),
-                            if (_journalGroup != null) ...[
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: [
-                                  FilledButton.tonalIcon(
-                                    onPressed: _addJournalStudent,
-                                    icon: const Icon(Icons.person_add_alt_1),
-                                    label: Text(_t('Студент', 'Student')),
-                                  ),
-                                  FilledButton.tonalIcon(
-                                    onPressed: _addJournalDates,
-                                    icon: const Icon(Icons.event_available),
-                                    label: Text(_t('Даты', 'Dates')),
-                                  ),
-                                ],
+                            Text(widget.t('Выбрать всё', 'Select all')),
+                            const Spacer(),
+                            FilledButton.tonal(
+                              onPressed: (_busy || _selectedTables.isEmpty)
+                                  ? null
+                                  : () => _clearSelectedTables(all: false),
+                              child: Text(
+                                widget.t(
+                                  'Очистить выбранные',
+                                  'Clear selected',
+                                ),
                               ),
-                              const SizedBox(height: 10),
-                              Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Expanded(
-                                    child: Card(
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(12),
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              _t('Студенты', 'Students'),
-                                              style: const TextStyle(
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 8),
-                                            FutureBuilder<List<String>>(
-                                              future: _journalStudentsFuture,
-                                              builder: (context, snapshot) {
-                                                if (snapshot.connectionState ==
-                                                    ConnectionState.waiting) {
-                                                  return const Center(
-                                                    child:
-                                                        CircularProgressIndicator(),
-                                                  );
-                                                }
-                                                if (snapshot.hasError) {
-                                                  return Text(
-                                                    widget.errorText(
-                                                      snapshot.error!,
-                                                    ),
-                                                  );
-                                                }
-                                                final students =
-                                                    snapshot.data ?? [];
-                                                if (students.isEmpty) {
-                                                  return Text(
-                                                    _t(
-                                                      'Список студентов пуст.',
-                                                      'No students available.',
-                                                    ),
-                                                  );
-                                                }
-                                                return Wrap(
-                                                  spacing: 8,
-                                                  runSpacing: 8,
-                                                  children: [
-                                                    for (final student
-                                                        in students)
-                                                      Chip(
-                                                        label: Text(student),
-                                                        onDeleted: () =>
-                                                            _deleteJournalStudent(
-                                                              student,
-                                                            ),
-                                                      ),
-                                                  ],
-                                                );
-                                              },
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Card(
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(12),
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              _t('Даты', 'Dates'),
-                                              style: const TextStyle(
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 8),
-                                            FutureBuilder<List<DateTime>>(
-                                              future: _journalDatesFuture,
-                                              builder: (context, snapshot) {
-                                                if (snapshot.connectionState ==
-                                                    ConnectionState.waiting) {
-                                                  return const Center(
-                                                    child:
-                                                        CircularProgressIndicator(),
-                                                  );
-                                                }
-                                                if (snapshot.hasError) {
-                                                  return Text(
-                                                    widget.errorText(
-                                                      snapshot.error!,
-                                                    ),
-                                                  );
-                                                }
-                                                final dates =
-                                                    snapshot.data ?? [];
-                                                if (dates.isEmpty) {
-                                                  return Text(
-                                                    _t(
-                                                      'Даты отсутствуют.',
-                                                      'No dates available.',
-                                                    ),
-                                                  );
-                                                }
-                                                return Wrap(
-                                                  spacing: 8,
-                                                  runSpacing: 8,
-                                                  children: [
-                                                    for (final date in dates)
-                                                      Chip(
-                                                        label: Text(
-                                                          DateFormat(
-                                                            'dd.MM.yyyy',
-                                                          ).format(date),
-                                                        ),
-                                                        onDeleted: () =>
-                                                            _deleteJournalDate(
-                                                              date,
-                                                            ),
-                                                      ),
-                                                  ],
-                                                );
-                                              },
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                            ),
+                            const SizedBox(width: 8),
+                            FilledButton(
+                              onPressed: (_busy || _tables.isEmpty)
+                                  ? null
+                                  : () => _clearSelectedTables(all: true),
+                              child: Text(
+                                widget.t('Очистить всё', 'Clear all'),
                               ),
-                            ],
+                            ),
                           ],
                         ),
-                      ),
-                    );
-                  },
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            for (final table in _tables)
+                              FilterChip(
+                                label: Text(table.name),
+                                selected: _selectedTables.contains(table.name),
+                                onSelected: (_busy || _loadingTables)
+                                    ? null
+                                    : (value) {
+                                        setState(() {
+                                          if (value) {
+                                            _selectedTables.add(table.name);
+                                          } else {
+                                            _selectedTables.remove(table.name);
+                                          }
+                                        });
+                                      },
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            initialValue: _table,
+                            decoration: InputDecoration(
+                              labelText: widget.t('Таблица', 'Table'),
+                            ),
+                            items: [
+                              for (final item in _tables)
+                                DropdownMenuItem(
+                                  value: item.name,
+                                  child: Text(item.name),
+                                ),
+                            ],
+                            onChanged: (_busy || _loadingTables)
+                                ? null
+                                : (value) async {
+                                    if (value == null) return;
+                                    setState(() => _table = value);
+                                    await _loadRows();
+                                  },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 100,
+                          child: DropdownButtonFormField<int>(
+                            initialValue: _limit,
+                            decoration: InputDecoration(
+                              labelText: widget.t('Лимит', 'Limit'),
+                            ),
+                            items: const [
+                              DropdownMenuItem(value: 25, child: Text('25')),
+                              DropdownMenuItem(value: 50, child: Text('50')),
+                              DropdownMenuItem(value: 100, child: Text('100')),
+                              DropdownMenuItem(value: 200, child: Text('200')),
+                              DropdownMenuItem(value: 500, child: Text('500')),
+                              DropdownMenuItem(
+                                value: 1000,
+                                child: Text('1000'),
+                              ),
+                            ],
+                            onChanged: (_busy || _loadingRows)
+                                ? null
+                                : (value) {
+                                    if (value == null) return;
+                                    setState(() => _limit = value);
+                                  },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 100,
+                          child: TextFormField(
+                            initialValue: '$_offset',
+                            decoration: InputDecoration(
+                              labelText: widget.t('Смещение', 'Offset'),
+                            ),
+                            keyboardType: TextInputType.number,
+                            onChanged: (value) {
+                              final parsed = int.tryParse(value);
+                              if (parsed != null && parsed >= 0) {
+                                _offset = parsed;
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton.icon(
+                          onPressed: (_busy || _table == null)
+                              ? null
+                              : _loadRows,
+                          icon: const Icon(Icons.refresh),
+                          label: Text(widget.t('Загрузить', 'Load')),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton.icon(
+                          onPressed: (_busy || _table == null)
+                              ? null
+                              : _createRow,
+                          icon: const Icon(Icons.add),
+                          label: Text(widget.t('Добавить', 'Add')),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  height: 460,
+                  child: Card(
+                    child: _loadingRows
+                        ? const Center(child: CircularProgressIndicator())
+                        : _rows.isEmpty
+                        ? Center(
+                            child: Text(widget.t('Нет данных.', 'No rows.')),
+                          )
+                        : Scrollbar(
+                            thumbVisibility: true,
+                            child: SingleChildScrollView(
+                              child: Scrollbar(
+                                thumbVisibility: true,
+                                notificationPredicate: (notification) =>
+                                    notification.metrics.axis ==
+                                    Axis.horizontal,
+                                child: SingleChildScrollView(
+                                  scrollDirection: Axis.horizontal,
+                                  child: DataTable(
+                                    columns: [
+                                      ...columns.map(
+                                        (col) => DataColumn(label: Text(col)),
+                                      ),
+                                      DataColumn(
+                                        label: Text(
+                                          widget.t('Действия', 'Actions'),
+                                        ),
+                                      ),
+                                    ],
+                                    rows: [
+                                      for (final row in _rows)
+                                        DataRow(
+                                          cells: [
+                                            ...columns.map(
+                                              (col) => DataCell(
+                                                ConstrainedBox(
+                                                  constraints:
+                                                      const BoxConstraints(
+                                                        maxWidth: 260,
+                                                      ),
+                                                  child: Text(
+                                                    row[col] == null
+                                                        ? 'null'
+                                                        : row[col].toString(),
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                            DataCell(
+                                              Row(
+                                                children: [
+                                                  IconButton(
+                                                    icon: const Icon(
+                                                      Icons.edit_outlined,
+                                                    ),
+                                                    onPressed: _busy
+                                                        ? null
+                                                        : () => _editRow(row),
+                                                  ),
+                                                  IconButton(
+                                                    icon: const Icon(
+                                                      Icons.delete_outline,
+                                                    ),
+                                                    onPressed: _busy
+                                                        ? null
+                                                        : () => _deleteRow(row),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                  ),
                 ),
               ],
             ),
-          if (_tab == 5)
-            FutureBuilder<List<NewsPost>>(
-              future: _newsFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  return Text(widget.errorText(snapshot.error!));
-                }
-                final items = snapshot.data ?? [];
-                if (items.isEmpty) {
-                  return Text(_t('Новости отсутствуют.', 'No news available.'));
-                }
-                return Column(
-                  children: [
-                    for (final post in items)
-                      Card(
-                        child: ListTile(
-                          title: Text(post.title),
-                          subtitle: Text(
-                            '${post.category} / ${DateFormat('dd.MM.yyyy HH:mm').format(post.createdAt)}',
-                          ),
-                          trailing: PopupMenuButton<String>(
-                            onSelected: (value) {
-                              if (value == 'edit') {
-                                _editNews(post);
-                              } else if (value == 'delete') {
-                                _deleteNews(post);
-                              }
-                            },
-                            itemBuilder: (context) => [
-                              PopupMenuItem(
-                                value: 'edit',
-                                child: Text(_t('Изменить', 'Edit')),
-                              ),
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Text(_t('Удалить', 'Delete')),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                  ],
-                );
-              },
-            ),
-          if (_tab == 6)
-            FutureBuilder<List<ExamUpload>>(
-              future: _examUploadsFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  return Text(widget.errorText(snapshot.error!));
-                }
-                final items = snapshot.data ?? [];
-                if (items.isEmpty) {
-                  return Text(
-                    _t(
-                      'Загрузки экзаменационных данных отсутствуют.',
-                      'No exam uploads available.',
-                    ),
-                  );
-                }
-                return Column(
-                  children: [
-                    for (final item in items)
-                      Card(
-                        child: ListTile(
-                          title: Text('${item.groupName} - ${item.examName}'),
-                          subtitle: Text(
-                            '${item.filename} / ${item.rowsCount} / ${DateFormat('dd.MM.yyyy HH:mm').format(item.uploadedAt)}',
-                          ),
-                          trailing: PopupMenuButton<String>(
-                            onSelected: (value) {
-                              if (value == 'edit') {
-                                _editExamUpload(item);
-                              } else if (value == 'delete') {
-                                _deleteExamUpload(item);
-                              }
-                            },
-                            itemBuilder: (context) => [
-                              PopupMenuItem(
-                                value: 'edit',
-                                child: Text(_t('Изменить', 'Edit')),
-                              ),
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Text(_t('Удалить', 'Delete')),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                  ],
-                );
-              },
-            ),
-          if (_tab == 7) _buildDepartmentsTreeService(),
-          if (_tab == 8) _buildScheduleCrudService(),
-          if (_tab == 9) _buildAttendanceCrudService(),
-          if (_tab == 10) _buildGradesCrudService(),
-          if (_tab == 11) _buildAnalyticsCrudService(),
-        ],
+          ),
+        ),
       ),
     );
   }

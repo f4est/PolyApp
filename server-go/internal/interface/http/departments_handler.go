@@ -29,6 +29,11 @@ type curatorGroupPayload struct {
 	GroupName string `json:"group_name"`
 }
 
+func normalizeDepartmentGroupName(value string) string {
+	group := normalizeGroupName(baseJournalGroupName(value))
+	return strings.TrimSpace(group)
+}
+
 func (h *Handler) listDepartments(c *gin.Context) {
 	if !h.requireAdminPermission(c, AdminPermDepartmentsManage) {
 		return
@@ -48,10 +53,21 @@ func (h *Handler) listDepartments(c *gin.Context) {
 	}
 	departmentGroups := map[uint][]string{}
 	for _, row := range groups {
-		departmentGroups[row.DepartmentID] = append(
-			departmentGroups[row.DepartmentID],
-			strings.TrimSpace(row.GroupName),
-		)
+		group := normalizeDepartmentGroupName(row.GroupName)
+		if group == "" {
+			continue
+		}
+		list := departmentGroups[row.DepartmentID]
+		duplicate := false
+		for _, existing := range list {
+			if strings.EqualFold(existing, group) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			departmentGroups[row.DepartmentID] = append(list, group)
+		}
 	}
 	for key := range departmentGroups {
 		sort.Strings(departmentGroups[key])
@@ -215,7 +231,24 @@ func (h *Handler) listDepartmentGroups(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load groups"})
 		return
 	}
-	c.JSON(http.StatusOK, groups)
+	out := make([]string, 0, len(groups))
+	seen := map[string]struct{}{}
+	for _, group := range groups {
+		name := normalizeDepartmentGroupName(group)
+		if name == "" {
+			continue
+		}
+		key := strings.ToLower(name)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, name)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return strings.ToLower(out[i]) < strings.ToLower(out[j])
+	})
+	c.JSON(http.StatusOK, out)
 }
 
 func (h *Handler) addDepartmentGroup(c *gin.Context) {
@@ -232,7 +265,7 @@ func (h *Handler) addDepartmentGroup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
 		return
 	}
-	group := normalizeGroupName(payload.GroupName)
+	group := normalizeDepartmentGroupName(payload.GroupName)
 	if group == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name is required"})
 		return
@@ -251,10 +284,32 @@ func (h *Handler) addDepartmentGroup(c *gin.Context) {
 		GroupName:    group,
 		CreatedAt:    time.Now().UTC(),
 	}
-	if err := h.db.WithContext(c.Request.Context()).
-		Where("group_name = ?", group).
-		Assign(map[string]any{"department_id": id}).
-		FirstOrCreate(&row).Error; err != nil {
+	if err := h.db.WithContext(c.Request.Context()).Transaction(func(tx *gorm.DB) error {
+		var matches []persistence.DBDepartmentGroup
+		if err := tx.Where("lower(group_name) = lower(?) OR lower(group_name) LIKE lower(?)", group, group+"@@t%").
+			Find(&matches).Error; err != nil {
+			return err
+		}
+		if len(matches) == 0 {
+			return tx.Create(&row).Error
+		}
+		keepID := matches[0].ID
+		if err := tx.Model(&persistence.DBDepartmentGroup{}).
+			Where("id = ?", keepID).
+			Updates(map[string]any{"department_id": id, "group_name": group}).Error; err != nil {
+			return err
+		}
+		deleteIDs := make([]uint, 0, len(matches)-1)
+		for i := 1; i < len(matches); i++ {
+			deleteIDs = append(deleteIDs, matches[i].ID)
+		}
+		if len(deleteIDs) > 0 {
+			if err := tx.Where("id IN ?", deleteIDs).Delete(&persistence.DBDepartmentGroup{}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to save group"})
 		return
 	}
@@ -274,13 +329,14 @@ func (h *Handler) removeDepartmentGroup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid department id"})
 		return
 	}
-	group := normalizeGroupName(c.Query("group_name"))
+	group := normalizeDepartmentGroupName(c.Query("group_name"))
 	if group == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name is required"})
 		return
 	}
 	if err := h.db.WithContext(c.Request.Context()).
-		Where("department_id = ? AND group_name = ?", id, group).
+		Where("department_id = ?", id).
+		Where("lower(group_name) = lower(?) OR lower(group_name) LIKE lower(?)", group, group+"@@t%").
 		Delete(&persistence.DBDepartmentGroup{}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete group"})
 		return
@@ -345,7 +401,7 @@ func (h *Handler) createCuratorGroup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid payload"})
 		return
 	}
-	group := normalizeGroupName(payload.GroupName)
+	group := normalizeDepartmentGroupName(payload.GroupName)
 	if payload.CuratorID == 0 || group == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "curator_id and group_name are required"})
 		return
