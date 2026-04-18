@@ -313,6 +313,11 @@ String humanizeError(Object error) {
         ? '\u041d\u0435\u0434\u043e\u0441\u0442\u0430\u0442\u043e\u0447\u043d\u043e \u043f\u0440\u0430\u0432 \u0434\u043b\u044f \u044d\u0442\u043e\u0433\u043e \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044f.'
         : 'Your role does not allow this action.';
   }
+  if (raw.trim().toLowerCase() == 'forbidden' ||
+      raw.contains(' Forbidden') ||
+      raw.startsWith('Forbidden')) {
+    return isRu ? 'Нет доступа' : 'No access';
+  }
   if (raw.contains('pending admin approval') ||
       raw.contains('pending approval')) {
     return isRu

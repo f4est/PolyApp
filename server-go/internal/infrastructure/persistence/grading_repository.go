@@ -418,7 +418,7 @@ func (r *GradingRepo) IsTeacherAssignedToGroup(ctx context.Context, teacherID ui
 	var count int64
 	if err := r.db.WithContext(ctx).
 		Model(&DBTeacherGroupAssignment{}).
-		Where("teacher_id = ? AND group_name = ?", teacherID, groupName).
+		Where("teacher_id = ? AND lower(btrim(group_name)) = lower(?)", teacherID, groupName).
 		Count(&count).Error; err != nil {
 		return false, err
 	}

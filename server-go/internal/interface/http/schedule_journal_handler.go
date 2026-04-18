@@ -858,12 +858,16 @@ func (h *Handler) listConfirmedStudentsForGroup(c *gin.Context) {
 	if baseGroupName == "" {
 		baseGroupName = groupName
 	}
-	// Show approved students already assigned to this group. Teachers can add
-	// them into their own scoped journal without rebinding student profile.
+	// Show approved students already assigned to this group and students
+	// currently without any group assignment. Ungrouped students can be added
+	// to this group from journal UI.
 	var students []persistence.DBUser
 	if err := h.db.WithContext(c.Request.Context()).
 		Where("role = ? AND is_approved = ?", "student", true).
-		Where("student_group = ?", baseGroupName).
+		Where(
+			"COALESCE(btrim(student_group), '') = '' OR lower(btrim(student_group)) = lower(?)",
+			baseGroupName,
+		).
 		Order("full_name asc").
 		Find(&students).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load students"})
@@ -1003,7 +1007,8 @@ func (h *Handler) ensureJournalStudentsFromApprovedGroup(
 
 	var approved []persistence.DBUser
 	if err := h.db.WithContext(ctx).
-		Where("role = ? AND is_approved = ? AND student_group = ?", "student", true, baseGroupName).
+		Where("role = ? AND is_approved = ?", "student", true).
+		Where("lower(btrim(student_group)) = lower(?)", baseGroupName).
 		Find(&approved).Error; err != nil {
 		return err
 	}
@@ -1063,7 +1068,7 @@ func (h *Handler) journalGroupNamesForBaseGroup(
 	add(baseGroup)
 	var assignments []persistence.DBTeacherGroupAssignment
 	if err := h.db.WithContext(ctx).
-		Where("group_name = ?", baseGroup).
+		Where("lower(group_name) = lower(?)", baseGroup).
 		Find(&assignments).Error; err != nil {
 		return nil, err
 	}

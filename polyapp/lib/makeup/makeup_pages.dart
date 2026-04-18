@@ -1983,6 +1983,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
       if (marker <= 0) return trimmed;
       return trimmed.substring(0, marker).trim();
     }
+
     final set = <String>{};
     for (final raw in rawValues) {
       final value = normalizeOne(raw);
@@ -5008,14 +5009,6 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                             for (final student in students)
                               (student.studentGroup ?? '').trim(),
                           }.where((item) => item.isNotEmpty).toList()..sort();
-                          if (allGroups.isEmpty) {
-                            return Text(
-                              _t(
-                                'Нет групп в отделениях. Сначала добавьте группы.',
-                                'No department groups yet. Add groups first.',
-                              ),
-                            );
-                          }
 
                           Widget groupDropZone(String groupName) {
                             final grouped = byGroup[groupName] ?? const [];
@@ -5113,6 +5106,16 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
+                              if (allGroups.isEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: Text(
+                                    _t(
+                                      'Нет групп в отделениях. Можно пока использовать зону "Без группы".',
+                                      'No department groups yet. You can still use the "Unassigned" zone.',
+                                    ),
+                                  ),
+                                ),
                               Wrap(
                                 spacing: 10,
                                 runSpacing: 10,

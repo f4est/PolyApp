@@ -79,6 +79,14 @@ String _statusCodeRefSuffix(String code) {
 }
 
 String _readErrorText(Object error) {
+  String normalize(String value) {
+    final trimmed = value.trim();
+    if (trimmed.toLowerCase() == 'forbidden') {
+      return 'Нет доступа';
+    }
+    return trimmed;
+  }
+
   if (error is ApiException) {
     final body = error.body.trim();
     if (body.isNotEmpty) {
@@ -87,22 +95,39 @@ String _readErrorText(Object error) {
         if (decoded is Map<String, dynamic>) {
           final detail = decoded['detail'];
           if (detail is String && detail.trim().isNotEmpty) {
-            return detail.trim();
+            return normalize(detail);
           }
           final message = decoded['message'];
           if (message is String && message.trim().isNotEmpty) {
-            return message.trim();
+            return normalize(message);
           }
           final err = decoded['error'];
           if (err is String && err.trim().isNotEmpty) {
-            return err.trim();
+            return normalize(err);
           }
         }
       } catch (_) {}
     }
+    if (error.statusCode == 403) {
+      return 'Нет доступа';
+    }
     return 'HTTP ${error.statusCode}';
   }
-  return error.toString().replaceFirst('Exception: ', '').trim();
+  return normalize(error.toString().replaceFirst('Exception: ', ''));
+}
+
+bool _isNoAccessErrorText(String value) {
+  final normalized = value.trim().toLowerCase();
+  if (normalized.isEmpty) {
+    return false;
+  }
+  return normalized.contains('forbidden') ||
+      normalized.contains('нет доступа') ||
+      normalized.contains('no access') ||
+      normalized.contains('access denied') ||
+      normalized.contains('group is not assigned to teacher') ||
+      normalized.contains('insufficient role') ||
+      normalized.contains('http 403');
 }
 
 class GradesPresetJournalPage extends StatefulWidget {
@@ -245,19 +270,15 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
         }
       } else if (widget.canEdit && !widget.canManageGroups) {
         try {
-          final catalog = await widget.client.listJournalGroupCatalogV2();
-          if (catalog.isNotEmpty) {
-            groups = catalog.map((item) => item.groupName).toList();
+          final baseCatalog = await widget.client
+              .listJournalBaseGroupCatalogV2();
+          if (baseCatalog.isNotEmpty) {
+            final merged = <String>{...baseCatalog, ...assignedGroups}.toList()
+              ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+            groups = merged;
             labels
               ..clear()
-              ..addEntries(
-                catalog.map(
-                  (item) => MapEntry(
-                    item.groupName,
-                    item.label.isEmpty ? item.groupName : item.label,
-                  ),
-                ),
-              );
+              ..addEntries(merged.map((item) => MapEntry(item, item)));
           }
         } catch (_) {
           groups = assignedGroups;
@@ -583,17 +604,14 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
               _ErrorCard(
                 message: _error!,
                 action:
-                    (_error!.toLowerCase().contains('forbidden') &&
+                    (_isNoAccessErrorText(_error!) &&
                         widget.canEdit &&
                         !widget.canManageGroups)
                     ? FilledButton.tonalIcon(
                         onPressed: _saving ? null : _requestGroupAccess,
                         icon: const Icon(Icons.send_rounded),
                         label: Text(
-                          _tr(
-                            'Подать заявку на преподавание',
-                            'Request group teaching access',
-                          ),
+                          _tr('Подать заявку в группу', 'Request group access'),
                         ),
                       )
                     : null,

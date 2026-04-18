@@ -82,6 +82,10 @@ func (h *Handler) createTeacherAssignment(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to create assignment"})
 		return
 	}
+	if err := h.syncStudentsForBaseGroup(c.Request.Context(), row.GroupName); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to synchronize students"})
+		return
+	}
 	items, err := h.mapTeacherAssignments(c, []persistence.DBTeacherGroupAssignment{row})
 	if err != nil || len(items) == 0 {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load assignment"})
@@ -159,6 +163,26 @@ func (h *Handler) updateTeacherAssignment(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to update assignment"})
 		return
 	}
+	baseGroups := []string{
+		baseJournalGroupName(oldGroupName),
+		baseJournalGroupName(strings.TrimSpace(row.GroupName)),
+	}
+	seenGroups := map[string]struct{}{}
+	for _, group := range baseGroups {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		key := strings.ToLower(group)
+		if _, ok := seenGroups[key]; ok {
+			continue
+		}
+		seenGroups[key] = struct{}{}
+		if err := h.syncStudentsForBaseGroup(c.Request.Context(), group); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to synchronize students"})
+			return
+		}
+	}
 	items, err := h.mapTeacherAssignments(c, []persistence.DBTeacherGroupAssignment{row})
 	if err != nil || len(items) == 0 {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load assignment"})
@@ -180,6 +204,10 @@ func (h *Handler) remapTeacherScopedJournalData(
 	if oldTeacherID == 0 || newTeacherID == 0 || oldGroupName == "" || newGroupName == "" {
 		return nil
 	}
+	if !groupsMatch(oldGroupName, newGroupName) {
+		// Do not transfer personal journal data between different base groups.
+		return nil
+	}
 	oldScoped := scopedJournalGroupNameForUser(
 		&entity.User{ID: oldTeacherID, Role: "teacher"},
 		oldGroupName,
@@ -194,13 +222,6 @@ func (h *Handler) remapTeacherScopedJournalData(
 
 	models := []any{
 		&persistence.DBJournalStudent{},
-		&persistence.DBJournalDate{},
-		&persistence.DBAttendanceRecord{},
-		&persistence.DBGradeRecord{},
-		&persistence.DBGroupPresetBinding{},
-		&persistence.DBJournalDateCellV2{},
-		&persistence.DBJournalManualCellV2{},
-		&persistence.DBJournalComputedRowV2{},
 	}
 	for _, model := range models {
 		if err := tx.WithContext(ctx).
@@ -222,6 +243,15 @@ func (h *Handler) deleteTeacherAssignment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "Invalid assignment id"})
 		return
 	}
+	var row persistence.DBTeacherGroupAssignment
+	if err := h.db.WithContext(c.Request.Context()).First(&row, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"detail": "Assignment not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete assignment"})
+		return
+	}
 	res := h.db.WithContext(c.Request.Context()).Delete(&persistence.DBTeacherGroupAssignment{}, id)
 	if res.Error != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete assignment"})
@@ -229,6 +259,10 @@ func (h *Handler) deleteTeacherAssignment(c *gin.Context) {
 	}
 	if res.RowsAffected == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"detail": "Assignment not found"})
+		return
+	}
+	if err := h.syncStudentsForBaseGroup(c.Request.Context(), row.GroupName); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to synchronize students"})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})

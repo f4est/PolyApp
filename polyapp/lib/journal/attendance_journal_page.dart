@@ -261,28 +261,6 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
 
   Future<void> _syncAllGroups() async {
     try {
-      final localGroups = _service.getAllGroups();
-      for (final group in localGroups) {
-        if (widget.canManageGroups) {
-          await widget.client.upsertJournalGroup(group.name);
-        }
-        final localStudents = _service.getStudentsByGroup(group);
-        for (final student in localStudents) {
-          await widget.client.upsertJournalStudent(
-            groupName: group.name,
-            studentName: student.name,
-          );
-        }
-        final localDates = _service.getDatesByGroup(group);
-        for (final d in localDates) {
-          await widget.client.upsertJournalDate(
-            groupName: group.name,
-            classDate: d.date,
-            lessonSlot: _lessonSlotFromLesson(d),
-          );
-        }
-      }
-
       List<String> serverGroups;
       try {
         final catalog = await widget.client.listJournalGroupCatalogV2();
@@ -293,42 +271,95 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
       } catch (_) {
         serverGroups = await widget.client.listJournalGroups();
       }
+      final allowedGroups = serverGroups
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toSet();
+      final localGroups = _service.getAllGroups();
+      for (final local in localGroups) {
+        if (!allowedGroups.contains(local.name.trim())) {
+          await _service.deleteGroup(local);
+        }
+      }
+
       for (final name in serverGroups) {
-        var group = _service.getGroupByName(name);
+        final normalizedGroupName = name.trim();
+        if (normalizedGroupName.isEmpty) {
+          continue;
+        }
+        var group = _service.getGroupByName(normalizedGroupName);
         if (group == null) {
-          group = Group(name: name);
+          group = Group(name: normalizedGroupName);
           await _service.addGroup(group);
         }
-        final serverStudents = await widget.client.listJournalStudents(name);
+        final serverStudents = await widget.client.listJournalStudents(
+          normalizedGroupName,
+        );
+        final serverStudentByKey = <String, String>{};
         for (final studentName in serverStudents) {
-          final existing = _service.getStudentByNameAndGroup(
-            studentName,
-            group.groupId,
-          );
-          if (existing == null) {
-            await _service.addStudent(
-              Student(name: studentName, groupId: group.groupId),
-            );
+          final value = studentName.trim();
+          if (value.isEmpty) {
+            continue;
+          }
+          serverStudentByKey[value.toLowerCase()] = value;
+        }
+        for (final localStudent in _service.getStudentsByGroup(group)) {
+          final key = localStudent.name.trim().toLowerCase();
+          if (key.isEmpty) {
+            continue;
+          }
+          if (!serverStudentByKey.containsKey(key)) {
+            await _service.deleteStudent(localStudent);
           }
         }
-        final serverDates = await widget.client.listJournalDateEntries(name);
-        for (final d in serverDates) {
-          final label = _formatDateLabelWithSlot(d.classDate, d.lessonSlot);
-          final dates = _service.getDatesByGroup(group);
-          final exists = dates.any(
-            (item) =>
-                _lessonDateIdentity(item) ==
-                _dateIdentity(d.classDate, d.lessonSlot),
-          );
-          if (!exists) {
-            await _service.addDate(
-              LessonDate(
-                date: d.classDate,
-                label: label,
-                groupId: group.groupId,
-              ),
-            );
+        final localStudentKeys = _service
+            .getStudentsByGroup(group)
+            .map((item) => item.name.trim().toLowerCase())
+            .where((item) => item.isNotEmpty)
+            .toSet();
+        for (final entry in serverStudentByKey.entries) {
+          if (localStudentKeys.contains(entry.key)) {
+            continue;
           }
+          await _service.addStudent(
+            Student(name: entry.value, groupId: group.groupId),
+          );
+        }
+
+        final serverDates = await widget.client.listJournalDateEntries(
+          normalizedGroupName,
+        );
+        final serverDateByKey = <String, JournalDateEntry>{};
+        for (final item in serverDates) {
+          serverDateByKey[_dateIdentity(item.classDate, item.lessonSlot)] =
+              item;
+        }
+        for (final localDate in _service.getDatesByGroup(group)) {
+          final key = _lessonDateIdentity(localDate);
+          if (!serverDateByKey.containsKey(key)) {
+            await _service.deleteDate(localDate);
+          }
+        }
+        final localDateKeys = _service
+            .getDatesByGroup(group)
+            .map(_lessonDateIdentity)
+            .toSet();
+        for (final item in serverDateByKey.values) {
+          final key = _dateIdentity(item.classDate, item.lessonSlot);
+          if (localDateKeys.contains(key)) {
+            continue;
+          }
+          final label = _formatDateLabelWithSlot(
+            item.classDate,
+            item.lessonSlot,
+          );
+          await _service.addDate(
+            LessonDate(
+              date: item.classDate,
+              label: label,
+              groupId: group.groupId,
+            ),
+          );
         }
       }
 

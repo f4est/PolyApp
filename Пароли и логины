@@ -5,6 +5,7 @@
 admin@demo.local (admin)
 student@demo.local (student)
 teacher@demo.local (teacher)
+teacher2@demo.local (teacher2)
 parent@demo.local (parent)
 handler@demo.local (request_handler)
 smm@demo.local (smm)
