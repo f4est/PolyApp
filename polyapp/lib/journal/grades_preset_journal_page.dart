@@ -557,15 +557,16 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
         color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(999),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 2,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           Icon(
             _online ? Icons.cloud_done : Icons.cloud_off,
             size: 16,
             color: color,
           ),
-          const SizedBox(width: 6),
           Text(
             '$label$subtitle',
             style: TextStyle(color: color, fontWeight: FontWeight.w600),
@@ -743,11 +744,28 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
                   else
                     DropdownButtonFormField<String>(
                       initialValue: selected,
+                      isExpanded: true,
                       items: filtered
                           .map(
                             (item) => DropdownMenuItem(
                               value: item,
-                              child: Text(_groupLabels[item] ?? item),
+                              child: Text(
+                                _groupLabels[item] ?? item,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      selectedItemBuilder: (context) => filtered
+                          .map(
+                            (item) => Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                _groupLabels[item] ?? item,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           )
                           .toList(),
@@ -795,6 +813,7 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
             child: DropdownButtonFormField<String>(
               key: ValueKey(_groupName),
               initialValue: _groupName,
+              isExpanded: true,
               decoration: InputDecoration(
                 border: OutlineInputBorder(),
                 labelText: _tr('Группа', 'Group'),
@@ -804,7 +823,23 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
                   .map(
                     (item) => DropdownMenuItem(
                       value: item,
-                      child: Text(_groupLabels[item] ?? item),
+                      child: Text(
+                        _groupLabels[item] ?? item,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(),
+              selectedItemBuilder: (context) => _groups
+                  .map(
+                    (item) => Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _groupLabels[item] ?? item,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   )
                   .toList(),
@@ -1285,11 +1320,28 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
                   else
                     DropdownButtonFormField<String>(
                       initialValue: selected,
+                      isExpanded: true,
                       items: filtered
                           .map(
                             (item) => DropdownMenuItem(
                               value: item,
-                              child: Text(item),
+                              child: Text(
+                                item,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      selectedItemBuilder: (context) => filtered
+                          .map(
+                            (item) => Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                item,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           )
                           .toList(),
@@ -2177,6 +2229,7 @@ class _PresetLibraryPageState extends State<PresetLibraryPage> {
                   child: DropdownButtonFormField<String>(
                     key: ValueKey('library_visibility_$_visibility'),
                     initialValue: _visibility,
+                    isExpanded: true,
                     decoration: InputDecoration(
                       border: const OutlineInputBorder(),
                       labelText: _tr('Видимость', 'Visibility'),
@@ -3231,6 +3284,7 @@ class _PresetEditorPageState extends State<PresetEditorPage> {
           DropdownButtonFormField<String>(
             key: ValueKey('editor_visibility_$_visibility'),
             initialValue: _visibility,
+            isExpanded: true,
             decoration: InputDecoration(
               border: const OutlineInputBorder(),
               labelText: _tr('Видимость', 'Visibility'),

@@ -5140,13 +5140,30 @@ class _AnalyticsPageState extends State<AnalyticsPage> {
           children: [
             DropdownButtonFormField<int>(
               initialValue: selectedId,
+              isExpanded: true,
               items: [
                 for (final teacher in _teachers)
                   DropdownMenuItem(
                     value: teacher.id,
-                    child: Text(teacher.fullName),
+                    child: Text(
+                      teacher.fullName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
               ],
+              selectedItemBuilder: (context) => _teachers
+                  .map(
+                    (teacher) => Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        teacher.fullName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(),
               onChanged: (value) => selectedId = value,
               decoration: const InputDecoration(
                 labelText: 'Teacher',
@@ -5855,11 +5872,28 @@ class _RequestComposePageState extends State<RequestComposePage> {
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
                       initialValue: selected,
+                      isExpanded: true,
                       items: sourceGroups
                           .map(
                             (group) => DropdownMenuItem(
                               value: group,
-                              child: Text(group),
+                              child: Text(
+                                group,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      selectedItemBuilder: (context) => sourceGroups
+                          .map(
+                            (group) => Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                group,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           )
                           .toList(),
@@ -6032,6 +6066,7 @@ class _RequestDetailPageState extends State<RequestDetailPage> {
             if (_isTeachingGroupRequest(_ticket.requestType))
               DropdownButtonFormField<String>(
                 initialValue: _status == 'rejected' ? 'rejected' : 'approved',
+                isExpanded: true,
                 items: const [
                   DropdownMenuItem(value: 'approved', child: Text('Принять')),
                   DropdownMenuItem(value: 'rejected', child: Text('Отклонить')),
@@ -6044,10 +6079,30 @@ class _RequestDetailPageState extends State<RequestDetailPage> {
                 initialValue: kRequestStatuses.contains(_status)
                     ? _status
                     : kRequestStatuses.first,
+                isExpanded: true,
                 items: [
                   for (final status in kRequestStatuses)
-                    DropdownMenuItem(value: status, child: Text(status)),
+                    DropdownMenuItem(
+                      value: status,
+                      child: Text(
+                        status,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                 ],
+                selectedItemBuilder: (context) => kRequestStatuses
+                    .map(
+                      (status) => Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          status,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                    .toList(),
                 onChanged: (value) => setState(() => _status = value),
                 decoration: const InputDecoration(labelText: 'Status'),
               ),
@@ -6761,6 +6816,7 @@ class _ProfilePageState extends State<ProfilePage> {
           const SizedBox(height: 8),
           DropdownButtonFormField<String>(
             initialValue: AppStateScope.of(context).locale.languageCode,
+            isExpanded: true,
             decoration: InputDecoration(
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
@@ -10464,13 +10520,30 @@ class _NewsComposePageState extends State<NewsComposePage> {
           const SizedBox(height: 12),
           DropdownButtonFormField<String>(
             initialValue: _category,
+            isExpanded: true,
             items: [
               for (final item in kNewsCategories)
                 DropdownMenuItem(
                   value: item['id'],
-                  child: Text(item['label'] ?? ''),
+                  child: Text(
+                    item['label'] ?? '',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
             ],
+            selectedItemBuilder: (context) => kNewsCategories
+                .map(
+                  (item) => Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      item['label'] ?? '',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                )
+                .toList(),
             onChanged: (value) {
               if (value != null) setState(() => _category = value);
             },

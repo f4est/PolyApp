@@ -343,10 +343,30 @@ class _MakeupWorkspacePageState extends State<MakeupWorkspacePage> {
                       width: 220,
                       child: DropdownButtonFormField<String>(
                         initialValue: _group,
+                        isExpanded: true,
                         items: [
                           for (final group in _groups)
-                            DropdownMenuItem(value: group, child: Text(group)),
+                            DropdownMenuItem(
+                              value: group,
+                              child: Text(
+                                group,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
                         ],
+                        selectedItemBuilder: (context) => _groups
+                            .map(
+                              (group) => Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  group,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            )
+                            .toList(),
                         onChanged: (value) async {
                           if (value == null) return;
                           setState(() => _group = value);
@@ -380,13 +400,30 @@ class _MakeupWorkspacePageState extends State<MakeupWorkspacePage> {
                       width: 260,
                       child: DropdownButtonFormField<int>(
                         initialValue: _studentId,
+                        isExpanded: true,
                         items: [
                           for (final student in _students)
                             DropdownMenuItem(
                               value: student.id,
-                              child: Text(student.fullName),
+                              child: Text(
+                                student.fullName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                         ],
+                        selectedItemBuilder: (context) => _students
+                            .map(
+                              (student) => Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  student.fullName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            )
+                            .toList(),
                         onChanged: (value) =>
                             setState(() => _studentId = value),
                         decoration: InputDecoration(
@@ -453,6 +490,7 @@ class _MakeupWorkspacePageState extends State<MakeupWorkspacePage> {
                     width: 240,
                     child: DropdownButtonFormField<String>(
                       initialValue: _status,
+                      isExpanded: true,
                       items: [
                         DropdownMenuItem(
                           value: 'all',
@@ -466,6 +504,8 @@ class _MakeupWorkspacePageState extends State<MakeupWorkspacePage> {
                                 status,
                                 widget.locale.languageCode,
                               ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                       ],
@@ -1490,6 +1530,7 @@ class _MakeupCaseDetailScreenState extends State<MakeupCaseDetailScreen> {
                               const SizedBox(height: 8),
                               DropdownButtonFormField<String>(
                                 initialValue: _status,
+                                isExpanded: true,
                                 items: [
                                   for (final status in kMakeupStatuses)
                                     DropdownMenuItem(
@@ -1499,6 +1540,8 @@ class _MakeupCaseDetailScreenState extends State<MakeupCaseDetailScreen> {
                                           status,
                                           widget.locale.languageCode,
                                         ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
                                 ],
@@ -2966,10 +3009,22 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
         title: Text(_t('Статус заявки', 'Request status')),
         content: DropdownButtonFormField<String>(
           initialValue: value,
+          isExpanded: true,
           items: [
             for (final s in statuses)
-              DropdownMenuItem(value: s, child: Text(s)),
+              DropdownMenuItem(
+                value: s,
+                child: Text(s, maxLines: 1, overflow: TextOverflow.ellipsis),
+              ),
           ],
+          selectedItemBuilder: (context) => statuses
+              .map(
+                (s) => Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(s, maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+              )
+              .toList(),
           onChanged: (next) => value = next ?? value,
         ),
         actions: [
@@ -3072,10 +3127,30 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
             children: [
               DropdownButtonFormField<int>(
                 initialValue: teacherId,
+                isExpanded: true,
                 items: [
                   for (final t in teachers)
-                    DropdownMenuItem(value: t.id, child: Text(t.fullName)),
+                    DropdownMenuItem(
+                      value: t.id,
+                      child: Text(
+                        t.fullName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                 ],
+                selectedItemBuilder: (context) => teachers
+                    .map(
+                      (t) => Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          t.fullName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                    .toList(),
                 onChanged: (value) => teacherId = value ?? teacherId,
                 decoration: InputDecoration(
                   labelText: _t('Преподаватель', 'Teacher'),
@@ -3084,10 +3159,30 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
                 initialValue: groupName,
+                isExpanded: true,
                 items: [
                   for (final group in groups)
-                    DropdownMenuItem(value: group, child: Text(group)),
+                    DropdownMenuItem(
+                      value: group,
+                      child: Text(
+                        group,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                 ],
+                selectedItemBuilder: (context) => groups
+                    .map(
+                      (group) => Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          group,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                    .toList(),
                 onChanged: (value) => groupName = value ?? groupName,
                 decoration: InputDecoration(labelText: _t('Группа', 'Group')),
               ),
@@ -3146,10 +3241,30 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
             children: [
               DropdownButtonFormField<int>(
                 initialValue: teacherId,
+                isExpanded: true,
                 items: [
                   for (final t in teachers)
-                    DropdownMenuItem(value: t.id, child: Text(t.fullName)),
+                    DropdownMenuItem(
+                      value: t.id,
+                      child: Text(
+                        t.fullName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                 ],
+                selectedItemBuilder: (context) => teachers
+                    .map(
+                      (t) => Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          t.fullName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
+                    .toList(),
                 onChanged: (value) => teacherId = value ?? teacherId,
                 decoration: InputDecoration(
                   labelText: _t('Преподаватель', 'Teacher'),
@@ -3164,10 +3279,30 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
               else
                 DropdownButtonFormField<String>(
                   initialValue: groupName,
+                  isExpanded: true,
                   items: [
                     for (final group in groups)
-                      DropdownMenuItem(value: group, child: Text(group)),
+                      DropdownMenuItem(
+                        value: group,
+                        child: Text(
+                          group,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                   ],
+                  selectedItemBuilder: (context) => groups
+                      .map(
+                        (group) => Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            group,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(),
                   onChanged: (value) => groupName = value ?? groupName,
                   decoration: InputDecoration(labelText: _t('Группа', 'Group')),
                 ),
@@ -3641,6 +3776,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                 const SizedBox(height: 8),
                 DropdownButtonFormField<int?>(
                   initialValue: headUserId,
+                  isExpanded: true,
                   items: [
                     DropdownMenuItem<int?>(
                       value: null,
@@ -3649,8 +3785,32 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                     for (final teacher in teachers)
                       DropdownMenuItem<int?>(
                         value: teacher.id,
-                        child: Text(teacher.fullName),
+                        child: Text(
+                          teacher.fullName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
+                  ],
+                  selectedItemBuilder: (context) => [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _t('Р‘РµР· Р·Р°РІРµРґСѓСЋС‰РµР№', 'No head'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    ...teachers.map(
+                      (teacher) => Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          teacher.fullName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
                   ],
                   onChanged: (value) =>
                       setDialogState(() => headUserId = value),
@@ -3715,6 +3875,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                 const SizedBox(height: 8),
                 DropdownButtonFormField<int?>(
                   initialValue: headUserId,
+                  isExpanded: true,
                   items: [
                     DropdownMenuItem<int?>(
                       value: null,
@@ -3723,8 +3884,32 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                     for (final teacher in teachers)
                       DropdownMenuItem<int?>(
                         value: teacher.id,
-                        child: Text(teacher.fullName),
+                        child: Text(
+                          teacher.fullName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
+                  ],
+                  selectedItemBuilder: (context) => [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _t('Р‘РµР· Р·Р°РІРµРґСѓСЋС‰РµР№', 'No head'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    ...teachers.map(
+                      (teacher) => Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          teacher.fullName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
                   ],
                   onChanged: (value) =>
                       setDialogState(() => headUserId = value),
@@ -3799,10 +3984,30 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                 if (groups.isNotEmpty)
                   DropdownButtonFormField<String>(
                     initialValue: groupName,
+                    isExpanded: true,
                     items: [
                       for (final group in groups)
-                        DropdownMenuItem(value: group, child: Text(group)),
+                        DropdownMenuItem(
+                          value: group,
+                          child: Text(
+                            group,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                     ],
+                    selectedItemBuilder: (context) => groups
+                        .map(
+                          (group) => Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              group,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(),
                     onChanged: (value) =>
                         setDialogState(() => groupName = value ?? groupName),
                     decoration: InputDecoration(
@@ -3880,13 +4085,30 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
               children: [
                 DropdownButtonFormField<int>(
                   initialValue: curatorId,
+                  isExpanded: true,
                   items: [
                     for (final teacher in teachers)
                       DropdownMenuItem(
                         value: teacher.id,
-                        child: Text(teacher.fullName),
+                        child: Text(
+                          teacher.fullName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                   ],
+                  selectedItemBuilder: (context) => teachers
+                      .map(
+                        (teacher) => Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            teacher.fullName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(),
                   onChanged: (value) =>
                       setDialogState(() => curatorId = value ?? curatorId),
                   decoration: InputDecoration(
@@ -3897,10 +4119,30 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                 if (groups.isNotEmpty)
                   DropdownButtonFormField<String>(
                     initialValue: groupName,
+                    isExpanded: true,
                     items: [
                       for (final group in groups)
-                        DropdownMenuItem(value: group, child: Text(group)),
+                        DropdownMenuItem(
+                          value: group,
+                          child: Text(
+                            group,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                     ],
+                    selectedItemBuilder: (context) => groups
+                        .map(
+                          (group) => Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              group,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(),
                     onChanged: (value) =>
                         setDialogState(() => groupName = value ?? groupName),
                     decoration: InputDecoration(
@@ -4092,10 +4334,30 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
               children: [
                 DropdownButtonFormField<String>(
                   initialValue: studentName,
+                  isExpanded: true,
                   items: [
                     for (final student in students)
-                      DropdownMenuItem(value: student, child: Text(student)),
+                      DropdownMenuItem(
+                        value: student,
+                        child: Text(
+                          student,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                   ],
+                  selectedItemBuilder: (context) => students
+                      .map(
+                        (student) => Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            student,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(),
                   onChanged: (value) =>
                       setDialogState(() => studentName = value ?? studentName),
                   decoration: InputDecoration(
@@ -4191,10 +4453,30 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
               children: [
                 DropdownButtonFormField<String>(
                   initialValue: studentName,
+                  isExpanded: true,
                   items: [
                     for (final student in students)
-                      DropdownMenuItem(value: student, child: Text(student)),
+                      DropdownMenuItem(
+                        value: student,
+                        child: Text(
+                          student,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                   ],
+                  selectedItemBuilder: (context) => students
+                      .map(
+                        (student) => Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            student,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(),
                   onChanged: (value) =>
                       setDialogState(() => studentName = value ?? studentName),
                   decoration: InputDecoration(
@@ -4338,10 +4620,30 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                   width: 260,
                   child: DropdownButtonFormField<String>(
                     initialValue: value,
+                    isExpanded: true,
                     items: [
                       for (final group in groups)
-                        DropdownMenuItem(value: group, child: Text(group)),
+                        DropdownMenuItem(
+                          value: group,
+                          child: Text(
+                            group,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
                     ],
+                    selectedItemBuilder: (context) => groups
+                        .map(
+                          (group) => Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              group,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(),
                     onChanged: (next) {
                       if (next == null) return;
                       setState(() => _setJournalGroupSelection(next));
@@ -5469,6 +5771,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                             width: 220,
                             child: DropdownButtonFormField<String>(
                               initialValue: _userRole,
+                              isExpanded: true,
                               items: [
                                 for (final value in const [
                                   'all',
@@ -5498,6 +5801,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                             width: 220,
                             child: DropdownButtonFormField<String>(
                               initialValue: _userApproval,
+                              isExpanded: true,
                               items: [
                                 DropdownMenuItem(
                                   value: 'all',
@@ -5526,6 +5830,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                             width: 240,
                             child: DropdownButtonFormField<String>(
                               initialValue: _userSort,
+                              isExpanded: true,
                               items: [
                                 DropdownMenuItem(
                                   value: 'id_asc',
@@ -5761,6 +6066,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                         width: 240,
                         child: DropdownButtonFormField<String>(
                           initialValue: _makeupStatus,
+                          isExpanded: true,
                           items: [
                             DropdownMenuItem(
                               value: 'all',
@@ -5774,6 +6080,8 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                                     status,
                                     widget.locale.languageCode,
                                   ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                 ),
                               ),
                           ],
@@ -5997,13 +6305,34 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                                       Expanded(
                                         child: DropdownButtonFormField<String>(
                                           initialValue: _journalGroup,
+                                          isExpanded: true,
                                           items: [
                                             for (final g in groups)
                                               DropdownMenuItem(
                                                 value: g,
-                                                child: Text(g),
+                                                child: Text(
+                                                  g,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
                                               ),
                                           ],
+                                          selectedItemBuilder: (context) =>
+                                              groups
+                                                  .map(
+                                                    (g) => Align(
+                                                      alignment:
+                                                          Alignment.centerLeft,
+                                                      child: Text(
+                                                        g,
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                      ),
+                                                    ),
+                                                  )
+                                                  .toList(),
                                           onChanged: (value) {
                                             if (value == null) return;
                                             setState(() {
@@ -6977,6 +7306,7 @@ class _DbConsolePageState extends State<_DbConsolePage> {
                         Expanded(
                           child: DropdownButtonFormField<String>(
                             initialValue: _table,
+                            isExpanded: true,
                             decoration: InputDecoration(
                               labelText: widget.t('Таблица', 'Table'),
                             ),
@@ -6984,9 +7314,25 @@ class _DbConsolePageState extends State<_DbConsolePage> {
                               for (final item in _tables)
                                 DropdownMenuItem(
                                   value: item.name,
-                                  child: Text(item.name),
+                                  child: Text(
+                                    item.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
                             ],
+                            selectedItemBuilder: (context) => _tables
+                                .map(
+                                  (item) => Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      item.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                )
+                                .toList(),
                             onChanged: (_busy || _loadingTables)
                                 ? null
                                 : (value) async {

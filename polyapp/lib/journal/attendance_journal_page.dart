@@ -552,11 +552,28 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
                   else
                     DropdownButtonFormField<String>(
                       initialValue: selected,
+                      isExpanded: true,
                       items: filtered
                           .map(
                             (item) => DropdownMenuItem(
                               value: item,
-                              child: Text(item),
+                              child: Text(
+                                item,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      selectedItemBuilder: (context) => filtered
+                          .map(
+                            (item) => Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                item,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           )
                           .toList(),
@@ -873,15 +890,16 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
         color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(999),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 2,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           Icon(
             _online ? Icons.cloud_done : Icons.cloud_off,
             size: 16,
             color: color,
           ),
-          const SizedBox(width: 6),
           Text(
             '$label$subtitle',
             style: TextStyle(color: color, fontWeight: FontWeight.w600),
@@ -1022,9 +1040,25 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
                 for (final g in _groups)
                   DropdownMenuItem(
                     value: g,
-                    child: Text(_groupLabels[g.name] ?? g.name),
+                    child: Text(
+                      _groupLabels[g.name] ?? g.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
               ],
+              selectedItemBuilder: (context) => _groups
+                  .map(
+                    (g) => Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _groupLabels[g.name] ?? g.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  )
+                  .toList(),
               onChanged: (value) async {
                 if (value == null) return;
                 setState(() => _group = value);
@@ -1123,11 +1157,28 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
                         (item) => item.groupId == selected.groupId,
                         orElse: () => filtered.first,
                       ),
+                      isExpanded: true,
                       items: filtered
                           .map(
                             (item) => DropdownMenuItem(
                               value: item,
-                              child: Text(_groupLabels[item.name] ?? item.name),
+                              child: Text(
+                                _groupLabels[item.name] ?? item.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      selectedItemBuilder: (context) => filtered
+                          .map(
+                            (item) => Align(
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                _groupLabels[item.name] ?? item.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           )
                           .toList(),

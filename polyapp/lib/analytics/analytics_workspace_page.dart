@@ -1001,6 +1001,7 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                           width: 250,
                           child: DropdownButtonFormField<String>(
                             initialValue: _selectedGroup,
+                            isExpanded: true,
                             decoration: InputDecoration(
                               labelText: _t('Группа', 'Group'),
                               border: OutlineInputBorder(
@@ -1011,9 +1012,25 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                               for (final group in groups)
                                 DropdownMenuItem(
                                   value: group,
-                                  child: Text(group),
+                                  child: Text(
+                                    group,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
                             ],
+                            selectedItemBuilder: (context) => groups
+                                .map(
+                                  (group) => Align(
+                                    alignment: Alignment.centerLeft,
+                                    child: Text(
+                                      group,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                )
+                                .toList(),
                             onChanged: (value) =>
                                 setState(() => _selectedGroup = value),
                           ),
