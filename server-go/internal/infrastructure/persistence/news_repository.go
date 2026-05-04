@@ -288,10 +288,14 @@ func (r *NewsRepo) AddMedia(ctx context.Context, postID uint, media []entity.New
 	}
 	models := make([]DBNewsMedia, 0, len(media))
 	for _, item := range media {
+		storedName := strings.TrimSpace(item.URL)
+		if strings.HasPrefix(storedName, "/media/news/") {
+			storedName = strings.TrimPrefix(storedName, "/media/news/")
+		}
 		models = append(models, DBNewsMedia{
 			PostID:       postID,
 			OriginalName: item.OriginalName,
-			StoredName:   strings.TrimPrefix(item.URL, "/media/news/"),
+			StoredName:   storedName,
 			MediaType:    item.MediaType,
 			MimeType:     item.MimeType,
 			Size:         item.Size,
@@ -359,9 +363,13 @@ func (r *NewsRepo) mapPosts(ctx context.Context, posts []DBNewsPost, currentUser
 	}
 	mediaByPost := map[uint][]entity.NewsMedia{}
 	for _, row := range mediaRows {
+		url := fmt.Sprintf("/media/news/%s", row.StoredName)
+		if strings.HasPrefix(row.StoredName, "http://") || strings.HasPrefix(row.StoredName, "https://") {
+			url = row.StoredName
+		}
 		mediaByPost[row.PostID] = append(mediaByPost[row.PostID], entity.NewsMedia{
 			ID:           row.ID,
-			URL:          fmt.Sprintf("/media/news/%s", row.StoredName),
+			URL:          url,
 			MediaType:    row.MediaType,
 			OriginalName: row.OriginalName,
 			MimeType:     row.MimeType,

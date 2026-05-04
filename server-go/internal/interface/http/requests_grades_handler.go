@@ -143,16 +143,25 @@ func (h *Handler) listRequests(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"detail": "Insufficient role"})
 		return
 	}
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"detail": "limit should be a positive number"})
+			return
+		}
+		if value > 500 {
+			value = 500
+		}
+		if value > 0 {
+			query = query.Limit(value)
+		}
+	}
 	var tickets []persistence.DBRequestTicket
 	if err := query.Order("created_at desc").Find(&tickets).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load requests"})
 		return
 	}
-	out := make([]gin.H, 0, len(tickets))
-	for _, ticket := range tickets {
-		out = append(out, h.mapRequestTicket(c, ticket))
-	}
-	c.JSON(http.StatusOK, out)
+	c.JSON(http.StatusOK, h.mapRequestTickets(c, tickets))
 }
 
 func (h *Handler) deleteRequest(c *gin.Context) {
@@ -476,7 +485,7 @@ func (h *Handler) listAttendance(c *gin.Context) {
 	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBAttendanceRecord{})
 	if group != "" {
-		query = applyJournalGroupQueryFilter(query, group)
+		query = applyJournalGroupReadQueryFilter(query, group)
 	}
 	if user.Role == "teacher" {
 		scope, err := h.groupScopeForUser(c.Request.Context(), user)
@@ -489,8 +498,11 @@ func (h *Handler) listAttendance(c *gin.Context) {
 			return
 		}
 		allowed := scope.asList()
-		allowedScoped := make([]string, 0, len(allowed))
+		allowedScoped := make([]string, 0, len(allowed)*2)
 		for _, item := range allowed {
+			if strings.TrimSpace(item) != "" {
+				allowedScoped = append(allowedScoped, item)
+			}
 			scoped := scopedJournalGroupNameForUser(user, item)
 			if strings.TrimSpace(scoped) != "" {
 				allowedScoped = append(allowedScoped, scoped)
@@ -516,7 +528,7 @@ func (h *Handler) listAttendance(c *gin.Context) {
 		}
 		query = query.Where("student_name = ?", strings.TrimSpace(child.FullName))
 		if strings.TrimSpace(child.StudentGroup) != "" {
-			query = applyJournalGroupQueryFilter(query, strings.TrimSpace(child.StudentGroup))
+			query = applyJournalGroupReadQueryFilter(query, strings.TrimSpace(child.StudentGroup))
 		}
 	}
 	var rows []persistence.DBAttendanceRecord
@@ -524,12 +536,7 @@ func (h *Handler) listAttendance(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load attendance"})
 		return
 	}
-	out := make([]gin.H, 0, len(rows))
-	for _, row := range rows {
-		row.GroupName = baseJournalGroupName(row.GroupName)
-		out = append(out, mapAttendance(row))
-	}
-	c.JSON(http.StatusOK, out)
+	c.JSON(http.StatusOK, mapAttendanceRows(rows))
 }
 
 func (h *Handler) deleteAttendance(c *gin.Context) {
@@ -595,7 +602,7 @@ func (h *Handler) attendanceSummary(c *gin.Context) {
 	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBAttendanceRecord{})
 	if group != "" {
-		query = applyJournalGroupQueryFilter(query, group)
+		query = applyJournalGroupReadQueryFilter(query, group)
 	}
 	if user.Role == "teacher" {
 		scope, err := h.groupScopeForUser(c.Request.Context(), user)
@@ -608,8 +615,11 @@ func (h *Handler) attendanceSummary(c *gin.Context) {
 			return
 		}
 		allowed := scope.asList()
-		allowedScoped := make([]string, 0, len(allowed))
+		allowedScoped := make([]string, 0, len(allowed)*2)
 		for _, item := range allowed {
+			if strings.TrimSpace(item) != "" {
+				allowedScoped = append(allowedScoped, item)
+			}
 			scoped := scopedJournalGroupNameForUser(user, item)
 			if strings.TrimSpace(scoped) != "" {
 				allowedScoped = append(allowedScoped, scoped)
@@ -760,7 +770,7 @@ func (h *Handler) listGrades(c *gin.Context) {
 	}
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBGradeRecord{})
 	if group != "" {
-		query = applyJournalGroupQueryFilter(query, group)
+		query = applyJournalGroupReadQueryFilter(query, group)
 	}
 	if user.Role == "teacher" {
 		scope, err := h.groupScopeForUser(c.Request.Context(), user)
@@ -773,8 +783,11 @@ func (h *Handler) listGrades(c *gin.Context) {
 			return
 		}
 		allowed := scope.asList()
-		allowedScoped := make([]string, 0, len(allowed))
+		allowedScoped := make([]string, 0, len(allowed)*2)
 		for _, item := range allowed {
+			if strings.TrimSpace(item) != "" {
+				allowedScoped = append(allowedScoped, item)
+			}
 			scoped := scopedJournalGroupNameForUser(user, item)
 			if strings.TrimSpace(scoped) != "" {
 				allowedScoped = append(allowedScoped, scoped)
@@ -800,7 +813,7 @@ func (h *Handler) listGrades(c *gin.Context) {
 		}
 		query = query.Where("student_name = ?", strings.TrimSpace(child.FullName))
 		if strings.TrimSpace(child.StudentGroup) != "" {
-			query = applyJournalGroupQueryFilter(query, strings.TrimSpace(child.StudentGroup))
+			query = applyJournalGroupReadQueryFilter(query, strings.TrimSpace(child.StudentGroup))
 		}
 	}
 	var rows []persistence.DBGradeRecord
@@ -808,12 +821,7 @@ func (h *Handler) listGrades(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load grades"})
 		return
 	}
-	out := make([]gin.H, 0, len(rows))
-	for _, row := range rows {
-		row.GroupName = baseJournalGroupName(row.GroupName)
-		out = append(out, mapGrade(row))
-	}
-	c.JSON(http.StatusOK, out)
+	c.JSON(http.StatusOK, mapGradeRows(rows))
 }
 
 func (h *Handler) deleteGrade(c *gin.Context) {
@@ -992,12 +1000,7 @@ func (h *Handler) analyticsAttendance(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load analytics"})
 		return
 	}
-	out := make([]gin.H, 0, len(rows))
-	for _, row := range rows {
-		row.GroupName = baseJournalGroupName(row.GroupName)
-		out = append(out, mapAttendance(row))
-	}
-	c.JSON(http.StatusOK, out)
+	c.JSON(http.StatusOK, mapAttendanceRows(rows))
 }
 
 func (h *Handler) analyticsGrades(c *gin.Context) {
@@ -1016,8 +1019,8 @@ func (h *Handler) analyticsGrades(c *gin.Context) {
 	query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBGradeRecord{})
 	v2Query := h.db.WithContext(c.Request.Context()).Model(&persistence.DBJournalDateCellV2{})
 	if group != "" {
-		query = applyJournalGroupQueryFilter(query, group)
-		v2Query = applyJournalGroupQueryFilter(v2Query, group)
+		query = applyJournalGroupReadQueryFilter(query, group)
+		v2Query = applyJournalGroupReadQueryFilter(v2Query, group)
 	}
 	if user.Role == "teacher" {
 		scope, err := h.groupScopeForUser(c.Request.Context(), user)
@@ -1030,8 +1033,11 @@ func (h *Handler) analyticsGrades(c *gin.Context) {
 			return
 		}
 		allowed := scope.asList()
-		allowedScoped := make([]string, 0, len(allowed))
+		allowedScoped := make([]string, 0, len(allowed)*2)
 		for _, item := range allowed {
+			if strings.TrimSpace(item) != "" {
+				allowedScoped = append(allowedScoped, item)
+			}
 			scoped := scopedJournalGroupNameForUser(user, item)
 			if strings.TrimSpace(scoped) != "" {
 				allowedScoped = append(allowedScoped, scoped)
@@ -1103,10 +1109,40 @@ func (h *Handler) analyticsGrades(c *gin.Context) {
 }
 
 func (h *Handler) mapRequestTicket(c *gin.Context, ticket persistence.DBRequestTicket) gin.H {
+	var creator persistence.DBUser
+	_ = h.db.WithContext(c.Request.Context()).First(&creator, ticket.StudentID).Error
+	return h.mapRequestTicketWithCreator(ticket, creator)
+}
+
+func (h *Handler) mapRequestTickets(c *gin.Context, tickets []persistence.DBRequestTicket) []gin.H {
+	ids := map[uint]struct{}{}
+	for _, ticket := range tickets {
+		if ticket.StudentID > 0 {
+			ids[ticket.StudentID] = struct{}{}
+		}
+	}
+	creators := map[uint]persistence.DBUser{}
+	if len(ids) > 0 {
+		var users []persistence.DBUser
+		if err := h.db.WithContext(c.Request.Context()).
+			Where("id IN ?", mapIDSet(ids)).
+			Find(&users).Error; err == nil {
+			for _, user := range users {
+				creators[user.ID] = user
+			}
+		}
+	}
+	out := make([]gin.H, 0, len(tickets))
+	for _, ticket := range tickets {
+		out = append(out, h.mapRequestTicketWithCreator(ticket, creators[ticket.StudentID]))
+	}
+	return out
+}
+
+func (h *Handler) mapRequestTicketWithCreator(ticket persistence.DBRequestTicket, creator persistence.DBUser) gin.H {
 	creatorName := ""
 	creatorRole := ""
-	var creator persistence.DBUser
-	if err := h.db.WithContext(c.Request.Context()).First(&creator, ticket.StudentID).Error; err == nil {
+	if creator.ID != 0 {
 		creatorName = creator.FullName
 		creatorRole = creator.Role
 	}
@@ -1139,6 +1175,39 @@ func mapAttendance(row persistence.DBAttendanceRecord) gin.H {
 	}
 }
 
+func mapAttendanceRows(rows []persistence.DBAttendanceRecord) []gin.H {
+	type selectedRow struct {
+		row      persistence.DBAttendanceRecord
+		isScoped bool
+	}
+	order := make([]string, 0, len(rows))
+	selected := map[string]selectedRow{}
+	for _, row := range rows {
+		baseGroup := baseJournalGroupName(row.GroupName)
+		key := strings.ToLower(strings.Join([]string{
+			baseGroup,
+			dateOnly(row.ClassDate),
+			strconv.Itoa(normalizeLessonSlot(row.LessonSlot)),
+			strings.TrimSpace(row.StudentName),
+		}, "|"))
+		isScoped := row.GroupName != baseGroup
+		if current, ok := selected[key]; ok {
+			if current.isScoped || !isScoped {
+				continue
+			}
+		} else {
+			order = append(order, key)
+		}
+		row.GroupName = baseGroup
+		selected[key] = selectedRow{row: row, isScoped: isScoped}
+	}
+	out := make([]gin.H, 0, len(selected))
+	for _, key := range order {
+		out = append(out, mapAttendance(selected[key].row))
+	}
+	return out
+}
+
 func mapGrade(row persistence.DBGradeRecord) gin.H {
 	return gin.H{
 		"id":           row.ID,
@@ -1147,6 +1216,38 @@ func mapGrade(row persistence.DBGradeRecord) gin.H {
 		"student_name": row.StudentName,
 		"grade":        row.Grade,
 	}
+}
+
+func mapGradeRows(rows []persistence.DBGradeRecord) []gin.H {
+	type selectedRow struct {
+		row      persistence.DBGradeRecord
+		isScoped bool
+	}
+	order := make([]string, 0, len(rows))
+	selected := map[string]selectedRow{}
+	for _, row := range rows {
+		baseGroup := baseJournalGroupName(row.GroupName)
+		key := strings.ToLower(strings.Join([]string{
+			baseGroup,
+			dateOnly(row.ClassDate),
+			strings.TrimSpace(row.StudentName),
+		}, "|"))
+		isScoped := row.GroupName != baseGroup
+		if current, ok := selected[key]; ok {
+			if current.isScoped || !isScoped {
+				continue
+			}
+		} else {
+			order = append(order, key)
+		}
+		row.GroupName = baseGroup
+		selected[key] = selectedRow{row: row, isScoped: isScoped}
+	}
+	out := make([]gin.H, 0, len(selected))
+	for _, key := range order {
+		out = append(out, mapGrade(selected[key].row))
+	}
+	return out
 }
 
 func (h *Handler) notifyAttendanceChanged(ctx context.Context, row persistence.DBAttendanceRecord) error {
@@ -1260,6 +1361,17 @@ func applyJournalGroupQueryFilter(query *gorm.DB, groupName string) *gorm.DB {
 		groupName,
 		groupName+teacherJournalGroupSuffix+"%",
 	)
+}
+
+func applyJournalGroupReadQueryFilter(query *gorm.DB, groupName string) *gorm.DB {
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		return query
+	}
+	if _, scoped := teacherIDFromScopedJournalGroupName(groupName); scoped {
+		return query.Where("group_name IN ?", []string{baseJournalGroupName(groupName), groupName})
+	}
+	return query.Where("group_name = ?", groupName)
 }
 
 func (h *Handler) allowedGroupsForTeacher(c *gin.Context, teacherID uint) ([]string, error) {

@@ -375,6 +375,18 @@ func (h *Handler) listUsers(c *gin.Context) {
 	role := strings.TrimSpace(c.Query("role"))
 	approvedRaw := strings.TrimSpace(c.Query("approved"))
 	sortBy := strings.TrimSpace(c.DefaultQuery("sort", "id_asc"))
+	limit := 0
+	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"detail": "limit should be a positive number"})
+			return
+		}
+		if value > 500 {
+			value = 500
+		}
+		limit = value
+	}
 	var approvedFilter *bool
 	if approvedRaw != "" {
 		switch strings.ToLower(approvedRaw) {
@@ -423,7 +435,10 @@ func (h *Handler) listUsers(c *gin.Context) {
 			return filtered[i].ID < filtered[j].ID
 		})
 	}
-	out := make([]gin.H, 0, len(users))
+	if limit > 0 && len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+	out := make([]gin.H, 0, len(filtered))
 	for _, user := range filtered {
 		out = append(out, toUserPublic(user))
 	}

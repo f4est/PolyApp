@@ -32,4 +32,13 @@ polyapp/.flutter-plugins-dependencies
 polyapp/.pub-cache/
 polyapp/.pub/
 polyapp/build/
+polyapp/android/build/
 polyapp/coverage/
+
+# Accidental tracked artifacts
+server-go/coverage
+
+# Local notes / one-off docs
+bugs.txt
+fixed.txt
+Пароли и логины

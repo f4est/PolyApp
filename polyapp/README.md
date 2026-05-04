@@ -1,105 +1,88 @@
-﻿# PolyApp Client (Flutter)
+﻿# PolyApp Client
 
-Flutter-клиент PolyApp для Web, Desktop и Mobile.
-
-## Поддерживаемые платформы
-- Web (Chrome)
-- Android
-- iOS
-- Windows
-- macOS
-- Linux
+Flutter клиент PolyApp для web, Android, iOS, Windows, Linux и macOS. Основной сценарий разработки сейчас - web через Chrome.
 
 ## Требования
-- Flutter SDK (stable)
-- Dart SDK
-- Android Studio / Xcode (для мобильных)
-- Visual Studio Build Tools (для Windows)
+- Flutter SDK stable
+- Dart SDK из Flutter
+- Запущенный backend API
 
 Проверка окружения:
-```bash
+```powershell
 flutter doctor -v
 ```
 
-## Конфигурация
-Ключи `--dart-define`:
-- `API_BASE_URL` — адрес API
-- `WEB_VAPID_KEY` — web push (опционально)
-
-Примеры `API_BASE_URL`:
-- Web/desktop локально: `http://localhost:8000`
-- Android эмулятор: `http://10.0.2.2:8000`
-- Физический телефон в Wi‑Fi: `http://<LAN_IP_ПК>:8000`
-
-## Запуск
-### Web
-```bash
+## Установка зависимостей
+```powershell
 cd polyapp
 flutter pub get
+```
+
+## Конфигурация API
+Клиент получает адрес backend через `--dart-define=API_BASE_URL=...`.
+
+Типовые значения:
+- Web/Desktop на том же ПК: `http://localhost:8000`
+- Android эмулятор: `http://10.0.2.2:8000`
+- Физическое устройство в LAN: `http://<LAN_IP_ПК>:8000`
+
+Опционально:
+- `WEB_VAPID_KEY` - ключ web push-уведомлений.
+
+## Запуск web
+```powershell
+cd polyapp
 flutter run -d chrome --web-port 5050 --dart-define=API_BASE_URL=http://localhost:8000
 ```
 
 PowerShell helper:
 ```powershell
+cd polyapp
 ./run_web.ps1 -Port 5050 -Device chrome --dart-define=API_BASE_URL=http://localhost:8000
 ```
 
-### Android эмулятор
-```bash
-flutter run -d emulator-5554 --dart-define=API_BASE_URL=http://10.0.2.2:8000
-```
-
-### Android устройство
-```bash
-flutter run -d <device_id> --dart-define=API_BASE_URL=http://192.168.0.150:8000
-```
-
-### iOS
-```bash
-flutter run -d ios --dart-define=API_BASE_URL=http://<LAN_IP_ПК>:8000
-```
-
-### Desktop
-```bash
-flutter run -d windows --dart-define=API_BASE_URL=http://localhost:8000
-flutter run -d macos --dart-define=API_BASE_URL=http://localhost:8000
-flutter run -d linux --dart-define=API_BASE_URL=http://localhost:8000
-```
-
 ## Сборка
-### Web
-```bash
+Web:
+```powershell
 flutter build web --release --dart-define=API_BASE_URL=https://api.example.com
 ```
 
-### Android
-```bash
+Android APK:
+```powershell
 flutter build apk --release --dart-define=API_BASE_URL=https://api.example.com
-flutter build appbundle --release --dart-define=API_BASE_URL=https://api.example.com
 ```
 
-### iOS
-```bash
-flutter build ios --release --dart-define=API_BASE_URL=https://api.example.com
-```
-
-### Desktop
-```bash
-flutter build windows --release --dart-define=API_BASE_URL=https://api.example.com
-flutter build macos --release --dart-define=API_BASE_URL=https://api.example.com
-flutter build linux --release --dart-define=API_BASE_URL=https://api.example.com
-```
-
-## Что важно знать в текущей версии
-- Для учителя журнал теперь изолирован по связке `Группа + Преподаватель`.
-- Админ в выборе журнала видит полный каталог с подписями `Группа - Преподаватель`.
-- В аналитике добавлен расширенный (wide) режим на web.
-- Для экзаменов есть шаблоны загрузки (`csv/xlsx`) через UI.
-
-## Проверки качества
-```bash
+## Проверки
+```powershell
 flutter analyze
+```
+
+Если в проект добавлены тесты:
+```powershell
 flutter test
 ```
 
-Примечание: если `test/` отсутствует, `flutter test` вернёт ошибку об отсутствии тестов.
+## Основные разделы приложения
+- Авторизация и профиль пользователя.
+- Новости и категории новостей.
+- Заявки на документы и преподавание группы.
+- Отработки.
+- Журнал оценок с пресетами.
+- Журнал посещаемости.
+- Экзамены.
+- Аналитика.
+- Админ-панель: пользователи, отделения, группы, расписание, новости, заявки, академические данные.
+
+## Производительность
+Админ-панель и журналы используют ленивую загрузку вкладок и ограниченные списки для тяжелых сущностей. Если после массовых изменений демо-данных страницы начинают грузиться медленно, пересоздайте демо-базу актуальной командой из корня репозитория:
+```powershell
+./scripts/reset_demo_data.ps1 -DatabaseUrl "postgres://polyapp:polyapp@localhost:5433/polyapp?sslmode=disable"
+```
+
+## Структура
+- `lib/api/` - API клиент и DTO.
+- `lib/journal/` - журналы оценок и посещаемости.
+- `lib/makeup/` - отработки и админские страницы.
+- `lib/analytics/` - аналитика.
+- `assets/` - статические ресурсы.
+- `web/`, `android/`, `ios/`, `windows/`, `linux/`, `macos/` - платформенные проекты.

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"sort"
@@ -15,6 +16,7 @@ import (
 	"polyapp/server-go/internal/usecase"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type createPresetV2Payload struct {
@@ -228,6 +230,14 @@ func (h *Handler) getJournalGridV2(c *gin.Context) {
 	user := httpMiddleware.CurrentUser(c)
 	groupName := strings.TrimSpace(c.Param("group_name"))
 	scopedGroupName := resolvedJournalGroupNameForUser(user, groupName)
+	if err := h.ensureScopedJournalDatesAndStudents(c.Request.Context(), groupName, scopedGroupName); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to prepare journal grid"})
+		return
+	}
+	if err := h.ensureJournalDateCellsFromGrades(c.Request.Context(), scopedGroupName); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to sync journal grades"})
+		return
+	}
 	if err := h.ensureJournalStudentsFromApprovedGroup(c.Request.Context(), user, groupName, scopedGroupName); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to load journal grid"})
 		return
@@ -238,6 +248,126 @@ func (h *Handler) getJournalGridV2(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, mapGrid(*grid))
+}
+
+func (h *Handler) ensureJournalDateCellsFromGrades(ctx context.Context, groupName string) error {
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		return nil
+	}
+	sourceGroup := groupName
+	if _, scoped := teacherIDFromScopedJournalGroupName(groupName); scoped {
+		baseGroup := baseJournalGroupName(groupName)
+		var baseGradeCount int64
+		if err := h.db.WithContext(ctx).
+			Model(&persistence.DBGradeRecord{}).
+			Where("group_name = ?", baseGroup).
+			Count(&baseGradeCount).Error; err != nil {
+			return err
+		}
+		if baseGradeCount > 0 {
+			sourceGroup = baseGroup
+		}
+	}
+	var gradeCount int64
+	if err := h.db.WithContext(ctx).
+		Model(&persistence.DBGradeRecord{}).
+		Where("group_name = ?", sourceGroup).
+		Count(&gradeCount).Error; err != nil {
+		return err
+	}
+	if gradeCount == 0 {
+		return nil
+	}
+
+	var grades []persistence.DBGradeRecord
+	if err := h.db.WithContext(ctx).
+		Where("group_name = ?", sourceGroup).
+		Find(&grades).Error; err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	return h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, grade := range grades {
+			numeric := float64(grade.Grade)
+			cell := persistence.DBJournalDateCellV2{}
+			assign := persistence.DBJournalDateCellV2{
+				GroupName:    groupName,
+				ClassDate:    grade.ClassDate,
+				LessonSlot:   1,
+				StudentName:  grade.StudentName,
+				RawValue:     strconv.Itoa(grade.Grade),
+				NumericValue: &numeric,
+				StatusCode:   "",
+				UpdatedBy:    grade.TeacherID,
+				UpdatedAt:    now,
+			}
+			if err := tx.
+				Where("group_name = ? AND class_date = ? AND lesson_slot = ? AND student_name = ?", groupName, grade.ClassDate, 1, grade.StudentName).
+				Attrs(assign).
+				FirstOrCreate(&cell).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (h *Handler) ensureScopedJournalDatesAndStudents(ctx context.Context, requestedGroupName, scopedGroupName string) error {
+	base := strings.TrimSpace(baseJournalGroupName(requestedGroupName))
+	scoped := strings.TrimSpace(scopedGroupName)
+	if base == "" || scoped == "" || base == scoped {
+		return nil
+	}
+	if _, ok := teacherIDFromScopedJournalGroupName(scoped); !ok {
+		return nil
+	}
+
+	var scopedCount int64
+	if err := h.db.WithContext(ctx).
+		Model(&persistence.DBJournalDate{}).
+		Where("group_name = ?", scoped).
+		Count(&scopedCount).Error; err != nil {
+		return err
+	}
+	if scopedCount > 0 {
+		return nil
+	}
+
+	var baseDates []persistence.DBJournalDate
+	if err := h.db.WithContext(ctx).
+		Where("group_name = ?", base).
+		Order("class_date asc, lesson_slot asc").
+		Find(&baseDates).Error; err != nil {
+		return err
+	}
+	var baseStudents []persistence.DBJournalStudent
+	if err := h.db.WithContext(ctx).
+		Where("group_name = ?", base).
+		Order("student_name asc").
+		Find(&baseStudents).Error; err != nil {
+		return err
+	}
+
+	return h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		group := persistence.DBJournalGroup{Name: scoped}
+		if err := tx.Where("name = ?", scoped).FirstOrCreate(&group).Error; err != nil {
+			return err
+		}
+		for _, item := range baseStudents {
+			row := persistence.DBJournalStudent{GroupName: scoped, StudentName: item.StudentName}
+			if err := tx.Where("group_name = ? AND student_name = ?", scoped, item.StudentName).FirstOrCreate(&row).Error; err != nil {
+				return err
+			}
+		}
+		for _, item := range baseDates {
+			row := persistence.DBJournalDate{GroupName: scoped, ClassDate: item.ClassDate, LessonSlot: normalizeLessonSlot(item.LessonSlot)}
+			if err := tx.Where("group_name = ? AND class_date = ? AND lesson_slot = ?", scoped, item.ClassDate, normalizeLessonSlot(item.LessonSlot)).FirstOrCreate(&row).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (h *Handler) bulkUpsertDateCellsV2(c *gin.Context) {

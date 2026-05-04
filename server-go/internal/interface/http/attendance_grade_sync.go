@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -188,7 +189,7 @@ func (h *Handler) syncGradeToAttendance(
 		Present:     true,
 		TeacherID:   teacherID,
 	}
-	return h.db.WithContext(ctx).
+	if err := h.db.WithContext(ctx).
 		Clauses(clause.OnConflict{
 			Columns: []clause.Column{
 				{Name: "group_name"},
@@ -202,5 +203,46 @@ func (h *Handler) syncGradeToAttendance(
 				"teacher_id":  teacherID,
 			}),
 		}).
-		Create(&attendance).Error
+		Create(&attendance).Error; err != nil {
+		return err
+	}
+
+	numeric := float64(row.Grade)
+	now := time.Now().UTC()
+	cell := persistence.DBJournalDateCellV2{
+		GroupName:    groupName,
+		ClassDate:    row.ClassDate,
+		LessonSlot:   1,
+		StudentName:  studentName,
+		RawValue:     strconv.Itoa(row.Grade),
+		NumericValue: &numeric,
+		StatusCode:   "",
+		UpdatedBy:    teacherID,
+		UpdatedAt:    now,
+	}
+	if err := h.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "group_name"},
+				{Name: "class_date"},
+				{Name: "lesson_slot"},
+				{Name: "student_name"},
+			},
+			DoUpdates: clause.Assignments(map[string]any{
+				"raw_value":     cell.RawValue,
+				"numeric_value": numeric,
+				"status_code":   "",
+				"lesson_slot":   cell.LessonSlot,
+				"updated_by":    cell.UpdatedBy,
+				"updated_at":    cell.UpdatedAt,
+			}),
+		}).
+		Create(&cell).Error; err != nil {
+		return err
+	}
+
+	if h.journalUC != nil {
+		_ = h.journalUC.Recalculate(ctx, usecase.Actor{UserID: teacherID, Role: "teacher"}, groupName)
+	}
+	return nil
 }

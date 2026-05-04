@@ -756,20 +756,114 @@ func (h *Handler) deleteJournalGroup(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name is required"})
 		return
 	}
-	if err := h.db.WithContext(c.Request.Context()).
-		Transaction(func(tx *gorm.DB) error {
-			if err := tx.Where("group_name = ?", name).Delete(&persistence.DBJournalStudent{}).Error; err != nil {
-				return err
-			}
-			if err := tx.Where("group_name = ?", name).Delete(&persistence.DBJournalDate{}).Error; err != nil {
-				return err
-			}
-			return tx.Where("name = ?", name).Delete(&persistence.DBJournalGroup{}).Error
-		}); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete group"})
+
+	if err := h.deleteGroupCascade(c.Request.Context(), name); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete group", "error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+func (h *Handler) deleteGroupCascade(ctx context.Context, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	targets := []string{name}
+	if _, scoped := teacherIDFromScopedJournalGroupName(name); !scoped {
+		var scopedNames []string
+		if err := h.db.WithContext(ctx).
+			Model(&persistence.DBJournalGroup{}).
+			Where("name = ? OR name LIKE ?", name, name+teacherJournalGroupSuffix+"%").
+			Pluck("name", &scopedNames).Error; err != nil {
+			return err
+		}
+		if len(scopedNames) > 0 {
+			targets = scopedNames
+		}
+	}
+
+	return h.db.WithContext(ctx).
+		Transaction(func(tx *gorm.DB) error {
+			baseName := baseJournalGroupName(name)
+			if _, scoped := teacherIDFromScopedJournalGroupName(name); scoped {
+				baseName = ""
+			}
+			var studentIDs []uint
+			if baseName != "" {
+				if err := tx.Model(&persistence.DBUser{}).
+					Where("student_group = ?", baseName).
+					Pluck("id", &studentIDs).Error; err != nil {
+					return err
+				}
+				if len(studentIDs) > 0 {
+					if err := tx.Where("student_id IN ?", studentIDs).Delete(&persistence.DBRequestTicket{}).Error; err != nil {
+						return err
+					}
+				}
+			}
+			var makeupCaseIDs []uint
+			if err := tx.Model(&persistence.DBMakeupCase{}).
+				Where("group_name IN ?", targets).
+				Pluck("id", &makeupCaseIDs).Error; err != nil {
+				return err
+			}
+			if len(makeupCaseIDs) > 0 {
+				if err := tx.Where("makeup_case_id IN ?", makeupCaseIDs).Delete(&persistence.DBMakeupMessage{}).Error; err != nil {
+					return err
+				}
+			}
+			if err := tx.Where("group_name IN ?", targets).Delete(&persistence.DBJournalDateCellV2{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("group_name IN ?", targets).Delete(&persistence.DBJournalManualCellV2{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("group_name IN ?", targets).Delete(&persistence.DBJournalComputedRowV2{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("group_name IN ?", targets).Delete(&persistence.DBGroupPresetBinding{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("group_name IN ?", targets).Delete(&persistence.DBAttendanceRecord{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("group_name IN ?", targets).Delete(&persistence.DBGradeRecord{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("group_name IN ?", targets).Delete(&persistence.DBJournalStudent{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("group_name IN ?", targets).Delete(&persistence.DBJournalDate{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("group_name IN ?", targets).Delete(&persistence.DBExamGrade{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("group_name IN ?", targets).Delete(&persistence.DBExamUpload{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("group_name IN ?", targets).Delete(&persistence.DBMakeupCase{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("group_name IN ?", targets).Delete(&persistence.DBTeacherGroupAssignment{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("group_name IN ?", targets).Delete(&persistence.DBDepartmentGroup{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("group_name IN ?", targets).Delete(&persistence.DBCuratorGroupAssignment{}).Error; err != nil {
+				return err
+			}
+			if _, scoped := teacherIDFromScopedJournalGroupName(name); !scoped {
+				if err := tx.Model(&persistence.DBUser{}).
+					Where("student_group = ?", baseName).
+					Updates(map[string]any{"student_group": "", "updated_at": time.Now().UTC()}).Error; err != nil {
+					return err
+				}
+			}
+			return tx.Where("name IN ?", targets).Delete(&persistence.DBJournalGroup{}).Error
+		})
 }
 
 func (h *Handler) listJournalStudents(c *gin.Context) {

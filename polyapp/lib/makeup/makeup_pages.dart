@@ -568,6 +568,18 @@ class _MakeupWorkspacePageState extends State<MakeupWorkspacePage> {
                         subtitle: Text(
                           '${_dateFormat.format(item.classDate)}\n${makeupStatusLabel(item.status, widget.locale.languageCode)}',
                         ),
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => MakeupCaseDetailScreen(
+                              caseId: item.id,
+                              client: widget.client,
+                              currentUser: widget.currentUser,
+                              locale: widget.locale,
+                              baseUrl: widget.baseUrl,
+                              errorText: widget.errorText,
+                            ),
+                          ),
+                        ),
                         trailing: IconButton(
                           icon: const Icon(Icons.open_in_new),
                           onPressed: () => Navigator.of(context).push(
@@ -1957,6 +1969,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
   Future<List<NewsPost>>? _newsFuture;
   Future<List<ExamUpload>>? _examUploadsFuture;
   Future<List<DepartmentDto>>? _departmentsFuture;
+  Future<List<UserProfile>>? _departmentStudentsFuture;
   Future<List<CuratorGroupAssignmentDto>>? _curatorGroupsFuture;
   Future<List<ScheduleUpload>>? _scheduleUploadsFuture;
   Future<List<AttendanceRecord>>? _attendanceCrudFuture;
@@ -2117,50 +2130,55 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
   }
 
   void _reloadAll() {
-    _usersFuture = _hasAdminPermission('users_manage')
-        ? widget.client.listUsers(
-            role: _userRole == 'all' ? null : _userRole,
-            approved: _userApproval == 'all'
-                ? null
-                : (_userApproval == 'approved'),
-            sort: _userSort,
-          )
-        : Future.value(const <UserProfile>[]);
-    _requestsFuture = _hasAdminPermission('users_manage')
-        ? widget.client.listRequests()
-        : Future.value(const <RequestTicket>[]);
-    _makeupsFuture = _hasAdminPermission('academic_manage')
-        ? widget.client.listMakeups(
-            status: _makeupStatus == 'all' ? null : _makeupStatus,
-          )
-        : Future.value(const <MakeupCaseDto>[]);
-    _assignmentsFuture = _hasAdminPermission('academic_manage')
-        ? widget.client.listTeacherAssignments()
-        : Future.value(const <TeacherGroupAssignment>[]);
-    _teachersFuture = _hasAdminPermission('academic_manage')
-        ? widget.client.listUsers(role: 'teacher', approved: true)
-        : Future.value(const <UserProfile>[]);
-    _newsFuture = _hasAdminPermission('users_manage')
-        ? widget.client.listNews(limit: 100)
-        : Future.value(const <NewsPost>[]);
-    _examUploadsFuture = _hasAdminPermission('academic_manage')
-        ? widget.client.listExamUploads()
-        : Future.value(const <ExamUpload>[]);
-    _departmentsFuture = _hasAdminPermission('departments_manage')
-        ? widget.client.listDepartments()
-        : Future.value(const <DepartmentDto>[]);
-    _curatorGroupsFuture = _hasAdminPermission('departments_manage')
-        ? widget.client.listCuratorGroups()
-        : Future.value(const <CuratorGroupAssignmentDto>[]);
-    _scheduleUploadsFuture = _hasAdminPermission('schedule_manage')
-        ? widget.client.listScheduleUploads()
-        : Future.value(const <ScheduleUpload>[]);
-    _analyticsGroupsFuture = _hasAdminPermission('analytics_view')
-        ? widget.client.listAnalyticsGroups()
-        : Future.value(const <GroupAnalytics>[]);
-    _journalGroupsFuture = _hasAdminPermission('academic_manage')
-        ? widget.client.listJournalBaseGroupCatalogV2()
-        : Future.value(const <String>[]);
+    if (_tab == 0 && _hasAdminPermission('users_manage')) {
+      _usersFuture = widget.client.listUsers(
+        role: _userRole == 'all' ? null : _userRole,
+        approved: _userApproval == 'all' ? null : (_userApproval == 'approved'),
+        sort: _userSort,
+        limit: 160,
+      );
+      _requestsFuture = widget.client.listRequests(limit: 120);
+    }
+    if (_tab == 2 && _hasAdminPermission('academic_manage')) {
+      _makeupsFuture = widget.client.listMakeups(
+        status: _makeupStatus == 'all' ? null : _makeupStatus,
+      );
+    }
+    if (_tab == 3 && _hasAdminPermission('academic_manage')) {
+      _assignmentsFuture = widget.client.listTeacherAssignments();
+      _teachersFuture = widget.client.listUsers(
+        role: 'teacher',
+        approved: true,
+      );
+    }
+    if (_tab == 5 && _hasAdminPermission('users_manage')) {
+      _newsFuture = widget.client.listNews(limit: 40);
+    }
+    if (_tab == 6 && _hasAdminPermission('academic_manage')) {
+      _examUploadsFuture = widget.client.listExamUploads();
+    }
+    if (_tab == 7 && _hasAdminPermission('departments_manage')) {
+      _departmentsFuture = widget.client.listDepartments();
+      _departmentStudentsFuture = widget.client.listUsers(
+        role: 'student',
+        approved: true,
+        sort: 'name_asc',
+      );
+      _curatorGroupsFuture = widget.client.listCuratorGroups();
+    }
+    if (_tab == 8 && _hasAdminPermission('schedule_manage')) {
+      _scheduleUploadsFuture = widget.client.listScheduleUploads();
+    }
+    if (_tab == 11 && _hasAdminPermission('analytics_view')) {
+      _analyticsGroupsFuture = widget.client.listAnalyticsGroups();
+    }
+    final needsJournalGroups =
+        _tab == 4 || _tab == 7 || _tab == 9 || _tab == 10;
+    if (needsJournalGroups && _hasAdminPermission('academic_manage')) {
+      _journalGroupsFuture = widget.client.listJournalBaseGroupCatalogV2();
+    } else {
+      _journalGroupsFuture ??= Future.value(const <String>[]);
+    }
     _setJournalGroupSelection(_journalGroup);
     setState(() {});
   }
@@ -3415,6 +3433,10 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     if (_journalGroup == group) {
       _journalGroup = null;
     }
+    _journalStudentsFuture = null;
+    _journalDatesFuture = null;
+    _attendanceCrudFuture = Future.value(const <AttendanceRecord>[]);
+    _gradesCrudFuture = Future.value(const <GradeRecord>[]);
     _reloadAll();
   }
 
@@ -4259,6 +4281,50 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
             'Группа снята с отделения.',
             'Group removed from department.',
           );
+        });
+      }
+      _reloadAll();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = _readError(error);
+      });
+    }
+  }
+
+  Future<void> _deleteDepartmentGroupCascade(String groupName) async {
+    final normalizedGroup = groupName.trim();
+    if (normalizedGroup.isEmpty) return;
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(_t('Удалить группу?', 'Delete group?')),
+        content: Text(
+          _t(
+            'Группа будет удалена вместе с оценками, посещаемостью, заявками, экзаменами, отработками и аналитическими данными. Студенты останутся в системе, но будут убраны из группы.',
+            'The group will be deleted with grades, attendance, requests, exams, makeups and analytics data. Students will remain in the system but will be removed from the group.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(_t('Отмена', 'Cancel')),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(_t('Удалить', 'Delete')),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    try {
+      await widget.client.deleteDepartmentGroupCascade(normalizedGroup);
+      if (mounted) {
+        setState(() {
+          _noticeError = false;
+          _noticeMessage = _t('Группа удалена.', 'Group deleted.');
         });
       }
       _reloadAll();
@@ -5224,37 +5290,58 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                                                         size: 16,
                                                       ),
                                                       const SizedBox(width: 4),
-                                                      Draggable<String>(
-                                                        data: group,
-                                                        feedback: Material(
-                                                          color: Colors
-                                                              .transparent,
-                                                          child: Chip(
-                                                            label: Text(group),
-                                                          ),
-                                                        ),
-                                                        childWhenDragging:
-                                                            Opacity(
-                                                              opacity: 0.3,
-                                                              child: Chip(
-                                                                label: Text(
-                                                                  group,
-                                                                ),
-                                                              ),
-                                                            ),
-                                                        child: Chip(
-                                                          label: Text(group),
-                                                          avatar: const Icon(
-                                                            Icons
-                                                                .drag_indicator,
-                                                            size: 16,
-                                                          ),
-                                                          onDeleted: () =>
-                                                              _removeDepartmentGroup(
-                                                                department,
+                                                      Flexible(
+                                                        child: Draggable<String>(
+                                                          data: group,
+                                                          feedback: Material(
+                                                            color: Colors
+                                                                .transparent,
+                                                            child: Chip(
+                                                              label: Text(
                                                                 group,
                                                               ),
+                                                            ),
+                                                          ),
+                                                          childWhenDragging:
+                                                              Opacity(
+                                                                opacity: 0.3,
+                                                                child: Chip(
+                                                                  label: Text(
+                                                                    group,
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                          child: Chip(
+                                                            label: Text(group),
+                                                            avatar: const Icon(
+                                                              Icons
+                                                                  .drag_indicator,
+                                                              size: 16,
+                                                            ),
+                                                            onDeleted: () =>
+                                                                _removeDepartmentGroup(
+                                                                  department,
+                                                                  group,
+                                                                ),
+                                                          ),
                                                         ),
+                                                      ),
+                                                      IconButton(
+                                                        tooltip: _t(
+                                                          'Удалить группу полностью',
+                                                          'Delete group completely',
+                                                        ),
+                                                        visualDensity:
+                                                            VisualDensity
+                                                                .compact,
+                                                        icon: const Icon(
+                                                          Icons
+                                                              .delete_forever_outlined,
+                                                        ),
+                                                        onPressed: () =>
+                                                            _deleteDepartmentGroupCascade(
+                                                              group,
+                                                            ),
                                                       ),
                                                     ],
                                                   ),
@@ -5280,11 +5367,7 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                       ),
                       const SizedBox(height: 8),
                       FutureBuilder<List<UserProfile>>(
-                        future: widget.client.listUsers(
-                          role: 'student',
-                          approved: true,
-                          sort: 'name_asc',
-                        ),
+                        future: _departmentStudentsFuture,
                         builder: (context, studentsSnapshot) {
                           if (studentsSnapshot.connectionState ==
                               ConnectionState.waiting) {
@@ -5753,8 +5836,10 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                       ChoiceChip(
                         selected: _tab == (item['index'] as int),
                         label: Text(item['label'] as String),
-                        onSelected: (_) =>
-                            setState(() => _tab = item['index'] as int),
+                        onSelected: (_) {
+                          setState(() => _tab = item['index'] as int);
+                          _reloadAll();
+                        },
                       ),
                   ],
                 ),

@@ -344,6 +344,22 @@ func (h *Handler) removeDepartmentGroup(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
+func (h *Handler) deleteDepartmentGroupCascade(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermDepartmentsManage) {
+		return
+	}
+	group := normalizeDepartmentGroupName(c.Query("group_name"))
+	if group == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "group_name is required"})
+		return
+	}
+	if err := h.deleteGroupCascade(c.Request.Context(), group); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to delete group", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
 func (h *Handler) listCuratorGroups(c *gin.Context) {
 	if !h.requireAdminPermission(c, AdminPermDepartmentsManage) {
 		return

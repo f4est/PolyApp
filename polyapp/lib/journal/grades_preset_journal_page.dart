@@ -879,6 +879,12 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
             icon: const Icon(Icons.search_rounded),
             label: Text(_tr('Поиск группы', 'Search group')),
           ),
+          if (widget.canEdit && !widget.canManageGroups)
+            FilledButton.tonalIcon(
+              onPressed: _saving ? null : _requestGroupAccess,
+              icon: const Icon(Icons.send_rounded),
+              label: Text(_tr('Заявка на группу', 'Request group access')),
+            ),
         ],
       ),
     );

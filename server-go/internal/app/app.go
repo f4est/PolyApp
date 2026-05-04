@@ -75,7 +75,7 @@ func Bootstrap(ctx context.Context) (*Runtime, error) {
 	router := httpapi.NewRouter(handler, authMiddleware)
 
 	if cfg.SeedDemoOnStart {
-		if err := SeedDemo(ctx, db, passwordService); err != nil {
+		if err := SeedDemoWithMediaDir(ctx, db, passwordService, cfg.MediaDir, false); err != nil {
 			return nil, fmt.Errorf("seed demo: %w", err)
 		}
 	}

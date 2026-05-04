@@ -184,6 +184,7 @@ func (h *Handler) RegisterAcademicRoutes(router *gin.Engine, auth *httpMiddlewar
 		secured.GET("/departments/:id/groups", httpMiddleware.RequireRoles("admin"), h.listDepartmentGroups)
 		secured.POST("/departments/:id/groups", httpMiddleware.RequireRoles("admin"), h.addDepartmentGroup)
 		secured.DELETE("/departments/:id/groups", httpMiddleware.RequireRoles("admin"), h.removeDepartmentGroup)
+		secured.DELETE("/department-groups/cascade", httpMiddleware.RequireRoles("admin"), h.deleteDepartmentGroupCascade)
 		secured.GET("/curator-groups", httpMiddleware.RequireRoles("admin"), h.listCuratorGroups)
 		secured.POST("/curator-groups", httpMiddleware.RequireRoles("admin"), h.createCuratorGroup)
 		secured.DELETE("/curator-groups/:id", httpMiddleware.RequireRoles("admin"), h.deleteCuratorGroup)

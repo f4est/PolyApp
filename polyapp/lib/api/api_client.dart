@@ -279,6 +279,7 @@ class ApiClient {
     String? role,
     bool? approved,
     String? sort,
+    int? limit,
   }) async {
     final query = <String, String>{};
     if (role != null && role.trim().isNotEmpty) {
@@ -289,6 +290,9 @@ class ApiClient {
     }
     if (sort != null && sort.trim().isNotEmpty) {
       query['sort'] = sort.trim();
+    }
+    if (limit != null && limit > 0) {
+      query['limit'] = limit.toString();
     }
     final uri = Uri.parse(
       '$baseUrl/users',
@@ -794,9 +798,15 @@ class ApiClient {
         .toList();
   }
 
-  Future<List<RequestTicket>> listRequests() async {
+  Future<List<RequestTicket>> listRequests({int? limit}) async {
+    final query = <String, String>{};
+    if (limit != null && limit > 0) {
+      query['limit'] = limit.toString();
+    }
     final response = await http.get(
-      Uri.parse('$baseUrl/requests'),
+      Uri.parse(
+        '$baseUrl/requests',
+      ).replace(queryParameters: query.isEmpty ? null : query),
       headers: _headers(),
     );
     _ensureSuccess(response);
@@ -1438,6 +1448,16 @@ class ApiClient {
     final response = await http.delete(
       Uri.parse(
         '$baseUrl/departments/$departmentId/groups',
+      ).replace(queryParameters: {'group_name': groupName}),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+  }
+
+  Future<void> deleteDepartmentGroupCascade(String groupName) async {
+    final response = await http.delete(
+      Uri.parse(
+        '$baseUrl/department-groups/cascade',
       ).replace(queryParameters: {'group_name': groupName}),
       headers: _headers(),
     );
