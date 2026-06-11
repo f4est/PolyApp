@@ -12,11 +12,6 @@ import 'package:intl/intl.dart';
 import 'package:video_player/video_player.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'firebase_options.dart';
 
 import 'api/api_client.dart';
 import 'journal/journal_store.dart';
@@ -192,68 +187,6 @@ String? _firstMarkdownImageUrl(String body) {
     }
   }
   return null;
-}
-
-final FlutterLocalNotificationsPlugin _localNotifications =
-    FlutterLocalNotificationsPlugin();
-const AndroidNotificationChannel _defaultChannel = AndroidNotificationChannel(
-  'general',
-  'General',
-  description: 'General notifications',
-  importance: Importance.high,
-);
-
-Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-  } catch (_) {}
-}
-
-Future<void> _initLocalNotifications() async {
-  if (!kIsWeb) {
-    await FirebaseMessaging.instance
-        .setForegroundNotificationPresentationOptions(
-          alert: true,
-          badge: true,
-          sound: true,
-        );
-    const initializationSettingsAndroid = AndroidInitializationSettings(
-      '@mipmap/ic_launcher',
-    );
-    const initializationSettingsDarwin = DarwinInitializationSettings();
-    const initializationSettings = InitializationSettings(
-      android: initializationSettingsAndroid,
-      iOS: initializationSettingsDarwin,
-      macOS: initializationSettingsDarwin,
-    );
-    await _localNotifications.initialize(initializationSettings);
-    await _localNotifications
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.createNotificationChannel(_defaultChannel);
-  }
-  FirebaseMessaging.onMessage.listen((message) {
-    final notification = message.notification;
-    if (notification == null) return;
-    if (kIsWeb) return;
-    _localNotifications.show(
-      notification.hashCode,
-      notification.title,
-      notification.body,
-      const NotificationDetails(
-        android: AndroidNotificationDetails(
-          'general',
-          'General',
-          importance: Importance.high,
-          priority: Priority.high,
-        ),
-        iOS: DarwinNotificationDetails(),
-      ),
-    );
-  });
 }
 
 String humanizeError(Object error) {
@@ -1082,13 +1015,6 @@ String _resolvedApiBaseUrl() {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-  } catch (_) {}
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-  await _initLocalNotifications();
   final state = AppState(_resolvedApiBaseUrl());
   await state.init();
   await JournalStore.init();
@@ -1145,7 +1071,6 @@ class AppState extends ChangeNotifier {
   String? _deviceId;
   bool _isReady = false;
   Locale _locale = const Locale('ru');
-  bool _pushReady = false;
   int? _clockDriftSeconds;
 
   ApiClient get client => _client;
@@ -1165,69 +1090,6 @@ class AppState extends ChangeNotifier {
         _clockDriftSeconds = drift.toInt();
       }
     } catch (_) {}
-  }
-
-  String _platformLabel() {
-    if (kIsWeb) return 'web';
-    switch (defaultTargetPlatform) {
-      case TargetPlatform.android:
-        return 'android';
-      case TargetPlatform.iOS:
-        return 'ios';
-      case TargetPlatform.macOS:
-        return 'macos';
-      case TargetPlatform.windows:
-        return 'windows';
-      case TargetPlatform.linux:
-        return 'linux';
-      default:
-        return 'unknown';
-    }
-  }
-
-  Future<void> _registerPushToken() async {
-    if (!isAuthenticated) return;
-    try {
-      final messaging = FirebaseMessaging.instance;
-      if (!kIsWeb) {
-        await messaging.requestPermission(
-          alert: true,
-          badge: true,
-          sound: true,
-        );
-      }
-      final webVapidKey = const String.fromEnvironment('WEB_VAPID_KEY');
-      final token = await messaging.getToken(
-        vapidKey: kIsWeb && webVapidKey.isNotEmpty ? webVapidKey : null,
-      );
-      if (token == null || token.isEmpty) return;
-      final prefs = await SharedPreferences.getInstance();
-      final cached = prefs.getString('fcm_token');
-      if (cached == token) return;
-      await _client.registerDeviceToken(
-        token: token,
-        platform: _platformLabel(),
-      );
-      await prefs.setString('fcm_token', token);
-    } catch (_) {}
-  }
-
-  Future<void> _setupPush() async {
-    if (!isAuthenticated) return;
-    await _registerPushToken();
-    if (_pushReady) return;
-    _pushReady = true;
-    FirebaseMessaging.instance.onTokenRefresh.listen((token) async {
-      if (!isAuthenticated || token.isEmpty) return;
-      try {
-        await _client.registerDeviceToken(
-          token: token,
-          platform: _platformLabel(),
-        );
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('fcm_token', token);
-      } catch (_) {}
-    });
   }
 
   Future<void> init() async {
@@ -1268,7 +1130,6 @@ class AppState extends ChangeNotifier {
 
     if (isAuthenticated) {
       await _syncDeviceClock();
-      await _setupPush();
     }
     _isReady = true;
     notifyListeners();
@@ -1350,7 +1211,6 @@ class AppState extends ChangeNotifier {
     _persistAuth(response);
     notifyListeners();
     unawaited(_syncDeviceClock());
-    unawaited(_setupPush());
   }
 }
 
@@ -2172,7 +2032,6 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
     });
     if (!(_formKey.currentState?.validate() ?? false)) return;
     setState(() => _sending = true);
-    final l10n = AppLocalizations.of(context);
     final email = _emailController.text.trim();
     try {
       final exists = await AppStateScope.of(
@@ -2188,18 +2047,12 @@ class _ResetPasswordPageState extends State<ResetPasswordPage> {
         });
         return;
       }
-      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
       if (!mounted) return;
       setState(() {
         _success = true;
-        _message = l10n.t('reset_sent');
-      });
-    } on FirebaseAuthException catch (error) {
-      if (!mounted) return;
-      final msg = error.message ?? 'Reset failed.';
-      setState(() {
-        _success = false;
-        _message = msg;
+        _message = AppStateScope.of(context).locale.languageCode == 'ru'
+            ? 'Аккаунт найден. Обратитесь к администратору для смены пароля.'
+            : 'Account found. Contact an administrator to change the password.';
       });
     } catch (error) {
       if (!mounted) return;

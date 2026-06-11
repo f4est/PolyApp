@@ -39,6 +39,10 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
   bool _syncing = false;
   DateTime? _lastSync;
   Timer? _retryTimer;
+  Future<void>? _loadDataRequest;
+  Future<void>? _syncAllGroupsRequest;
+  Future<void>? _syncFromServerRequest;
+  String? _syncFromServerGroupName;
 
   Group? _group;
   List<Group> _groups = <Group>[];
@@ -88,20 +92,48 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
   }
 
   Future<void> _loadData() async {
+    final pending = _loadDataRequest;
+    if (pending != null) {
+      return pending;
+    }
+    final request = _loadDataOnce();
+    _loadDataRequest = request;
+    return request.whenComplete(() {
+      if (identical(_loadDataRequest, request)) {
+        _loadDataRequest = null;
+      }
+    });
+  }
+
+  Future<void> _loadDataOnce() async {
     setState(() => _loading = true);
+
     await _service.init();
     await _loadHelpText();
     await _mergeServerGroups();
+
     _groups = _service.getAllGroups();
+
     if (_groups.isNotEmpty) {
       _group ??= _groups.first;
     }
-    await _loadGroupData(sync: true);
+
+    if (_group != null) {
+      _students = _service.getStudentsByGroup(_group!);
+      _dates = _service.getDatesByGroup(_group!);
+      _dates.sort(_compareLessonDates);
+    }
+
     if (!mounted) return;
+
     setState(() {
       _isInitialized = true;
       _loading = false;
     });
+
+    // Синхронизацию запускаем после отображения страницы,
+    // чтобы пользователь не ждал на пустом экране.
+    unawaited(_loadGroupData(sync: true));
   }
 
   Future<void> _loadHelpText() async {
@@ -260,6 +292,20 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
   }
 
   Future<void> _syncAllGroups() async {
+    final pending = _syncAllGroupsRequest;
+    if (pending != null) {
+      return pending;
+    }
+    final request = _syncAllGroupsOnce();
+    _syncAllGroupsRequest = request;
+    return request.whenComplete(() {
+      if (identical(_syncAllGroupsRequest, request)) {
+        _syncAllGroupsRequest = null;
+      }
+    });
+  }
+
+  Future<void> _syncAllGroupsOnce() async {
     try {
       List<String> serverGroups;
       try {
@@ -292,75 +338,7 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
           group = Group(name: normalizedGroupName);
           await _service.addGroup(group);
         }
-        final serverStudents = await widget.client.listJournalStudents(
-          normalizedGroupName,
-        );
-        final serverStudentByKey = <String, String>{};
-        for (final studentName in serverStudents) {
-          final value = studentName.trim();
-          if (value.isEmpty) {
-            continue;
-          }
-          serverStudentByKey[value.toLowerCase()] = value;
-        }
-        for (final localStudent in _service.getStudentsByGroup(group)) {
-          final key = localStudent.name.trim().toLowerCase();
-          if (key.isEmpty) {
-            continue;
-          }
-          if (!serverStudentByKey.containsKey(key)) {
-            await _service.deleteStudent(localStudent);
-          }
-        }
-        final localStudentKeys = _service
-            .getStudentsByGroup(group)
-            .map((item) => item.name.trim().toLowerCase())
-            .where((item) => item.isNotEmpty)
-            .toSet();
-        for (final entry in serverStudentByKey.entries) {
-          if (localStudentKeys.contains(entry.key)) {
-            continue;
-          }
-          await _service.addStudent(
-            Student(name: entry.value, groupId: group.groupId),
-          );
-        }
-
-        final serverDates = await widget.client.listJournalDateEntries(
-          normalizedGroupName,
-        );
-        final serverDateByKey = <String, JournalDateEntry>{};
-        for (final item in serverDates) {
-          serverDateByKey[_dateIdentity(item.classDate, item.lessonSlot)] =
-              item;
-        }
-        for (final localDate in _service.getDatesByGroup(group)) {
-          final key = _lessonDateIdentity(localDate);
-          if (!serverDateByKey.containsKey(key)) {
-            await _service.deleteDate(localDate);
-          }
-        }
-        final localDateKeys = _service
-            .getDatesByGroup(group)
-            .map(_lessonDateIdentity)
-            .toSet();
-        for (final item in serverDateByKey.values) {
-          final key = _dateIdentity(item.classDate, item.lessonSlot);
-          if (localDateKeys.contains(key)) {
-            continue;
-          }
-          final label = _formatDateLabelWithSlot(
-            item.classDate,
-            item.lessonSlot,
-          );
-          await _service.addDate(
-            LessonDate(
-              date: item.classDate,
-              label: label,
-              groupId: group.groupId,
-            ),
-          );
-        }
+        await _syncGroupRosterAndDates(group);
       }
 
       if (mounted) {
@@ -376,40 +354,138 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
     }
   }
 
+  Future<void> _syncGroupRosterAndDates(Group group) async {
+    final studentsFuture = widget.client.listJournalStudents(group.name);
+    final datesFuture = widget.client.listJournalDateEntries(group.name);
+    final serverStudents = await studentsFuture;
+    final serverDates = await datesFuture;
+
+    final serverStudentByKey = <String, String>{};
+    for (final studentName in serverStudents) {
+      final value = studentName.trim();
+      if (value.isEmpty) {
+        continue;
+      }
+      serverStudentByKey[value.toLowerCase()] = value;
+    }
+    for (final localStudent in _service.getStudentsByGroup(group)) {
+      final key = localStudent.name.trim().toLowerCase();
+      if (key.isEmpty) {
+        continue;
+      }
+      if (!serverStudentByKey.containsKey(key)) {
+        await _service.deleteStudent(localStudent);
+      }
+    }
+    final localStudentKeys = _service
+        .getStudentsByGroup(group)
+        .map((item) => item.name.trim().toLowerCase())
+        .where((item) => item.isNotEmpty)
+        .toSet();
+    for (final entry in serverStudentByKey.entries) {
+      if (localStudentKeys.contains(entry.key)) {
+        continue;
+      }
+      await _service.addStudent(
+        Student(name: entry.value, groupId: group.groupId),
+      );
+    }
+
+    final serverDateByKey = <String, JournalDateEntry>{};
+    for (final item in serverDates) {
+      serverDateByKey[_dateIdentity(item.classDate, item.lessonSlot)] = item;
+    }
+    for (final localDate in _service.getDatesByGroup(group)) {
+      final key = _lessonDateIdentity(localDate);
+      if (!serverDateByKey.containsKey(key)) {
+        await _service.deleteDate(localDate);
+      }
+    }
+    final localDateKeys = _service
+        .getDatesByGroup(group)
+        .map(_lessonDateIdentity)
+        .toSet();
+    for (final item in serverDateByKey.values) {
+      final key = _dateIdentity(item.classDate, item.lessonSlot);
+      if (localDateKeys.contains(key)) {
+        continue;
+      }
+      final label = _formatDateLabelWithSlot(item.classDate, item.lessonSlot);
+      await _service.addDate(
+        LessonDate(date: item.classDate, label: label, groupId: group.groupId),
+      );
+    }
+  }
+
   Future<void> _syncFromServer() async {
     if (_group == null) return;
+    final groupName = _group!.name;
+    final pending = _syncFromServerRequest;
+    if (pending != null && _syncFromServerGroupName == groupName) {
+      return pending;
+    }
+    final request = _syncFromServerOnce(groupName);
+    _syncFromServerGroupName = groupName;
+    _syncFromServerRequest = request;
+    return request.whenComplete(() {
+      if (identical(_syncFromServerRequest, request)) {
+        _syncFromServerRequest = null;
+        _syncFromServerGroupName = null;
+      }
+    });
+  }
+
+  Future<void> _syncFromServerOnce(String groupName) async {
+    final group = _service.getGroupByName(groupName);
+    if (group == null) return;
+
     setState(() => _syncing = true);
+
     try {
-      await _syncAllGroups();
-      final records = await widget.client.listAttendance(_group!.name);
-      var dates = _service.getDatesByGroup(_group!);
+      final rosterAndDatesFuture = _syncGroupRosterAndDates(group);
+      final attendanceFuture = widget.client.listAttendance(groupName);
+      final results = await Future.wait<dynamic>([
+        rosterAndDatesFuture,
+        attendanceFuture,
+      ]);
+      final records = results[1] as List<AttendanceRecord>;
+
+      var dates = _service.getDatesByGroup(group);
+
       for (final record in records) {
         var student = _service.getStudentByNameAndGroup(
           record.studentName,
-          _group!.groupId,
+          group.groupId,
         );
+
         if (student == null) {
-          student = Student(name: record.studentName, groupId: _group!.groupId);
+          student = Student(name: record.studentName, groupId: group.groupId);
           await _service.addStudent(student);
         }
 
         final slot = record.lessonSlot < 1 ? 1 : record.lessonSlot;
         final label = _formatDateLabelWithSlot(record.classDate, slot);
+
         LessonDate? date;
+
         for (final d in dates) {
           if (_lessonDateIdentity(d) == _dateIdentity(record.classDate, slot)) {
             date = d;
             break;
           }
         }
+
         if (date == null) {
           final created = LessonDate(
             date: record.classDate,
             label: label,
-            groupId: _group!.groupId,
+            groupId: group.groupId,
           );
+
           await _service.addDate(created);
-          dates = _service.getDatesByGroup(_group!);
+
+          dates = _service.getDatesByGroup(group);
+
           date = dates.firstWhere(
             (d) =>
                 _lessonDateIdentity(d) == _dateIdentity(record.classDate, slot),
@@ -419,12 +495,13 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
         await _service.addOrUpdateAttendance(
           Attendance(
             studentName: student.name,
-            groupId: _group!.groupId,
+            groupId: group.groupId,
             dateId: date.key.toString(),
             present: record.present,
           ),
         );
       }
+
       if (mounted) {
         setState(() {
           _online = true;

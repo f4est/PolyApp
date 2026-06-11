@@ -10,6 +10,10 @@ class ApiClient {
 
   final String baseUrl;
   final String? token;
+  final Map<String, Future<List<String>>> _journalStudentsRequests =
+      <String, Future<List<String>>>{};
+  final Map<String, Future<List<JournalDateEntry>>> _journalDateEntryRequests =
+      <String, Future<List<JournalDateEntry>>>{};
 
   static String _normalizeBaseUrl(String value) {
     final trimmed = value.trim();
@@ -21,6 +25,9 @@ class ApiClient {
 
   Map<String, String> _headers({bool jsonBody = false}) {
     final headers = <String, String>{};
+
+    headers['ngrok-skip-browser-warning'] = 'true';
+
     if (jsonBody) {
       headers['Content-Type'] = 'application/json';
     }
@@ -1001,13 +1008,21 @@ class ApiClient {
   }
 
   Future<List<String>> listJournalStudents(String groupName) async {
+    final key = groupName.trim();
+    final pending = _journalStudentsRequests[key];
+    if (pending != null) {
+      return pending;
+    }
     final uri = Uri.parse(
       '$baseUrl/journal/students',
     ).replace(queryParameters: {'group_name': groupName});
-    final response = await http.get(uri, headers: _headers());
-    _ensureSuccess(response);
-    final data = jsonDecode(response.body) as List<dynamic>;
-    return data.map((item) => item.toString()).toList();
+    final future = http.get(uri, headers: _headers()).then((response) {
+      _ensureSuccess(response);
+      final data = jsonDecode(response.body) as List<dynamic>;
+      return data.map((item) => item.toString()).toList();
+    });
+    _journalStudentsRequests[key] = future;
+    return future.whenComplete(() => _journalStudentsRequests.remove(key));
   }
 
   Future<List<UserPublicProfile>> listConfirmedJournalStudents(
@@ -1036,6 +1051,7 @@ class ApiClient {
       body: jsonEncode({'group_name': groupName, 'student_name': studentName}),
     );
     _ensureSuccess(response);
+    _journalStudentsRequests.remove(groupName.trim());
   }
 
   Future<void> deleteJournalStudent({
@@ -1047,29 +1063,38 @@ class ApiClient {
     );
     final response = await http.delete(uri, headers: _headers());
     _ensureSuccess(response);
+    _journalStudentsRequests.remove(groupName.trim());
   }
 
   Future<List<JournalDateEntry>> listJournalDateEntries(
     String groupName,
   ) async {
+    final key = groupName.trim();
+    final pending = _journalDateEntryRequests[key];
+    if (pending != null) {
+      return pending;
+    }
     final uri = Uri.parse(
       '$baseUrl/journal/dates',
     ).replace(queryParameters: {'group_name': groupName});
-    final response = await http.get(uri, headers: _headers());
-    _ensureSuccess(response);
-    final data = jsonDecode(response.body) as List<dynamic>;
-    return data.map((item) {
-      if (item is Map<String, dynamic>) {
-        return JournalDateEntry.fromJson(item);
-      }
-      if (item is Map) {
-        return JournalDateEntry.fromJson(item.cast<String, dynamic>());
-      }
-      return JournalDateEntry(
-        classDate: DateTime.parse(item.toString()),
-        lessonSlot: 1,
-      );
-    }).toList();
+    final future = http.get(uri, headers: _headers()).then((response) {
+      _ensureSuccess(response);
+      final data = jsonDecode(response.body) as List<dynamic>;
+      return data.map((item) {
+        if (item is Map<String, dynamic>) {
+          return JournalDateEntry.fromJson(item);
+        }
+        if (item is Map) {
+          return JournalDateEntry.fromJson(item.cast<String, dynamic>());
+        }
+        return JournalDateEntry(
+          classDate: DateTime.parse(item.toString()),
+          lessonSlot: 1,
+        );
+      }).toList();
+    });
+    _journalDateEntryRequests[key] = future;
+    return future.whenComplete(() => _journalDateEntryRequests.remove(key));
   }
 
   Future<List<DateTime>> listJournalDates(String groupName) async {
@@ -1093,6 +1118,7 @@ class ApiClient {
     );
     _ensureSuccess(response);
     final payload = _decodeJsonObject(response.body);
+    _journalDateEntryRequests.remove(groupName.trim());
     return JournalDateEntry.fromJson(payload);
   }
 
@@ -1110,6 +1136,7 @@ class ApiClient {
     );
     final response = await http.delete(uri, headers: _headers());
     _ensureSuccess(response);
+    _journalDateEntryRequests.remove(groupName.trim());
   }
 
   Future<List<AttendanceRecord>> listAttendance(String groupName) async {
