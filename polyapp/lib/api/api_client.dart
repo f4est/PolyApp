@@ -23,6 +23,33 @@ class ApiClient {
     return trimmed.replaceFirst(RegExp(r'/+$'), '');
   }
 
+  static String baseGroupName(String value) {
+    return value.trim().replaceFirst(RegExp(r'@@t\d+$'), '').trim();
+  }
+
+  static List<String> baseGroupNames(Iterable<String> values) {
+    final unique = <String>{};
+    for (final value in values) {
+      final normalized = baseGroupName(value);
+      if (normalized.isNotEmpty) {
+        unique.add(normalized);
+      }
+    }
+    final list = unique.toList(growable: false);
+    list.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return list;
+  }
+
+  static List<String> _uniqueSortedStrings(Iterable<String> values) {
+    final unique = values
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    unique.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return unique;
+  }
+
   Map<String, String> _headers({bool jsonBody = false}) {
     final headers = <String, String>{};
 
@@ -372,6 +399,40 @@ class ApiClient {
     _ensureSuccess(response);
   }
 
+  Future<List<int>> exportUsersCsvBytes() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/users/export.csv'),
+      headers: _headers(),
+    );
+    _ensureSuccess(response);
+    return response.bodyBytes;
+  }
+
+  Future<UserImportResult> importUsersCsvBytes({
+    required String filename,
+    required List<int> bytes,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/users/import.csv'),
+    );
+    request.headers.addAll(_headers());
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: _sanitizeMultipartFilename(filename),
+        contentType: MediaType('text', 'csv'),
+      ),
+    );
+    final response = await request.send();
+    final responseBytes = await response.stream.toBytes();
+    final body = utf8.decode(responseBytes, allowMalformed: true);
+    final wrapped = http.Response(body, response.statusCode);
+    _ensureSuccess(wrapped);
+    return UserImportResult.fromJson(_decodeJsonObject(body));
+  }
+
   Future<UserProfile> approveUserAsAdmin(
     int userId, {
     bool approved = true,
@@ -719,7 +780,7 @@ class ApiClient {
     final response = await http.get(uri, headers: _headers());
     _ensureSuccess(response);
     final data = jsonDecode(response.body) as List<dynamic>;
-    return data.map((item) => item.toString()).toList();
+    return baseGroupNames(data.map((item) => item.toString()));
   }
 
   Future<List<String>> listScheduleTeachers({DateTime? at}) async {
@@ -865,7 +926,7 @@ class ApiClient {
     );
     _ensureSuccess(response);
     final data = jsonDecode(response.body) as List<dynamic>;
-    return data.map((item) => item.toString()).toList();
+    return baseGroupNames(data.map((item) => item.toString()));
   }
 
   Future<List<DbTableMetaDto>> dbListTables() async {
@@ -1279,9 +1340,37 @@ class ApiClient {
     );
     _ensureSuccess(response);
     final data = jsonDecode(response.body) as List<dynamic>;
-    return data
-        .map((item) => GroupAnalytics.fromJson(item as Map<String, dynamic>))
-        .toList();
+    final byGroup = <String, GroupAnalytics>{};
+    for (final item in data) {
+      final row = GroupAnalytics.fromJson(item as Map<String, dynamic>);
+      final groupName = baseGroupName(row.groupName);
+      if (groupName.isEmpty) continue;
+      final existing = byGroup[groupName];
+      if (existing == null) {
+        byGroup[groupName] = GroupAnalytics(
+          groupName: groupName,
+          subjects: row.subjects,
+          teachers: row.teachers,
+        );
+      } else {
+        byGroup[groupName] = GroupAnalytics(
+          groupName: groupName,
+          subjects: _uniqueSortedStrings([
+            ...existing.subjects,
+            ...row.subjects,
+          ]),
+          teachers: _uniqueSortedStrings([
+            ...existing.teachers,
+            ...row.teachers,
+          ]),
+        );
+      }
+    }
+    final groups = byGroup.values.toList(growable: false);
+    groups.sort(
+      (a, b) => a.groupName.toLowerCase().compareTo(b.groupName.toLowerCase()),
+    );
+    return groups;
   }
 
   Future<List<AttendanceRecord>> listAnalyticsAttendance({
@@ -2119,7 +2208,7 @@ class ApiClient {
     );
     _ensureSuccess(response);
     final data = _decodeJsonList(response.body);
-    return data.map((item) => item.toString()).toList();
+    return baseGroupNames(data.map((item) => item.toString()));
   }
 
   Future<List<UserPublicProfile>> listMakeupStudentsByGroup(
@@ -2447,6 +2536,31 @@ class UserProfile {
       birthDate: json['birth_date'] == null
           ? null
           : DateTime.parse(json['birth_date'] as String),
+    );
+  }
+}
+
+class UserImportResult {
+  UserImportResult({
+    required this.created,
+    required this.updated,
+    required this.skipped,
+    required this.errors,
+  });
+
+  final int created;
+  final int updated;
+  final int skipped;
+  final List<String> errors;
+
+  factory UserImportResult.fromJson(Map<String, dynamic> json) {
+    return UserImportResult(
+      created: (json['created'] as num?)?.toInt() ?? 0,
+      updated: (json['updated'] as num?)?.toInt() ?? 0,
+      skipped: (json['skipped'] as num?)?.toInt() ?? 0,
+      errors: (json['errors'] as List<dynamic>? ?? const [])
+          .map((item) => item.toString())
+          .toList(),
     );
   }
 }

@@ -73,6 +73,17 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
     }
   }
 
+  String _baseGroup(String value) => ApiClient.baseGroupName(value);
+
+  bool _matchesGroup(String value, String group) => _baseGroup(value) == group;
+
+  void _selectGroup(String group) {
+    setState(() {
+      _selectedGroup = group;
+      _globalMode = false;
+    });
+  }
+
   Future<void> _reload() async {
     if (!mounted) return;
     setState(() {
@@ -146,19 +157,24 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
   }) {
     final set = <String>{};
     for (final item in groups) {
-      if (item.groupName.trim().isNotEmpty) set.add(item.groupName.trim());
+      final group = _baseGroup(item.groupName);
+      if (group.isNotEmpty) set.add(group);
     }
     for (final item in attendance) {
-      if (item.groupName.trim().isNotEmpty) set.add(item.groupName.trim());
+      final group = _baseGroup(item.groupName);
+      if (group.isNotEmpty) set.add(group);
     }
     for (final item in grades) {
-      if (item.groupName.trim().isNotEmpty) set.add(item.groupName.trim());
+      final group = _baseGroup(item.groupName);
+      if (group.isNotEmpty) set.add(group);
     }
     for (final item in exams) {
-      if (item.groupName.trim().isNotEmpty) set.add(item.groupName.trim());
+      final group = _baseGroup(item.groupName);
+      if (group.isNotEmpty) set.add(group);
     }
     for (final item in makeups) {
-      if (item.groupName.trim().isNotEmpty) set.add(item.groupName.trim());
+      final group = _baseGroup(item.groupName);
+      if (group.isNotEmpty) set.add(group);
     }
     final out = set.toList()..sort();
     return out;
@@ -170,31 +186,41 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
         map.putIfAbsent(name, () => _GroupAgg(name));
 
     for (final row in _groups) {
-      final agg = touch(row.groupName);
+      final group = _baseGroup(row.groupName);
+      if (group.isEmpty) continue;
+      final agg = touch(group);
       agg.subjects.addAll(row.subjects);
       agg.teachers.addAll(row.teachers);
     }
     for (final row in _grades) {
-      final agg = touch(row.groupName);
+      final group = _baseGroup(row.groupName);
+      if (group.isEmpty) continue;
+      final agg = touch(group);
       agg.gradeCount += 1;
       agg.gradeTotal += row.grade;
       agg.gradeValues.add(row.grade.toDouble());
       agg.students.add(row.studentName);
     }
     for (final row in _attendance) {
-      final agg = touch(row.groupName);
+      final group = _baseGroup(row.groupName);
+      if (group.isEmpty) continue;
+      final agg = touch(group);
       agg.attendanceTotal += 1;
       if (row.present) agg.attendancePresent += 1;
       agg.students.add(row.studentName);
     }
     for (final row in _exams) {
-      final agg = touch(row.groupName);
+      final group = _baseGroup(row.groupName);
+      if (group.isEmpty) continue;
+      final agg = touch(group);
       agg.examCount += 1;
       agg.examTotal += row.grade;
       if (row.grade >= 50) agg.examPassed += 1;
     }
     for (final row in _makeups) {
-      final agg = touch(row.groupName);
+      final group = _baseGroup(row.groupName);
+      if (group.isEmpty) continue;
+      final agg = touch(group);
       agg.makeupTotal += 1;
       if (_isClosedMakeup(row.status)) {
         agg.makeupClosed += 1;
@@ -208,7 +234,7 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
   List<_Trend> _gradeTrend({String? group}) {
     final bucket = <DateTime, List<double>>{};
     for (final row in _grades) {
-      if (group != null && row.groupName != group) continue;
+      if (group != null && !_matchesGroup(row.groupName, group)) continue;
       final key = _monthlyTrend
           ? DateTime(row.classDate.year, row.classDate.month, 1)
           : _weekStart(row.classDate);
@@ -253,7 +279,7 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
   List<int> _weekdayAbsences({String? group}) {
     final data = List<int>.filled(7, 0);
     for (final row in _attendance) {
-      if (group != null && row.groupName != group) continue;
+      if (group != null && !_matchesGroup(row.groupName, group)) continue;
       if (row.present) continue;
       data[(row.classDate.weekday - 1).clamp(0, 6)] += 1;
     }
@@ -265,9 +291,10 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
     final bins = <String, int>{'0-49': 0, '50-69': 0, '70-84': 0, '85-100': 0};
     final groupValues = <String, List<int>>{};
     for (final row in _exams) {
-      if (group != null && row.groupName != group) continue;
+      final baseGroup = _baseGroup(row.groupName);
+      if (group != null && baseGroup != group) continue;
       values.add(row.grade);
-      groupValues.putIfAbsent(row.groupName, () => <int>[]).add(row.grade);
+      groupValues.putIfAbsent(baseGroup, () => <int>[]).add(row.grade);
       if (row.grade < 50) {
         bins['0-49'] = (bins['0-49'] ?? 0) + 1;
       } else if (row.grade < 70) {
@@ -346,6 +373,15 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
         normalized.contains('rejected') ||
         normalized.contains('закры') ||
         normalized.contains('выполн');
+  }
+
+  bool _isRequestProgressStatus(String status) {
+    final normalized = status.toLowerCase();
+    return normalized.contains('progress') ||
+        normalized.contains('review') ||
+        normalized.contains('process') ||
+        normalized.contains('работ') ||
+        normalized.contains('рассмотр');
   }
 
   _AnalyticsOverview _overview({
@@ -525,31 +561,35 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
     final activeCases = <String, int>{};
 
     for (final row in _attendance) {
-      groupStudents
-          .putIfAbsent(row.groupName, () => <String>{})
-          .add(row.studentName);
+      final group = _baseGroup(row.groupName);
+      if (group.isEmpty) continue;
+      groupStudents.putIfAbsent(group, () => <String>{}).add(row.studentName);
     }
     for (final row in _grades) {
-      groupStudents
-          .putIfAbsent(row.groupName, () => <String>{})
-          .add(row.studentName);
+      final group = _baseGroup(row.groupName);
+      if (group.isEmpty) continue;
+      groupStudents.putIfAbsent(group, () => <String>{}).add(row.studentName);
     }
     for (final row in _groups) {
+      final group = _baseGroup(row.groupName);
+      if (group.isEmpty) continue;
       for (final teacher in row.teachers) {
-        teacherGroups.putIfAbsent(teacher, () => <String>{}).add(row.groupName);
+        teacherGroups.putIfAbsent(teacher, () => <String>{}).add(group);
       }
     }
     for (final row in _assignments) {
-      teacherGroups
-          .putIfAbsent(row.teacherName, () => <String>{})
-          .add(row.groupName);
+      final group = _baseGroup(row.groupName);
+      if (group.isEmpty) continue;
+      teacherGroups.putIfAbsent(row.teacherName, () => <String>{}).add(group);
     }
     for (final row in _makeups) {
       if (_isClosedMakeup(row.status)) continue;
+      final group = _baseGroup(row.groupName);
+      if (group.isEmpty) continue;
       final name = row.teacherName.trim().isEmpty
           ? 'Unknown'
           : row.teacherName.trim();
-      teacherGroups.putIfAbsent(name, () => <String>{}).add(row.groupName);
+      teacherGroups.putIfAbsent(name, () => <String>{}).add(group);
       activeCases[name] = (activeCases[name] ?? 0) + 1;
     }
 
@@ -562,6 +602,7 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
       out.add(
         _TeacherLoad(
           teacher,
+          groups.toList()..sort(),
           groups.length,
           students.length,
           activeCases[teacher] ?? 0,
@@ -572,23 +613,77 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
     return out;
   }
 
+  List<String> _groupTeachers(String group) {
+    final values = <String>{};
+    for (final row in _groups.where(
+      (item) => _matchesGroup(item.groupName, group),
+    )) {
+      values.addAll(
+        row.teachers
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty),
+      );
+    }
+    for (final row in _assignments.where(
+      (item) => _matchesGroup(item.groupName, group),
+    )) {
+      final name = row.teacherName.trim();
+      if (name.isNotEmpty) values.add(name);
+    }
+    for (final row in _makeups.where(
+      (item) => _matchesGroup(item.groupName, group),
+    )) {
+      final name = row.teacherName.trim();
+      if (name.isNotEmpty) values.add(name);
+    }
+    final list = values.toList(growable: false);
+    list.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return list;
+  }
+
+  List<String> _groupSubjects(String group) {
+    final values = <String>{};
+    for (final row in _groups.where(
+      (item) => _matchesGroup(item.groupName, group),
+    )) {
+      values.addAll(
+        row.subjects
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty),
+      );
+    }
+    for (final row in _assignments.where(
+      (item) => _matchesGroup(item.groupName, group),
+    )) {
+      final subject = row.subject.trim();
+      if (subject.isNotEmpty) values.add(subject);
+    }
+    final list = values.toList(growable: false);
+    list.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return list;
+  }
+
   Map<String, _StudentAgg> _studentAgg(String group) {
     final result = <String, _StudentAgg>{};
     _StudentAgg touch(String name) =>
         result.putIfAbsent(name, () => _StudentAgg(name));
 
-    for (final row in _grades.where((g) => g.groupName == group)) {
+    for (final row in _grades.where((g) => _matchesGroup(g.groupName, group))) {
       touch(row.studentName).grades.add(row);
     }
-    for (final row in _attendance.where((a) => a.groupName == group)) {
+    for (final row in _attendance.where(
+      (a) => _matchesGroup(a.groupName, group),
+    )) {
       final agg = touch(row.studentName);
       agg.attTotal += 1;
       if (row.present) agg.attPresent += 1;
     }
-    for (final row in _exams.where((e) => e.groupName == group)) {
+    for (final row in _exams.where((e) => _matchesGroup(e.groupName, group))) {
       touch(row.studentName).exams.add(row.grade.toDouble());
     }
-    for (final row in _makeups.where((m) => m.groupName == group)) {
+    for (final row in _makeups.where(
+      (m) => _matchesGroup(m.groupName, group),
+    )) {
       final agg = touch(row.studentName);
       if (_isClosedMakeup(row.status)) {
         agg.makeupsClosed += 1;
@@ -658,13 +753,15 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
 
   List<_ProblemDate> _problemDates(String group) {
     final map = <DateTime, _DateAcc>{};
-    for (final row in _attendance.where((a) => a.groupName == group)) {
+    for (final row in _attendance.where(
+      (a) => _matchesGroup(a.groupName, group),
+    )) {
       final day = DateUtils.dateOnly(row.classDate);
       final acc = map.putIfAbsent(day, () => _DateAcc(day));
       acc.attTotal += 1;
       if (row.present) acc.attPresent += 1;
     }
-    for (final row in _grades.where((g) => g.groupName == group)) {
+    for (final row in _grades.where((g) => _matchesGroup(g.groupName, group))) {
       final day = DateUtils.dateOnly(row.classDate);
       final acc = map.putIfAbsent(day, () => _DateAcc(day));
       acc.gradeTotal += row.grade;
@@ -706,10 +803,10 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
     double? depMedian;
     if (_departments.isNotEmpty) {
       for (final dep in _departments) {
-        if (!dep.groups.contains(group)) continue;
+        if (!dep.groups.map(_baseGroup).contains(group)) continue;
         depName = dep.name;
         final values = dep.groups
-            .map((name) => aggregate[name])
+            .map((name) => aggregate[_baseGroup(name)])
             .whereType<_GroupAgg>()
             .where((item) => item.gradeCount > 0)
             .map((item) => item.gradeAvg)
@@ -767,12 +864,44 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
     );
   }
 
-  Widget _pill(String title, String value, Color color) {
-    return Container(
+  void _showDetails(String title, List<String> rows) {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: SizedBox(
+          width: 620,
+          child: rows.isEmpty
+              ? Text(_t('Нет данных.', 'No data.'))
+              : ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: rows.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, index) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: SelectableText(rows[index]),
+                  ),
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(_t('Закрыть', 'Close')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _pill(String title, String value, Color color, {VoidCallback? onTap}) {
+    final content = Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(12),
+        border: onTap == null
+            ? null
+            : Border.all(color: color.withValues(alpha: 0.25)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -785,6 +914,12 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
         ],
       ),
     );
+    if (onTap == null) return content;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: content,
+    );
   }
 
   Widget _metricCard({
@@ -793,50 +928,56 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
     required String value,
     required Color color,
     String? hint,
+    VoidCallback? onTap,
   }) {
-    return ConstrainedBox(
-      constraints: const BoxConstraints(minWidth: 170, maxWidth: 240),
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(14),
-          color: color.withValues(alpha: 0.10),
-          border: Border.all(color: color.withValues(alpha: 0.35)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(icon, size: 18, color: color),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    label,
-                    style: const TextStyle(
-                      color: _muted,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
+    final content = Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        color: color.withValues(alpha: 0.10),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 18, color: color),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    color: _muted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              value,
-              style: TextStyle(
-                color: color,
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
               ),
-            ),
-            if (hint != null) ...[
-              const SizedBox(height: 4),
-              Text(hint, style: const TextStyle(color: _muted, fontSize: 12)),
             ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          if (hint != null) ...[
+            const SizedBox(height: 4),
+            Text(hint, style: const TextStyle(color: _muted, fontSize: 12)),
           ],
-        ),
+        ],
+      ),
+    );
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 170, maxWidth: 240),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: content,
       ),
     );
   }
@@ -883,8 +1024,28 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
     );
 
     final selected = _selectedGroup;
+    final selectedTeachers = selected == null
+        ? const <String>[]
+        : _groupTeachers(selected);
+    final selectedSubjects = selected == null
+        ? const <String>[]
+        : _groupSubjects(selected);
     final risks = selected == null ? const <_RiskRow>[] : _riskRows(selected);
     final corr = selected == null ? 0.0 : _correlation(selected);
+    final corrMeaning = corr.abs() < 0.2
+        ? _t('почти не влияет', 'almost no visible effect')
+        : corr.abs() < 0.5
+        ? _t('заметно влияет', 'visible effect')
+        : _t('сильно влияет', 'strong effect');
+    final corrDirection = corr >= 0
+        ? _t(
+            'чем выше посещаемость, тем выше оценки',
+            'higher attendance tends to match higher grades',
+          )
+        : _t(
+            'зависимость обратная или данные нестабильны',
+            'inverse relation or unstable data',
+          );
     final problems = selected == null
         ? const <_ProblemDate>[]
         : _problemDates(selected);
@@ -906,6 +1067,97 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
     final latestDelta = (latestTrend == null || previousTrend == null)
         ? null
         : latestTrend.avg - previousTrend.avg;
+    final scopedGroups = _globalMode
+        ? aggregate.values.toList()
+        : [
+            if (selected != null && aggregate[selected] != null)
+              aggregate[selected]!,
+          ];
+    List<String> scopedStudents() {
+      final values = <String>{};
+      for (final group in scopedGroups) {
+        for (final student in group.students) {
+          values.add('${group.group}: $student');
+        }
+      }
+      final out = values.toList()..sort();
+      return out;
+    }
+
+    List<String> scopedTeachers() {
+      final values = <String>{};
+      for (final group in scopedGroups) {
+        for (final teacher in group.teachers) {
+          values.add('${group.group}: $teacher');
+        }
+      }
+      final out = values.toList()..sort();
+      return out;
+    }
+
+    List<String> scopedGrades() {
+      final rows = _grades
+          .where(
+            (row) =>
+                _globalMode ||
+                (selected != null && _matchesGroup(row.groupName, selected)),
+          )
+          .map(
+            (row) =>
+                '${_baseGroup(row.groupName)} | ${row.studentName} | ${DateFormat('dd.MM.yyyy').format(row.classDate)} | ${row.grade}',
+          )
+          .toList();
+      rows.sort();
+      return rows;
+    }
+
+    List<String> scopedAttendanceRows() {
+      final rows = _attendance
+          .where(
+            (row) =>
+                _globalMode ||
+                (selected != null && _matchesGroup(row.groupName, selected)),
+          )
+          .map(
+            (row) =>
+                '${_baseGroup(row.groupName)} | ${row.studentName} | ${DateFormat('dd.MM.yyyy').format(row.classDate)} | ${row.present ? _t('присутствовал', 'present') : _t('отсутствовал', 'absent')}',
+          )
+          .toList();
+      rows.sort();
+      return rows;
+    }
+
+    List<String> scopedExamRows() {
+      final rows = _exams
+          .where(
+            (row) =>
+                _globalMode ||
+                (selected != null && _matchesGroup(row.groupName, selected)),
+          )
+          .map(
+            (row) =>
+                '${_baseGroup(row.groupName)} | ${row.studentName} | ${row.examName} | ${row.grade}',
+          )
+          .toList();
+      rows.sort();
+      return rows;
+    }
+
+    List<String> scopedMakeupsRows() {
+      final rows = _makeups
+          .where(
+            (row) =>
+                _globalMode ||
+                (selected != null && _matchesGroup(row.groupName, selected)),
+          )
+          .map(
+            (row) =>
+                '${_baseGroup(row.groupName)} | ${row.studentName} | ${row.teacherName} | ${row.status}',
+          )
+          .toList();
+      rows.sort();
+      return rows;
+    }
 
     return Container(
       decoration: const BoxDecoration(
@@ -1087,24 +1339,45 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                         label: _t('Группы в срезе', 'Groups in scope'),
                         value: '${overview.groupCount}',
                         color: _brand,
+                        onTap: () => _showDetails(
+                          _t('Группы в срезе', 'Groups in scope'),
+                          scopedGroups
+                              .map(
+                                (g) =>
+                                    '${g.group}: ${_t('студенты', 'students')} ${g.students.length}, ${_t('средний', 'avg')} ${g.gradeAvg.toStringAsFixed(1)}, ${_t('посещаемость', 'attendance')} ${(g.attRate * 100).toStringAsFixed(1)}%',
+                              )
+                              .toList(),
+                        ),
                       ),
                       _metricCard(
                         icon: Icons.school_rounded,
                         label: _t('Студенты', 'Students'),
                         value: '${overview.studentCount}',
                         color: const Color(0xFF2563EB),
+                        onTap: () => _showDetails(
+                          _t('Студенты', 'Students'),
+                          scopedStudents(),
+                        ),
                       ),
                       _metricCard(
                         icon: Icons.person_rounded,
                         label: _t('Преподаватели', 'Teachers'),
                         value: '${overview.teacherCount}',
                         color: const Color(0xFF7C3AED),
+                        onTap: () => _showDetails(
+                          _t('Преподаватели', 'Teachers'),
+                          scopedTeachers(),
+                        ),
                       ),
                       _metricCard(
                         icon: Icons.grade_rounded,
                         label: _t('Средний балл', 'Average grade'),
                         value: overview.averageGrade.toStringAsFixed(1),
                         color: overview.averageGrade < 65 ? _warn : _ok,
+                        onTap: () => _showDetails(
+                          _t('Оценки журнала', 'Journal grades'),
+                          scopedGrades(),
+                        ),
                       ),
                       _metricCard(
                         icon: Icons.fact_check_outlined,
@@ -1112,6 +1385,10 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                         value:
                             '${(overview.attendanceRate * 100).toStringAsFixed(1)}%',
                         color: overview.attendanceRate < 0.8 ? _err : _ok,
+                        onTap: () => _showDetails(
+                          _t('Посещаемость', 'Attendance'),
+                          scopedAttendanceRows(),
+                        ),
                       ),
                       _metricCard(
                         icon: Icons.assignment_turned_in_outlined,
@@ -1119,12 +1396,20 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                         value:
                             '${(overview.examPassRate * 100).toStringAsFixed(1)}%',
                         color: overview.examPassRate < 0.7 ? _warn : _ok,
+                        onTap: () => _showDetails(
+                          _t('Экзамены', 'Exams'),
+                          scopedExamRows(),
+                        ),
                       ),
                       _metricCard(
                         icon: Icons.assignment_late_outlined,
                         label: _t('Активные отработки', 'Active makeups'),
                         value: '${overview.activeMakeups}',
                         color: overview.activeMakeups > 0 ? _warn : _ok,
+                        onTap: () => _showDetails(
+                          _t('Отработки', 'Makeups'),
+                          scopedMakeupsRows(),
+                        ),
                       ),
                       _metricCard(
                         icon: Icons.mark_email_unread_outlined,
@@ -1142,11 +1427,116 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                                       'Ср. закрытие: ${overview.averageRequestCloseHours!.toStringAsFixed(1)} ч',
                                       'Avg close: ${overview.averageRequestCloseHours!.toStringAsFixed(1)} h',
                                     )),
+                        onTap: () => _showDetails(
+                          _t('Заявки', 'Requests'),
+                          _requests
+                              .map(
+                                (row) =>
+                                    '${row.requestType} | ${row.studentName} | ${row.status} | ${DateFormat('dd.MM.yyyy HH:mm').format(row.createdAt)}',
+                              )
+                              .toList(),
+                        ),
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 12),
+                if (!_globalMode && selected != null) ...[
+                  _panel(
+                    '${_t('Группа', 'Group')} $selected',
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      crossAxisAlignment: WrapCrossAlignment.start,
+                      children: [
+                        _metricCard(
+                          icon: Icons.co_present_outlined,
+                          label: _t('Преподаватели', 'Teachers'),
+                          value: '${selectedTeachers.length}',
+                          color: const Color(0xFF7C3AED),
+                          hint: selectedTeachers.isEmpty
+                              ? _t('Нет назначений', 'No assignments')
+                              : selectedTeachers.take(3).join(', '),
+                          onTap: () => _showDetails(
+                            _t('Преподаватели группы', 'Group teachers'),
+                            selectedTeachers,
+                          ),
+                        ),
+                        _metricCard(
+                          icon: Icons.menu_book_outlined,
+                          label: _t('Предметы', 'Subjects'),
+                          value: '${selectedSubjects.length}',
+                          color: const Color(0xFF2563EB),
+                          hint: selectedSubjects.isEmpty
+                              ? _t('Нет данных', 'No data')
+                              : selectedSubjects.take(3).join(', '),
+                          onTap: () => _showDetails(
+                            _t('Предметы группы', 'Group subjects'),
+                            selectedSubjects,
+                          ),
+                        ),
+                        _metricCard(
+                          icon: Icons.people_outline,
+                          label: _t('Студенты', 'Students'),
+                          value: '${overview.studentCount}',
+                          color: _brand,
+                          onTap: () => _showDetails(
+                            _t('Студенты группы', 'Group students'),
+                            scopedStudents(),
+                          ),
+                        ),
+                        _metricCard(
+                          icon: Icons.assignment_late_outlined,
+                          label: _t('Активные отработки', 'Active makeups'),
+                          value: '${overview.activeMakeups}',
+                          color: overview.activeMakeups > 0 ? _warn : _ok,
+                          onTap: () => _showDetails(
+                            _t('Отработки группы', 'Group makeups'),
+                            scopedMakeupsRows(),
+                          ),
+                        ),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            minWidth: 260,
+                            maxWidth: 520,
+                          ),
+                          child: Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              for (final teacher in selectedTeachers)
+                                ActionChip(
+                                  avatar: const Icon(
+                                    Icons.person_outline,
+                                    size: 18,
+                                  ),
+                                  label: Text(teacher),
+                                  onPressed: () {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          '${_t('Преподаватель', 'Teacher')}: $teacher',
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              for (final subject in selectedSubjects)
+                                Chip(
+                                  avatar: const Icon(
+                                    Icons.book_outlined,
+                                    size: 18,
+                                  ),
+                                  label: Text(subject),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 _panel(
                   _t('Что требует внимания', 'Actionable focus'),
                   Column(
@@ -1216,27 +1606,67 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                                           ),
                                           latestTrend.avg.toStringAsFixed(2),
                                           _brand,
+                                          onTap: () => _showDetails(
+                                            _t(
+                                              'Последний период',
+                                              'Latest period',
+                                            ),
+                                            [
+                                              '${latestTrend.label}: ${_t('средний', 'avg')} ${latestTrend.avg.toStringAsFixed(2)}, ${_t('медиана', 'median')} ${latestTrend.median.toStringAsFixed(2)}, ${_t('записей', 'entries')} ${latestTrend.count}',
+                                            ],
+                                          ),
                                         ),
                                         _pill(
                                           _t('Записей', 'Entries'),
                                           '${latestTrend.count}',
                                           _warn,
+                                          onTap: () => _showDetails(
+                                            _t(
+                                              'Записи периода',
+                                              'Period entries',
+                                            ),
+                                            scopedGrades(),
+                                          ),
                                         ),
                                         if (latestDelta != null)
                                           _pill(
                                             _t('Изм. к прошлому', 'Delta'),
                                             '${latestDelta >= 0 ? '+' : ''}${latestDelta.toStringAsFixed(2)}',
                                             latestDelta >= 0 ? _ok : _err,
+                                            onTap: () => _showDetails(
+                                              _t(
+                                                'Сравнение периодов',
+                                                'Period comparison',
+                                              ),
+                                              [
+                                                '${previousTrend!.label}: ${previousTrend.avg.toStringAsFixed(2)}',
+                                                '${latestTrend.label}: ${latestTrend.avg.toStringAsFixed(2)}',
+                                                '${_t('Разница', 'Delta')}: ${latestDelta.toStringAsFixed(2)}',
+                                              ],
+                                            ),
                                           ),
                                       ],
                                     ),
                                     const SizedBox(height: 10),
                                   ],
                                   for (final item in visibleTrend) ...[
-                                    Text(
-                                      '${item.label} • ${_t('средний', 'avg')}: ${item.avg.toStringAsFixed(2)} • ${_t('записей', 'entries')}: ${item.count}',
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w600,
+                                    InkWell(
+                                      borderRadius: BorderRadius.circular(8),
+                                      onTap: () => _showDetails(item.label, [
+                                        '${_t('Средний', 'Average')}: ${item.avg.toStringAsFixed(2)}',
+                                        '${_t('Медиана', 'Median')}: ${item.median.toStringAsFixed(2)}',
+                                        '${_t('Записей', 'Entries')}: ${item.count}',
+                                      ]),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 2,
+                                        ),
+                                        child: Text(
+                                          '${item.label} • ${_t('средний', 'avg')}: ${item.avg.toStringAsFixed(2)} • ${_t('записей', 'entries')}: ${item.count}',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
                                       ),
                                     ),
                                     const SizedBox(height: 6),
@@ -1275,25 +1705,49 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                                     i < math.min(12, ranking.length);
                                     i++
                                   ) ...[
-                                    Row(
-                                      children: [
-                                        SizedBox(
-                                          width: 28,
-                                          child: Text('${i + 1}.'),
+                                    InkWell(
+                                      borderRadius: BorderRadius.circular(10),
+                                      onTap: () =>
+                                          _selectGroup(ranking[i].group),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 4,
                                         ),
-                                        Expanded(
-                                          child: Text(
-                                            '${ranking[i].group} | ${_t('индекс', 'index')}: ${ranking[i].rankScore.toStringAsFixed(1)}',
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w700,
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              children: [
+                                                SizedBox(
+                                                  width: 28,
+                                                  child: Text('${i + 1}.'),
+                                                ),
+                                                Expanded(
+                                                  child: Text(
+                                                    '${ranking[i].group} | ${_t('индекс', 'index')}: ${ranking[i].rankScore.toStringAsFixed(1)}',
+                                                    style: const TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.w700,
+                                                    ),
+                                                  ),
+                                                ),
+                                                const Icon(
+                                                  Icons.chevron_right_rounded,
+                                                  size: 18,
+                                                  color: _muted,
+                                                ),
+                                              ],
                                             ),
-                                          ),
+                                            Text(
+                                              '${_t('Оценки', 'Grades')}: ${ranking[i].gradeAvg.toStringAsFixed(1)}; ${_t('Посещ.', 'Att.')}: ${(ranking[i].attRate * 100).toStringAsFixed(1)}%; ${_t('Отработки', 'Makeups')}: ${ranking[i].makeupActive}/${ranking[i].makeupTotal}',
+                                              style: const TextStyle(
+                                                color: _muted,
+                                              ),
+                                            ),
+                                          ],
                                         ),
-                                      ],
-                                    ),
-                                    Text(
-                                      '${_t('Оценки', 'Grades')}: ${ranking[i].gradeAvg.toStringAsFixed(1)}; ${_t('Посещ.', 'Att.')}: ${(ranking[i].attRate * 100).toStringAsFixed(1)}%; ${_t('Отработки', 'Makeups')}: ${ranking[i].makeupActive}/${ranking[i].makeupTotal}',
-                                      style: const TextStyle(color: _muted),
+                                      ),
                                     ),
                                     const SizedBox(height: 8),
                                   ],
@@ -1319,35 +1773,84 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                                   ),
                                   child: Column(
                                     children: [
-                                      Container(
-                                        height: 52,
-                                        decoration: BoxDecoration(
-                                          color: Color.lerp(
-                                            const Color(0xFFE5E7EB),
-                                            const Color(0xFFDC2626),
-                                            (heat.fold<int>(
-                                                      0,
-                                                      (a, b) => math.max(a, b),
-                                                    ) ==
-                                                    0)
-                                                ? 0
-                                                : heat[i] /
-                                                      heat.fold<int>(
+                                      InkWell(
+                                        borderRadius: BorderRadius.circular(10),
+                                        onTap: () {
+                                          final dayIndex = i + 1;
+                                          final rows =
+                                              _attendance
+                                                  .where(
+                                                    (row) =>
+                                                        row.classDate.weekday ==
+                                                            dayIndex &&
+                                                        !row.present &&
+                                                        (_globalMode ||
+                                                            (selected != null &&
+                                                                _matchesGroup(
+                                                                  row.groupName,
+                                                                  selected,
+                                                                ))),
+                                                  )
+                                                  .map(
+                                                    (row) =>
+                                                        '${_baseGroup(row.groupName)} | ${row.studentName} | ${DateFormat('dd.MM.yyyy').format(row.classDate)}',
+                                                  )
+                                                  .toList()
+                                                ..sort();
+                                          _showDetails(
+                                            (_isRu
+                                                ? const [
+                                                    'Понедельник',
+                                                    'Вторник',
+                                                    'Среда',
+                                                    'Четверг',
+                                                    'Пятница',
+                                                    'Суббота',
+                                                    'Воскресенье',
+                                                  ]
+                                                : const [
+                                                    'Monday',
+                                                    'Tuesday',
+                                                    'Wednesday',
+                                                    'Thursday',
+                                                    'Friday',
+                                                    'Saturday',
+                                                    'Sunday',
+                                                  ])[i],
+                                            rows,
+                                          );
+                                        },
+                                        child: Container(
+                                          height: 52,
+                                          decoration: BoxDecoration(
+                                            color: Color.lerp(
+                                              const Color(0xFFE5E7EB),
+                                              const Color(0xFFDC2626),
+                                              (heat.fold<int>(
                                                         0,
                                                         (a, b) =>
                                                             math.max(a, b),
-                                                      ),
+                                                      ) ==
+                                                      0)
+                                                  ? 0
+                                                  : heat[i] /
+                                                        heat.fold<int>(
+                                                          0,
+                                                          (a, b) =>
+                                                              math.max(a, b),
+                                                        ),
+                                            ),
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
                                           ),
-                                          borderRadius: BorderRadius.circular(
-                                            10,
-                                          ),
-                                        ),
-                                        alignment: Alignment.center,
-                                        child: Text(
-                                          '${heat[i]}',
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.w700,
+                                          alignment: Alignment.center,
+                                          child: Text(
+                                            '${heat[i]}',
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w700,
+                                            ),
                                           ),
                                         ),
                                       ),
@@ -1415,8 +1918,42 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                               runSpacing: 8,
                               children: exams.bins.entries
                                   .map(
-                                    (e) => Chip(
+                                    (e) => ActionChip(
                                       label: Text('${e.key}: ${e.value}'),
+                                      onPressed: () {
+                                        bool inBin(int grade) {
+                                          switch (e.key) {
+                                            case '0-49':
+                                              return grade < 50;
+                                            case '50-69':
+                                              return grade >= 50 && grade < 70;
+                                            case '70-84':
+                                              return grade >= 70 && grade < 85;
+                                            default:
+                                              return grade >= 85;
+                                          }
+                                        }
+
+                                        final rows =
+                                            _exams
+                                                .where(
+                                                  (row) =>
+                                                      inBin(row.grade) &&
+                                                      (_globalMode ||
+                                                          (selected != null &&
+                                                              _matchesGroup(
+                                                                row.groupName,
+                                                                selected,
+                                                              ))),
+                                                )
+                                                .map(
+                                                  (row) =>
+                                                      '${_baseGroup(row.groupName)} | ${row.studentName} | ${row.examName} | ${row.grade}',
+                                                )
+                                                .toList()
+                                              ..sort();
+                                        _showDetails(e.key, rows);
+                                      },
                                     ),
                                   )
                                   .toList(),
@@ -1451,16 +1988,65 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                                   _t('Новые', 'New'),
                                   '${req.fresh}',
                                   _brand,
+                                  onTap: () => _showDetails(
+                                    _t('Новые заявки', 'New requests'),
+                                    _requests
+                                        .where(
+                                          (row) =>
+                                              !_isRequestClosedStatus(
+                                                row.status,
+                                              ) &&
+                                              !_isRequestProgressStatus(
+                                                row.status,
+                                              ),
+                                        )
+                                        .map(
+                                          (row) =>
+                                              '${row.requestType} | ${row.studentName} | ${row.status}',
+                                        )
+                                        .toList(),
+                                  ),
                                 ),
                                 _pill(
                                   _t('В работе', 'In progress'),
                                   '${req.progress}',
                                   _warn,
+                                  onTap: () => _showDetails(
+                                    _t(
+                                      'Заявки в работе',
+                                      'Requests in progress',
+                                    ),
+                                    _requests
+                                        .where(
+                                          (row) => _isRequestProgressStatus(
+                                            row.status,
+                                          ),
+                                        )
+                                        .map(
+                                          (row) =>
+                                              '${row.requestType} | ${row.studentName} | ${row.status}',
+                                        )
+                                        .toList(),
+                                  ),
                                 ),
                                 _pill(
                                   _t('Закрытые', 'Closed'),
                                   '${req.closed}',
                                   _ok,
+                                  onTap: () => _showDetails(
+                                    _t('Закрытые заявки', 'Closed requests'),
+                                    _requests
+                                        .where(
+                                          (row) => _isRequestClosedStatus(
+                                            row.status,
+                                          ),
+                                        )
+                                        .map(
+                                          (row) =>
+                                              '${row.requestType} | ${row.studentName} | ${row.status}',
+                                        )
+                                        .toList(),
+                                  ),
                                 ),
                               ],
                             ),
@@ -1487,18 +2073,35 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                             : Column(
                                 children: [
                                   for (final row in load.take(15)) ...[
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            row.teacher,
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
+                                    ExpansionTile(
+                                      tilePadding: EdgeInsets.zero,
+                                      childrenPadding: const EdgeInsets.only(
+                                        bottom: 8,
+                                      ),
+                                      title: Text(
+                                        row.teacher,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
                                         ),
-                                        Text(
-                                          '${_t('Групп', 'Groups')}: ${row.groupCount} | ${_t('Студентов', 'Students')}: ${row.studentCount} | ${_t('Активные кейсы', 'Active cases')}: ${row.activeCases}',
+                                      ),
+                                      subtitle: Text(
+                                        '${_t('Групп', 'Groups')}: ${row.groupCount} | ${_t('Студентов', 'Students')}: ${row.studentCount} | ${_t('Активные кейсы', 'Active cases')}: ${row.activeCases}',
+                                      ),
+                                      children: [
+                                        Align(
+                                          alignment: Alignment.centerLeft,
+                                          child: Wrap(
+                                            spacing: 8,
+                                            runSpacing: 8,
+                                            children: [
+                                              for (final group in row.groups)
+                                                ActionChip(
+                                                  label: Text(group),
+                                                  onPressed: () =>
+                                                      _selectGroup(group),
+                                                ),
+                                            ],
+                                          ),
                                         ),
                                       ],
                                     ),
@@ -1513,17 +2116,62 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                         width: twoColWidth,
                         child: _panel(
                           _t(
-                            'Связь посещаемости и оценок',
-                            'Attendance-grade correlation',
+                            'Как посещаемость влияет на оценки',
+                            'How attendance affects grades',
+                          ),
+                          subtitle: _t(
+                            'Сравниваем посещаемость каждого студента со средним баллом. Это помогает увидеть, связаны ли пропуски с низкими оценками.',
+                            'Compares each student attendance with average grade to show whether absences are linked to lower grades.',
                           ),
                           Wrap(
                             spacing: 8,
                             runSpacing: 8,
                             children: [
                               _pill(
-                                'r',
+                                _t('Показатель влияния', 'Influence score'),
                                 corr.toStringAsFixed(3),
                                 corr >= 0 ? _ok : _err,
+                                onTap: () => _showDetails(
+                                  _t(
+                                    'Как читать показатель',
+                                    'How to read the score',
+                                  ),
+                                  [
+                                    '${_t('Показатель влияния', 'Influence score')}: ${corr.toStringAsFixed(3)}',
+                                    '${_t('Вывод', 'Conclusion')}: $corrMeaning',
+                                    '${_t('Что это значит', 'Meaning')}: $corrDirection',
+                                    '',
+                                    ...students
+                                        .where(
+                                          (s) =>
+                                              s.attTotal > 0 &&
+                                              s.grades.isNotEmpty,
+                                        )
+                                        .map(
+                                          (s) =>
+                                              '${s.student}: ${_t('посещаемость', 'attendance')} ${(s.attRate * 100).toStringAsFixed(1)}%, ${_t('средний балл', 'avg grade')} ${s.avgGrade.toStringAsFixed(1)}',
+                                        ),
+                                  ],
+                                ),
+                              ),
+                              _pill(
+                                _t('Понятный вывод', 'Plain conclusion'),
+                                corrMeaning,
+                                _brand,
+                                onTap: () => _showDetails(
+                                  _t('Что это означает', 'What this means'),
+                                  [
+                                    corrDirection,
+                                    _t(
+                                      'Положительное значение означает: у тех, кто чаще посещает занятия, оценки обычно выше.',
+                                      'A positive value means students with better attendance usually have higher grades.',
+                                    ),
+                                    _t(
+                                      'Значение около 0 означает: по текущим данным явной зависимости почти не видно.',
+                                      'A value near 0 means current data shows little visible dependency.',
+                                    ),
+                                  ],
+                                ),
                               ),
                               _pill(
                                 _t('Топ риск', 'Top risk'),
@@ -1533,6 +2181,15 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                                     : risks.first.risk >= 70
                                     ? _err
                                     : _warn,
+                                onTap: () => _showDetails(
+                                  _t('Студенты риска', 'Risk students'),
+                                  risks
+                                      .map(
+                                        (row) =>
+                                            '${row.student}: ${row.risk}% | ${_t('оценка', 'grade')} ${row.avgGrade.toStringAsFixed(1)} | ${_t('посещаемость', 'attendance')} ${(row.attendanceRate * 100).toStringAsFixed(1)}%',
+                                      )
+                                      .toList(),
+                                ),
                               ),
                             ],
                           ),
@@ -1593,29 +2250,85 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                                   children: problems
                                       .take(12)
                                       .map(
-                                        (item) => Padding(
-                                          padding: const EdgeInsets.only(
-                                            bottom: 8,
+                                        (item) => InkWell(
+                                          borderRadius: BorderRadius.circular(
+                                            8,
                                           ),
-                                          child: Row(
-                                            children: [
-                                              SizedBox(
-                                                width: 100,
-                                                child: Text(
-                                                  DateFormat(
-                                                    'dd.MM',
-                                                  ).format(item.date),
+                                          onTap: () {
+                                            final day = DateUtils.dateOnly(
+                                              item.date,
+                                            );
+                                            final rows = <String>[
+                                              '${_t('Дата', 'Date')}: ${DateFormat('dd.MM.yyyy').format(day)}',
+                                              '${_t('Пропуски', 'Absences')}: ${(item.absentRate * 100).toStringAsFixed(1)}%',
+                                              '${_t('Средняя оценка', 'Average grade')}: ${item.avgGrade.toStringAsFixed(1)}',
+                                              '${_t('Индекс проблемы', 'Problem index')}: ${item.score.toStringAsFixed(1)}',
+                                              '',
+                                              ..._attendance
+                                                  .where(
+                                                    (row) =>
+                                                        _matchesGroup(
+                                                          row.groupName,
+                                                          selected,
+                                                        ) &&
+                                                        DateUtils.dateOnly(
+                                                              row.classDate,
+                                                            ) ==
+                                                            day &&
+                                                        !row.present,
+                                                  )
+                                                  .map(
+                                                    (row) =>
+                                                        '${row.studentName}: ${_t('отсутствовал', 'absent')}',
+                                                  ),
+                                              ..._grades
+                                                  .where(
+                                                    (row) =>
+                                                        _matchesGroup(
+                                                          row.groupName,
+                                                          selected,
+                                                        ) &&
+                                                        DateUtils.dateOnly(
+                                                              row.classDate,
+                                                            ) ==
+                                                            day,
+                                                  )
+                                                  .map(
+                                                    (row) =>
+                                                        '${row.studentName}: ${_t('оценка', 'grade')} ${row.grade}',
+                                                  ),
+                                            ];
+                                            _showDetails(
+                                              DateFormat(
+                                                'dd.MM.yyyy',
+                                              ).format(day),
+                                              rows,
+                                            );
+                                          },
+                                          child: Padding(
+                                            padding: const EdgeInsets.only(
+                                              bottom: 8,
+                                            ),
+                                            child: Row(
+                                              children: [
+                                                SizedBox(
+                                                  width: 100,
+                                                  child: Text(
+                                                    DateFormat(
+                                                      'dd.MM',
+                                                    ).format(item.date),
+                                                  ),
                                                 ),
-                                              ),
-                                              Expanded(
-                                                child: Text(
-                                                  '${_t('Пропуски', 'Absences')}: ${(item.absentRate * 100).toStringAsFixed(1)}% | ${_t('Средняя', 'Average')}: ${item.avgGrade.toStringAsFixed(1)}',
+                                                Expanded(
+                                                  child: Text(
+                                                    '${_t('Пропуски', 'Absences')}: ${(item.absentRate * 100).toStringAsFixed(1)}% | ${_t('Средняя', 'Average')}: ${item.avgGrade.toStringAsFixed(1)}',
+                                                  ),
                                                 ),
-                                              ),
-                                              Text(
-                                                item.score.toStringAsFixed(1),
-                                              ),
-                                            ],
+                                                Text(
+                                                  item.score.toStringAsFixed(1),
+                                                ),
+                                              ],
+                                            ),
                                           ),
                                         ),
                                       )
@@ -1640,6 +2353,11 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                                       _t('Группа', 'Group'),
                                       compare.current.toStringAsFixed(2),
                                       _brand,
+                                      onTap: () => _showDetails(selected, [
+                                        '${_t('Средний балл группы', 'Group average')}: ${compare.current.toStringAsFixed(2)}',
+                                        '${_t('Студентов', 'Students')}: ${students.length}',
+                                        '${_t('Преподавателей', 'Teachers')}: ${selectedTeachers.join(', ')}',
+                                      ]),
                                     ),
                                     _pill(
                                       compare.depName == null
@@ -1651,6 +2369,26 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                                               2,
                                             ),
                                       const Color(0xFF2563EB),
+                                      onTap: () => _showDetails(
+                                        _t('Отделение', 'Department'),
+                                        [
+                                          '${_t('Название', 'Name')}: ${compare.depName ?? _t('не найдено', 'not found')}',
+                                          '${_t('Медиана отделения', 'Department median')}: ${compare.depMedian?.toStringAsFixed(2) ?? '-'}',
+                                          if (compare.depName != null)
+                                            ..._departments
+                                                .where(
+                                                  (dep) =>
+                                                      dep.name ==
+                                                      compare.depName,
+                                                )
+                                                .expand(
+                                                  (dep) => dep.groups.map(
+                                                    (group) =>
+                                                        '${_baseGroup(group)}: ${aggregate[_baseGroup(group)]?.gradeAvg.toStringAsFixed(2) ?? '-'}',
+                                                  ),
+                                                ),
+                                        ],
+                                      ),
                                     ),
                                     _pill(
                                       compare.courseKey.isEmpty
@@ -1661,6 +2399,21 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                                           : compare.courseMedian!
                                                 .toStringAsFixed(2),
                                       const Color(0xFF7C3AED),
+                                      onTap: () => _showDetails(
+                                        _t('Курс', 'Course'),
+                                        aggregate.values
+                                            .where(
+                                              (g) =>
+                                                  _course(g.group) ==
+                                                      compare.courseKey &&
+                                                  compare.courseKey.isNotEmpty,
+                                            )
+                                            .map(
+                                              (g) =>
+                                                  '${g.group}: ${g.gradeAvg.toStringAsFixed(2)}',
+                                            )
+                                            .toList(),
+                                      ),
                                     ),
                                     _pill(
                                       _t('Общая медиана', 'Overall median'),
@@ -1670,6 +2423,17 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                                               2,
                                             ),
                                       _warn,
+                                      onTap: () => _showDetails(
+                                        _t('Все группы', 'All groups'),
+                                        aggregate.values
+                                            .where((g) => g.gradeCount > 0)
+                                            .map(
+                                              (g) =>
+                                                  '${g.group}: ${g.gradeAvg.toStringAsFixed(2)}',
+                                            )
+                                            .toList()
+                                          ..sort(),
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -1697,41 +2461,81 @@ class _AnalyticsWorkspacePageState extends State<AnalyticsWorkspacePage> {
                                             minWidth: 240,
                                             maxWidth: 320,
                                           ),
-                                          child: Container(
-                                            padding: const EdgeInsets.all(12),
-                                            decoration: BoxDecoration(
-                                              borderRadius:
-                                                  BorderRadius.circular(12),
-                                              color: const Color(0xFFF7FBF8),
-                                              border: Border.all(
-                                                color: const Color(0xFFD8E3DB),
-                                              ),
+                                          child: InkWell(
+                                            borderRadius: BorderRadius.circular(
+                                              12,
                                             ),
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Text(
-                                                  s.student,
-                                                  style: const TextStyle(
-                                                    fontWeight: FontWeight.w800,
-                                                  ),
-                                                ),
-                                                const SizedBox(height: 6),
-                                                Text(
-                                                  '${_t('Оценка', 'Grade')}: ${s.avgGrade.toStringAsFixed(1)}',
-                                                ),
-                                                Text(
-                                                  '${_t('Посещаемость', 'Attendance')}: ${(s.attRate * 100).toStringAsFixed(1)}%',
-                                                ),
-                                                Text(
-                                                  '${_t('Отработки', 'Makeups')}: ${s.makeupsActive + s.makeupsClosed}',
-                                                ),
+                                            onTap: () {
+                                              final rows = <String>[
+                                                '${_t('Средний балл', 'Average grade')}: ${s.avgGrade.toStringAsFixed(1)}',
+                                                '${_t('Посещаемость', 'Attendance')}: ${(s.attRate * 100).toStringAsFixed(1)}%',
+                                                '${_t('Активные отработки', 'Active makeups')}: ${s.makeupsActive}',
+                                                '${_t('Закрытые отработки', 'Closed makeups')}: ${s.makeupsClosed}',
                                                 if (s.examAvg != null)
-                                                  Text(
-                                                    '${_t('Экзамен', 'Exam')}: ${s.examAvg!.toStringAsFixed(1)}',
+                                                  '${_t('Средний экзамен', 'Average exam')}: ${s.examAvg!.toStringAsFixed(1)}',
+                                                '',
+                                                ...s.grades
+                                                    .map(
+                                                      (grade) =>
+                                                          '${DateFormat('dd.MM.yyyy').format(grade.classDate)} | ${_t('оценка', 'grade')}: ${grade.grade}',
+                                                    )
+                                                    .take(30),
+                                              ];
+                                              _showDetails(s.student, rows);
+                                            },
+                                            child: Container(
+                                              padding: const EdgeInsets.all(12),
+                                              decoration: BoxDecoration(
+                                                borderRadius:
+                                                    BorderRadius.circular(12),
+                                                color: const Color(0xFFF7FBF8),
+                                                border: Border.all(
+                                                  color: const Color(
+                                                    0xFFD8E3DB,
                                                   ),
-                                              ],
+                                                ),
+                                              ),
+                                              child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Row(
+                                                    children: [
+                                                      Expanded(
+                                                        child: Text(
+                                                          s.student,
+                                                          style:
+                                                              const TextStyle(
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w800,
+                                                              ),
+                                                        ),
+                                                      ),
+                                                      const Icon(
+                                                        Icons
+                                                            .chevron_right_rounded,
+                                                        size: 18,
+                                                        color: _muted,
+                                                      ),
+                                                    ],
+                                                  ),
+                                                  const SizedBox(height: 6),
+                                                  Text(
+                                                    '${_t('Оценка', 'Grade')}: ${s.avgGrade.toStringAsFixed(1)}',
+                                                  ),
+                                                  Text(
+                                                    '${_t('Посещаемость', 'Attendance')}: ${(s.attRate * 100).toStringAsFixed(1)}%',
+                                                  ),
+                                                  Text(
+                                                    '${_t('Отработки', 'Makeups')}: ${s.makeupsActive + s.makeupsClosed}',
+                                                  ),
+                                                  if (s.examAvg != null)
+                                                    Text(
+                                                      '${_t('Экзамен', 'Exam')}: ${s.examAvg!.toStringAsFixed(1)}',
+                                                    ),
+                                                ],
+                                              ),
                                             ),
                                           ),
                                         ),
@@ -1817,11 +2621,13 @@ class _RequestAgg {
 class _TeacherLoad {
   _TeacherLoad(
     this.teacher,
+    this.groups,
     this.groupCount,
     this.studentCount,
     this.activeCases,
   );
   final String teacher;
+  final List<String> groups;
   final int groupCount;
   final int studentCount;
   final int activeCases;

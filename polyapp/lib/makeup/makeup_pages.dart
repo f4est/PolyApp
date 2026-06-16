@@ -198,8 +198,20 @@ class _MakeupWorkspacePageState extends State<MakeupWorkspacePage> {
   Future<void> _init() async {
     if (_canManage) {
       try {
-        _groups = await widget.client.listMakeupGroups();
+        final rawGroups = await widget.client.listMakeupGroups();
+
+        _groups =
+            rawGroups
+                .map(
+                  (group) => group.replaceFirst(RegExp(r'@@t\d+$'), '').trim(),
+                )
+                .where((group) => group.isNotEmpty)
+                .toSet()
+                .toList()
+              ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+
         _group = _groups.isNotEmpty ? _groups.first : null;
+
         if (_group == null) {
           _message = _t(
             'Нет доступных групп. Отправьте заявку на преподавание группы или дождитесь назначения от администратора.',
@@ -209,6 +221,7 @@ class _MakeupWorkspacePageState extends State<MakeupWorkspacePage> {
         } else {
           _students = await widget.client.listMakeupStudentsByGroup(_group!);
           _studentId = _students.isNotEmpty ? _students.first.id : null;
+
           if (_students.isEmpty) {
             _message = _t(
               'В выбранной группе нет подтвержденных студентов.',
@@ -222,6 +235,7 @@ class _MakeupWorkspacePageState extends State<MakeupWorkspacePage> {
         _messageError = true;
       }
     }
+
     if (mounted) _reload();
   }
 
@@ -2181,6 +2195,327 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
     }
     _setJournalGroupSelection(_journalGroup);
     setState(() {});
+  }
+
+  Future<void> _exportUsersCsv() async {
+    try {
+      final bytes = await widget.client.exportUsersCsvBytes();
+      final uri = Uri.dataFromBytes(bytes, mimeType: 'text/csv');
+      await launchUrl(uri, mode: LaunchMode.platformDefault);
+      if (!mounted) return;
+      setState(() {
+        _noticeError = false;
+        _noticeMessage = _t(
+          'CSV пользователей открыт. Если браузер скачал файл, откройте его в Excel.',
+          'Users CSV opened. If the browser downloaded it, open it in Excel.',
+        );
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = _readError(error);
+      });
+    }
+  }
+
+  Future<void> _importUsersCsv() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['csv'],
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final file = result.files.first;
+    final bytes = file.bytes;
+    if (bytes == null || bytes.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = _t(
+          'Не удалось прочитать CSV файл.',
+          'Failed to read CSV file.',
+        );
+      });
+      return;
+    }
+    try {
+      final imported = await widget.client.importUsersCsvBytes(
+        filename: file.name,
+        bytes: bytes,
+      );
+      _reloadAll();
+      if (!mounted) return;
+      final errorHint = imported.errors.isEmpty
+          ? ''
+          : '\n${imported.errors.take(5).join('\n')}';
+      setState(() {
+        _noticeError = imported.errors.isNotEmpty;
+        _noticeMessage =
+            '${_t('Создано', 'Created')}: ${imported.created}; '
+            '${_t('Обновлено', 'Updated')}: ${imported.updated}; '
+            '${_t('Пропущено', 'Skipped')}: ${imported.skipped}.$errorHint';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = _readError(error);
+      });
+    }
+  }
+
+  List<int> _excelTableBytes(List<List<String>> rows) {
+    String escape(String value) {
+      final needsQuote =
+          value.contains('\t') ||
+          value.contains('\n') ||
+          value.contains('\r') ||
+          value.contains('"');
+      final escaped = value.replaceAll('"', '""');
+      return needsQuote ? '"$escaped"' : escaped;
+    }
+
+    final text = rows.map((row) => row.map(escape).join('\t')).join('\r\n');
+    final bytes = <int>[0xFF, 0xFE];
+    for (final unit in text.codeUnits) {
+      bytes.add(unit & 0xFF);
+      bytes.add((unit >> 8) & 0xFF);
+    }
+    return bytes;
+  }
+
+  String _decodeTableBytes(List<int> bytes) {
+    if (bytes.length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) {
+      final units = <int>[];
+      for (int i = 2; i + 1 < bytes.length; i += 2) {
+        units.add(bytes[i] | (bytes[i + 1] << 8));
+      }
+      return String.fromCharCodes(units);
+    }
+    if (bytes.length >= 3 &&
+        bytes[0] == 0xEF &&
+        bytes[1] == 0xBB &&
+        bytes[2] == 0xBF) {
+      return utf8.decode(bytes.sublist(3), allowMalformed: true);
+    }
+    return utf8.decode(bytes, allowMalformed: true);
+  }
+
+  List<List<String>> _parseTable(String text) {
+    final normalized = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    final lines = normalized
+        .split('\n')
+        .where((line) => line.trim().isNotEmpty)
+        .toList();
+    if (lines.isEmpty) return const [];
+    final delimiter = lines.first.contains('\t')
+        ? '\t'
+        : (lines.first.contains(';') ? ';' : ',');
+    return lines.map((line) => line.split(delimiter)).toList();
+  }
+
+  Future<void> _openTableFile(String filename, List<List<String>> rows) async {
+    final uri = Uri.dataFromBytes(_excelTableBytes(rows), mimeType: 'text/csv');
+    await launchUrl(uri, mode: LaunchMode.platformDefault);
+  }
+
+  Future<void> _exportAttendanceCsv() async {
+    final group = _journalGroup;
+    if (group == null || group.trim().isEmpty) return;
+    try {
+      final rows = await widget.client.listAttendance(group);
+      await _openTableFile('attendance.csv', [
+        ['group_name', 'class_date', 'lesson_slot', 'student_name', 'present'],
+        for (final row in rows)
+          [
+            row.groupName,
+            DateFormat('yyyy-MM-dd').format(row.classDate),
+            row.lessonSlot.toString(),
+            row.studentName,
+            row.present.toString(),
+          ],
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _noticeError = false;
+        _noticeMessage = _t(
+          'Экспорт посещаемости открыт.',
+          'Attendance export opened.',
+        );
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = _readError(error);
+      });
+    }
+  }
+
+  Future<void> _importAttendanceCsv() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['csv', 'tsv', 'txt'],
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final bytes = result.files.first.bytes;
+    if (bytes == null || bytes.isEmpty) return;
+    int updated = 0;
+    int skipped = 0;
+    final errors = <String>[];
+    try {
+      final table = _parseTable(_decodeTableBytes(bytes));
+      if (table.isEmpty) throw Exception('CSV is empty');
+      final header = table.first.map((e) => e.trim().toLowerCase()).toList();
+      int col(String name) => header.indexOf(name);
+      final groupCol = col('group_name');
+      final dateCol = col('class_date');
+      final slotCol = col('lesson_slot');
+      final studentCol = col('student_name');
+      final presentCol = col('present');
+      if (dateCol < 0 || studentCol < 0 || presentCol < 0) {
+        throw Exception('Required columns: class_date, student_name, present');
+      }
+      for (int i = 1; i < table.length; i++) {
+        final row = table[i];
+        String at(int index) =>
+            index >= 0 && index < row.length ? row[index].trim() : '';
+        final group = at(groupCol).isEmpty
+            ? (_journalGroup ?? '')
+            : at(groupCol);
+        final student = at(studentCol);
+        final date = DateTime.tryParse(at(dateCol));
+        final presentRaw = at(presentCol).toLowerCase();
+        final present =
+            presentRaw == 'true' ||
+            presentRaw == '1' ||
+            presentRaw == 'yes' ||
+            presentRaw == 'да';
+        final slot = int.tryParse(at(slotCol));
+        if (group.isEmpty || student.isEmpty || date == null) {
+          skipped++;
+          errors.add('line ${i + 1}: invalid group/date/student');
+          continue;
+        }
+        await widget.client.createAttendance(
+          groupName: group,
+          classDate: date,
+          lessonSlot: slot,
+          studentName: student,
+          present: present,
+        );
+        updated++;
+      }
+      _reloadAll();
+      if (!mounted) return;
+      setState(() {
+        _noticeError = errors.isNotEmpty;
+        _noticeMessage =
+            '${_t('Обновлено', 'Updated')}: $updated; ${_t('Пропущено', 'Skipped')}: $skipped'
+            '${errors.isEmpty ? '' : '\n${errors.take(5).join('\n')}'}';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = _readError(error);
+      });
+    }
+  }
+
+  Future<void> _exportGradesCsv() async {
+    final group = _journalGroup;
+    if (group == null || group.trim().isEmpty) return;
+    try {
+      final rows = await widget.client.listGrades(group);
+      await _openTableFile('grades.csv', [
+        ['group_name', 'class_date', 'student_name', 'grade'],
+        for (final row in rows)
+          [
+            row.groupName,
+            DateFormat('yyyy-MM-dd').format(row.classDate),
+            row.studentName,
+            row.grade.toString(),
+          ],
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _noticeError = false;
+        _noticeMessage = _t('Экспорт оценок открыт.', 'Grades export opened.');
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = _readError(error);
+      });
+    }
+  }
+
+  Future<void> _importGradesCsv() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['csv', 'tsv', 'txt'],
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final bytes = result.files.first.bytes;
+    if (bytes == null || bytes.isEmpty) return;
+    int updated = 0;
+    int skipped = 0;
+    final errors = <String>[];
+    try {
+      final table = _parseTable(_decodeTableBytes(bytes));
+      if (table.isEmpty) throw Exception('CSV is empty');
+      final header = table.first.map((e) => e.trim().toLowerCase()).toList();
+      int col(String name) => header.indexOf(name);
+      final groupCol = col('group_name');
+      final dateCol = col('class_date');
+      final studentCol = col('student_name');
+      final gradeCol = col('grade');
+      if (dateCol < 0 || studentCol < 0 || gradeCol < 0) {
+        throw Exception('Required columns: class_date, student_name, grade');
+      }
+      for (int i = 1; i < table.length; i++) {
+        final row = table[i];
+        String at(int index) =>
+            index >= 0 && index < row.length ? row[index].trim() : '';
+        final group = at(groupCol).isEmpty
+            ? (_journalGroup ?? '')
+            : at(groupCol);
+        final student = at(studentCol);
+        final date = DateTime.tryParse(at(dateCol));
+        final grade = int.tryParse(at(gradeCol));
+        if (group.isEmpty || student.isEmpty || date == null || grade == null) {
+          skipped++;
+          errors.add('line ${i + 1}: invalid group/date/student/grade');
+          continue;
+        }
+        await widget.client.createGrade(
+          groupName: group,
+          classDate: date,
+          studentName: student,
+          grade: grade,
+        );
+        updated++;
+      }
+      _reloadAll();
+      if (!mounted) return;
+      setState(() {
+        _noticeError = errors.isNotEmpty;
+        _noticeMessage =
+            '${_t('Обновлено', 'Updated')}: $updated; ${_t('Пропущено', 'Skipped')}: $skipped'
+            '${errors.isEmpty ? '' : '\n${errors.take(5).join('\n')}'}';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _noticeError = true;
+        _noticeMessage = _readError(error);
+      });
+    }
   }
 
   Future<void> _createUser() async {
@@ -4725,12 +5060,36 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                     icon: const Icon(Icons.check_circle_outline),
                     label: Text(_t('Добавить посещение', 'Add attendance')),
                   ),
+                if (withAttendanceCreate) ...[
+                  OutlinedButton.icon(
+                    onPressed: _exportAttendanceCsv,
+                    icon: const Icon(Icons.download_outlined),
+                    label: Text(_t('Экспорт CSV', 'Export CSV')),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _importAttendanceCsv,
+                    icon: const Icon(Icons.upload_file_outlined),
+                    label: Text(_t('Импорт CSV', 'Import CSV')),
+                  ),
+                ],
                 if (withGradeCreate)
                   FilledButton.tonalIcon(
                     onPressed: _upsertGradeRecord,
                     icon: const Icon(Icons.grade_outlined),
                     label: Text(_t('Добавить оценку', 'Add grade')),
                   ),
+                if (withGradeCreate) ...[
+                  OutlinedButton.icon(
+                    onPressed: _exportGradesCsv,
+                    icon: const Icon(Icons.download_outlined),
+                    label: Text(_t('Экспорт CSV', 'Export CSV')),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _importGradesCsv,
+                    icon: const Icon(Icons.upload_file_outlined),
+                    label: Text(_t('Импорт CSV', 'Import CSV')),
+                  ),
+                ],
                 OutlinedButton.icon(
                   onPressed: _reloadAll,
                   icon: const Icon(Icons.refresh),
@@ -5945,6 +6304,23 @@ class _AdminWorkspacePageState extends State<AdminWorkspacePage> {
                                 labelText: _t('Сортировка', 'Sort'),
                               ),
                             ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: _exportUsersCsv,
+                            icon: const Icon(Icons.download_outlined),
+                            label: Text(_t('Экспорт CSV', 'Export CSV')),
+                          ),
+                          FilledButton.tonalIcon(
+                            onPressed: _importUsersCsv,
+                            icon: const Icon(Icons.upload_file_outlined),
+                            label: Text(_t('Импорт CSV', 'Import CSV')),
                           ),
                         ],
                       ),

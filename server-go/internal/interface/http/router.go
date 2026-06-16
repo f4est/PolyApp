@@ -132,7 +132,7 @@ func corsMiddleware(allowedOrigin string) gin.HandlerFunc {
 		c.Header("Access-Control-Allow-Credentials", "true")
 		c.Header(
 			"Access-Control-Allow-Headers",
-			"Authorization, Content-Type, Accept, X-Device-Time, X-Timezone-Offset-Minutes",
+			"Authorization, Content-Type, Accept, X-Device-Time, X-Timezone-Offset-Minutes, ngrok-skip-browser-warning",
 		)
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
 		if c.Request.Method == http.MethodOptions {

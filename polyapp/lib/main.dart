@@ -4048,9 +4048,6 @@ class _ExamGradesPageState extends State<ExamGradesPage> {
       try {
         collected.addAll(await client.listJournalBaseGroupCatalogV2());
       } catch (_) {}
-      try {
-        collected.addAll(await client.listJournalGroups());
-      } catch (_) {}
       final normalized = _normalizeGroupNames(collected);
       if (!mounted) return;
       setState(() {

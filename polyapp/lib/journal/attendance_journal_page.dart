@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../api/api_client.dart';
 import '../i18n/ui_text.dart';
@@ -515,6 +518,412 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
     } finally {
       if (mounted) {
         setState(() => _syncing = false);
+      }
+    }
+  }
+
+  void _showMessage(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: isError
+              ? const Color(0xFFB91C1C)
+              : const Color(0xFF166534),
+        ),
+      );
+  }
+
+  String _readErrorText(Object error) {
+    if (error is ApiException) {
+      if (error.body.trim().isNotEmpty) {
+        try {
+          final decoded = jsonDecode(error.body);
+          if (decoded is Map<String, dynamic>) {
+            final detail = decoded['detail'];
+            if (detail is String && detail.trim().isNotEmpty) {
+              return detail.trim();
+            }
+            final message = decoded['message'];
+            if (message is String && message.trim().isNotEmpty) {
+              return message.trim();
+            }
+          }
+        } catch (_) {}
+      }
+      return 'HTTP ${error.statusCode}';
+    }
+    return error.toString().replaceFirst('Exception: ', '');
+  }
+
+  List<int> _excelTableBytes(List<List<String>> rows) {
+    String escape(String value) {
+      final escaped = value.replaceAll('"', '""');
+      final needsQuote =
+          escaped.contains('\t') ||
+          escaped.contains('\n') ||
+          escaped.contains('\r') ||
+          escaped.contains('"');
+      return needsQuote ? '"$escaped"' : escaped;
+    }
+
+    final text = rows.map((row) => row.map(escape).join('\t')).join('\r\n');
+    final bytes = <int>[0xFF, 0xFE];
+    for (final unit in text.codeUnits) {
+      bytes
+        ..add(unit & 0xFF)
+        ..add((unit >> 8) & 0xFF);
+    }
+    return bytes;
+  }
+
+  String _decodeTableBytes(List<int> bytes) {
+    if (bytes.length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) {
+      final units = <int>[];
+      for (int i = 2; i + 1 < bytes.length; i += 2) {
+        units.add(bytes[i] | (bytes[i + 1] << 8));
+      }
+      return String.fromCharCodes(units);
+    }
+    if (bytes.length >= 3 &&
+        bytes[0] == 0xEF &&
+        bytes[1] == 0xBB &&
+        bytes[2] == 0xBF) {
+      return utf8.decode(bytes.sublist(3), allowMalformed: true);
+    }
+    return utf8.decode(bytes, allowMalformed: true);
+  }
+
+  List<List<String>> _parseTable(String text) {
+    final normalized = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    final firstLine = normalized
+        .split('\n')
+        .firstWhere((line) => line.trim().isNotEmpty, orElse: () => '');
+    if (firstLine.isEmpty) return const [];
+    final delimiter = firstLine.contains('\t')
+        ? '\t'
+        : (firstLine.contains(';') ? ';' : ',');
+    final rows = <List<String>>[];
+    final row = <String>[];
+    final cell = StringBuffer();
+    var quoted = false;
+    for (var i = 0; i < normalized.length; i++) {
+      final char = normalized[i];
+      if (quoted) {
+        if (char == '"') {
+          if (i + 1 < normalized.length && normalized[i + 1] == '"') {
+            cell.write('"');
+            i++;
+          } else {
+            quoted = false;
+          }
+        } else {
+          cell.write(char);
+        }
+        continue;
+      }
+      if (char == '"') {
+        quoted = true;
+      } else if (char == delimiter) {
+        row.add(cell.toString());
+        cell.clear();
+      } else if (char == '\n') {
+        row.add(cell.toString());
+        cell.clear();
+        if (row.any((value) => value.trim().isNotEmpty)) {
+          rows.add(List<String>.from(row));
+        }
+        row.clear();
+      } else {
+        cell.write(char);
+      }
+    }
+    row.add(cell.toString());
+    if (row.any((value) => value.trim().isNotEmpty)) {
+      rows.add(List<String>.from(row));
+    }
+    return rows;
+  }
+
+  bool? _parseAttendanceValue(String value) {
+    final normalized = value.trim().toLowerCase();
+    if (normalized.isEmpty) return null;
+    if (normalized == 'true' ||
+        normalized == '1' ||
+        normalized == 'yes' ||
+        normalized == 'y' ||
+        normalized == 'да' ||
+        normalized == 'д' ||
+        normalized == 'p' ||
+        normalized == 'р' ||
+        normalized == 'присутствовал' ||
+        normalized == 'присутствует') {
+      return true;
+    }
+    if (normalized == 'false' ||
+        normalized == '0' ||
+        normalized == 'no' ||
+        normalized == 'n' ||
+        normalized == 'нет' ||
+        normalized == 'н' ||
+        normalized == 'отсутствовал' ||
+        normalized == 'отсутствует') {
+      return false;
+    }
+    return null;
+  }
+
+  Future<void> _openTableFile(List<List<String>> rows) async {
+    final uri = Uri.dataFromBytes(_excelTableBytes(rows), mimeType: 'text/csv');
+    await launchUrl(uri, mode: LaunchMode.platformDefault);
+  }
+
+  String _excelTextCell(String value) {
+    final escaped = value.replaceAll('"', '""');
+    return '="$escaped"';
+  }
+
+  String _normalizeExcelTextCell(String value) {
+    final trimmed = value.trim();
+    final match = RegExp(r'^="(.*)"$').firstMatch(trimmed);
+    if (match == null) return trimmed;
+    return match.group(1)!.replaceAll('""', '"');
+  }
+
+  DateTime? _parseExportDate(String value) {
+    final trimmed = _normalizeExcelTextCell(value);
+    if (trimmed.isEmpty) return null;
+    final iso = DateTime.tryParse(trimmed);
+    if (iso != null) return iso;
+    final match = RegExp(
+      r'^(\d{1,2})\.(\d{1,2})\.(\d{4})$',
+    ).firstMatch(trimmed);
+    if (match == null) return null;
+    final day = int.tryParse(match.group(1)!);
+    final month = int.tryParse(match.group(2)!);
+    final year = int.tryParse(match.group(3)!);
+    if (day == null || month == null || year == null) return null;
+    return DateTime(year, month, day);
+  }
+
+  ({DateTime classDate, int lessonSlot})? _parseAttendanceDateHeader(
+    String value,
+  ) {
+    final normalized = _normalizeExcelTextCell(value);
+    final parts = normalized.split('|');
+    final date = _parseExportDate(parts.first.trim());
+    if (date == null) return null;
+    var lessonSlot = 1;
+    if (parts.length > 1) {
+      final match = RegExp(
+        r'[пp]?(\d+)',
+        caseSensitive: false,
+      ).firstMatch(parts.sublist(1).join('|'));
+      lessonSlot = int.tryParse(match?.group(1) ?? '') ?? 1;
+    }
+    return (classDate: date, lessonSlot: lessonSlot < 1 ? 1 : lessonSlot);
+  }
+
+  List<List<String>> _buildAttendanceExportRows() {
+    final byKey = <String, Attendance>{};
+    for (final item
+        in _group == null
+            ? const <Attendance>[]
+            : _service.getAttendanceByGroup(_group!)) {
+      byKey['${item.studentName}|${item.dateId}'] = item;
+    }
+    return [
+      [
+        _tr('Студент', 'Student'),
+        for (final date in _dates)
+          _excelTextCell(
+            _formatDateLabelWithSlot(date.date, _lessonSlotFromLesson(date)),
+          ),
+      ],
+      for (final student in _students)
+        [
+          student.name,
+          for (final date in _dates)
+            switch (byKey['${student.name}|${date.key.toString()}']) {
+              final mark? => mark.present ? 'P' : 'Н',
+              null => '',
+            },
+        ],
+    ];
+  }
+
+  Future<int> _importAttendanceGridTable(
+    Group group,
+    List<List<String>> table,
+    List<String> errors,
+  ) async {
+    final header = table.first.map((item) => item.trim()).toList();
+    if (header.length < 2) return 0;
+    final datesByColumn = <int, ({DateTime classDate, int lessonSlot})>{};
+    for (var i = 1; i < header.length; i++) {
+      final date = _parseAttendanceDateHeader(header[i]);
+      if (date != null) {
+        datesByColumn[i] = date;
+      }
+    }
+    if (datesByColumn.isEmpty) {
+      throw Exception(
+        _tr(
+          'В файле нет колонок дат вида 01.01.2026',
+          'No date columns like 01.01.2026 found in the file',
+        ),
+      );
+    }
+
+    var updated = 0;
+    for (var rowIndex = 1; rowIndex < table.length; rowIndex++) {
+      final row = table[rowIndex];
+      if (row.isEmpty) continue;
+      final student = row.first.trim();
+      if (student.isEmpty) {
+        errors.add(
+          _tr(
+            'строка ${rowIndex + 1}: пустой студент',
+            'line ${rowIndex + 1}: empty student',
+          ),
+        );
+        continue;
+      }
+      for (final entry in datesByColumn.entries) {
+        final raw = entry.key < row.length ? row[entry.key].trim() : '';
+        if (raw.isEmpty || raw == '-') continue;
+        final present = _parseAttendanceValue(raw);
+        if (present == null) {
+          errors.add(
+            _tr(
+              'строка ${rowIndex + 1}: неверное значение посещения',
+              'line ${rowIndex + 1}: invalid attendance value',
+            ),
+          );
+          continue;
+        }
+        await widget.client.createAttendance(
+          groupName: group.name,
+          classDate: entry.value.classDate,
+          lessonSlot: entry.value.lessonSlot,
+          studentName: student,
+          present: present,
+        );
+        updated++;
+      }
+    }
+    return updated;
+  }
+
+  Future<void> _exportAttendanceCsv() async {
+    final group = _group;
+    if (group == null) return;
+    try {
+      await _openTableFile(_buildAttendanceExportRows());
+      if (!mounted) return;
+      _showMessage(
+        _tr('Экспорт посещаемости открыт.', 'Attendance export opened.'),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(_readErrorText(error), isError: true);
+    }
+  }
+
+  Future<void> _importAttendanceCsv() async {
+    final group = _group;
+    if (group == null) return;
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['csv', 'tsv', 'txt'],
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final bytes = result.files.first.bytes;
+    if (bytes == null || bytes.isEmpty) return;
+    setState(() => _busy = true);
+    var updated = 0;
+    var skipped = 0;
+    final errors = <String>[];
+    try {
+      final table = _parseTable(_decodeTableBytes(bytes));
+      if (table.isEmpty) {
+        throw Exception(_tr('Файл пустой', 'File is empty'));
+      }
+      final header = table.first.map((e) => e.trim().toLowerCase()).toList();
+      int col(String name) => header.indexOf(name);
+      final groupCol = col('group_name');
+      final dateCol = col('class_date');
+      final slotCol = col('lesson_slot');
+      final studentCol = col('student_name');
+      final presentCol = col('present');
+      if (dateCol < 0 || studentCol < 0 || presentCol < 0) {
+        updated = await _importAttendanceGridTable(group, table, errors);
+        await _syncFromServer();
+        await _loadGroupData(sync: false);
+        if (!mounted) return;
+        _showMessage(
+          '${_tr('Обновлено', 'Updated')}: $updated; '
+          '${_tr('Пропущено', 'Skipped')}: $skipped'
+          '${errors.isEmpty ? '' : '\n${errors.take(4).join('\n')}'}',
+          isError: errors.isNotEmpty,
+        );
+        return;
+      }
+      for (var i = 1; i < table.length; i++) {
+        final row = table[i];
+        String at(int index) =>
+            index >= 0 && index < row.length ? row[index].trim() : '';
+        final rowGroup = at(groupCol).isEmpty ? group.name : at(groupCol);
+        final student = at(studentCol);
+        final date = _parseExportDate(at(dateCol));
+        final slot = int.tryParse(at(slotCol)) ?? 1;
+        final present = _parseAttendanceValue(at(presentCol));
+        if (rowGroup != group.name) {
+          skipped++;
+          errors.add(
+            _tr(
+              'строка ${i + 1}: другая группа',
+              'line ${i + 1}: another group',
+            ),
+          );
+          continue;
+        }
+        if (student.isEmpty || date == null || present == null) {
+          skipped++;
+          errors.add(
+            _tr(
+              'строка ${i + 1}: неверная дата/студент/посещение',
+              'line ${i + 1}: invalid date/student/attendance',
+            ),
+          );
+          continue;
+        }
+        await widget.client.createAttendance(
+          groupName: group.name,
+          classDate: date,
+          lessonSlot: slot,
+          studentName: student,
+          present: present,
+        );
+        updated++;
+      }
+      await _syncFromServer();
+      await _loadGroupData(sync: false);
+      if (!mounted) return;
+      _showMessage(
+        '${_tr('Обновлено', 'Updated')}: $updated; '
+        '${_tr('Пропущено', 'Skipped')}: $skipped'
+        '${errors.isEmpty ? '' : '\n${errors.take(4).join('\n')}'}',
+        isError: errors.isNotEmpty,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(_readErrorText(error), isError: true);
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
       }
     }
   }
@@ -1160,6 +1569,20 @@ class _AttendanceJournalPageState extends State<AttendanceJournalPage> {
                   },
             icon: const Icon(Icons.search_rounded),
             label: Text(_tr('Поиск группы', 'Search group')),
+          ),
+          OutlinedButton.icon(
+            onPressed: (_syncing || _group == null)
+                ? null
+                : _exportAttendanceCsv,
+            icon: const Icon(Icons.download_rounded),
+            label: Text(_tr('Экспорт', 'Export')),
+          ),
+          FilledButton.tonalIcon(
+            onPressed: (_syncing || _busy || _group == null)
+                ? null
+                : _importAttendanceCsv,
+            icon: const Icon(Icons.upload_file_rounded),
+            label: Text(_tr('Импорт', 'Import')),
           ),
         ],
       ),

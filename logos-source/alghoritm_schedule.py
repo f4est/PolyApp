@@ -1,5 +1,3 @@
-# pip install python-docx
-
 import os
 import re
 import sqlite3

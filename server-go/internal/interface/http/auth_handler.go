@@ -2,8 +2,11 @@ package http
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,10 +14,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"polyapp/server-go/internal/domain/entity"
 	domainErrors "polyapp/server-go/internal/domain/errors"
 	"polyapp/server-go/internal/infrastructure/persistence"
+	"polyapp/server-go/internal/infrastructure/security"
 	httpMiddleware "polyapp/server-go/internal/interface/http/middleware"
 	"polyapp/server-go/internal/usecase"
 
@@ -93,6 +98,8 @@ func (h *Handler) RegisterAuthRoutes(router *gin.Engine, auth *httpMiddleware.Au
 	{
 		admin.POST("/users", h.createUser)
 		admin.GET("/users", h.listUsers)
+		admin.GET("/users/export.csv", h.exportUsersCSV)
+		admin.POST("/users/import.csv", h.importUsersCSV)
 		admin.GET("/users/students/approved", h.listApprovedStudents)
 		admin.POST("/users/:id/approve", h.approveUser)
 		admin.DELETE("/users/:id", h.deleteUser)
@@ -443,6 +450,399 @@ func (h *Handler) listUsers(c *gin.Context) {
 		out = append(out, toUserPublic(user))
 	}
 	c.JSON(http.StatusOK, out)
+}
+
+func (h *Handler) exportUsersCSV(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermUsersManage) {
+		return
+	}
+	users, err := h.userRepo.List(c.Request.Context(), "")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"detail": "Failed to list users"})
+		return
+	}
+	sort.Slice(users, func(i, j int) bool { return users[i].ID < users[j].ID })
+
+	var builder strings.Builder
+	writer := csv.NewWriter(&builder)
+	writer.Comma = '\t'
+	_ = writer.Write([]string{
+		"id",
+		"role",
+		"full_name",
+		"email",
+		"password",
+		"phone",
+		"student_group",
+		"teacher_name",
+		"child_full_name",
+		"parent_student_id",
+		"admin_permissions",
+		"is_approved",
+		"notify_schedule",
+		"notify_requests",
+		"birth_date",
+	})
+	for _, user := range users {
+		parentID := ""
+		if user.ParentStudentID != nil {
+			parentID = strconv.FormatUint(uint64(*user.ParentStudentID), 10)
+		}
+		birthDate := ""
+		if user.BirthDate != nil {
+			birthDate = user.BirthDate.Format("2006-01-02")
+		}
+		_ = writer.Write([]string{
+			strconv.FormatUint(uint64(user.ID), 10),
+			user.Role,
+			user.FullName,
+			user.Email,
+			"",
+			user.Phone,
+			user.StudentGroup,
+			user.TeacherName,
+			user.ChildFullName,
+			parentID,
+			strings.Join(user.AdminPermissions, ";"),
+			strconv.FormatBool(user.IsApproved),
+			strconv.FormatBool(user.NotifySchedule),
+			strconv.FormatBool(user.NotifyRequests),
+			birthDate,
+		})
+	}
+	writer.Flush()
+
+	c.Header("Content-Type", "text/csv; charset=utf-16le")
+	c.Header("Content-Disposition", `attachment; filename="polyapp-users.csv"`)
+	_, _ = c.Writer.Write(utf16LEBytes(builder.String()))
+}
+
+func (h *Handler) importUsersCSV(c *gin.Context) {
+	if !h.requireAdminPermission(c, AdminPermUsersManage) {
+		return
+	}
+	currentUser := httpMiddleware.CurrentUser(c)
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "file is required"})
+		return
+	}
+	opened, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "failed to open file"})
+		return
+	}
+	defer opened.Close()
+
+	raw, err := io.ReadAll(opened)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "failed to read file"})
+		return
+	}
+	text := decodeCSVText(raw)
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	delimiter := detectCSVDelimiter(text)
+	reader := csv.NewReader(strings.NewReader(text))
+	reader.TrimLeadingSpace = true
+	reader.FieldsPerRecord = -1
+	reader.LazyQuotes = true
+	reader.Comma = delimiter
+	header, err := reader.Read()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"detail": "CSV header is required"})
+		return
+	}
+	if len(header) == 1 && strings.EqualFold(strings.TrimPrefix(strings.TrimSpace(header[0]), "\ufeff"), "sep=,") {
+		delimiter = ','
+		reader = csv.NewReader(strings.NewReader(strings.Join(strings.Split(text, "\n")[1:], "\n")))
+		reader.TrimLeadingSpace = true
+		reader.FieldsPerRecord = -1
+		reader.LazyQuotes = true
+		reader.Comma = ','
+		header, err = reader.Read()
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"detail": "CSV header is required"})
+			return
+		}
+	}
+	index := make(map[string]int, len(header))
+	for i, name := range header {
+		index[strings.ToLower(strings.TrimPrefix(strings.TrimSpace(name), "\ufeff"))] = i
+	}
+	value := func(row []string, key string) string {
+		i, ok := index[key]
+		if !ok || i < 0 || i >= len(row) {
+			return ""
+		}
+		return strings.TrimSpace(row[i])
+	}
+
+	hasher := security.BcryptPasswordService{}
+	created := 0
+	updated := 0
+	skipped := 0
+	rowErrors := []string{}
+	line := 1
+	for {
+		row, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		line++
+		if err != nil && len(row) == 0 {
+			rowErrors = append(rowErrors, fmt.Sprintf("line %d: invalid CSV row", line))
+			skipped++
+			continue
+		}
+		email := strings.ToLower(value(row, "email"))
+		fullName := value(row, "full_name")
+		role := strings.ToLower(value(row, "role"))
+		if role == "" {
+			role = "student"
+		}
+		if email == "" || fullName == "" {
+			rowErrors = append(rowErrors, fmt.Sprintf("line %d: email and full_name are required", line))
+			skipped++
+			continue
+		}
+		if role != "admin" && role != "teacher" && role != "student" && role != "parent" && role != "smm" && role != "request_handler" {
+			rowErrors = append(rowErrors, fmt.Sprintf("line %d: invalid role %q", line, role))
+			skipped++
+			continue
+		}
+		studentGroup := value(row, "student_group")
+		teacherName := value(row, "teacher_name")
+		childFullName := value(row, "child_full_name")
+		phone := value(row, "phone")
+		if isBoolText(phone) {
+			phone = ""
+		}
+		if role != "student" && role != "parent" {
+			studentGroup = ""
+		}
+		if role != "teacher" {
+			teacherName = ""
+		}
+		if role == "teacher" && (isBoolText(teacherName) || teacherName == "") {
+			teacherName = fullName
+		}
+		studentGroupValid := true
+		if role == "student" && isBoolText(studentGroup) {
+			studentGroup = ""
+			studentGroupValid = false
+		}
+		if role != "parent" {
+			childFullName = ""
+		}
+		if isBoolText(childFullName) {
+			childFullName = ""
+		}
+		approved := parseBoolDefault(value(row, "is_approved"), true)
+		notifySchedule := parseBoolDefault(value(row, "notify_schedule"), true)
+		notifyRequests := parseBoolDefault(value(row, "notify_requests"), true)
+		adminPermissions := normalizeAdminPermissions(splitCSVList(value(row, "admin_permissions")))
+		if role != "admin" {
+			adminPermissions = nil
+		}
+		var parentStudentID *uint
+		if raw := value(row, "parent_student_id"); raw != "" {
+			parsed, parseErr := strconv.ParseUint(raw, 10, 64)
+			if parseErr == nil && parsed > 0 {
+				v := uint(parsed)
+				parentStudentID = &v
+			}
+		}
+		var birthDate *time.Time
+		if raw := value(row, "birth_date"); raw != "" {
+			parsed, parseErr := time.Parse("2006-01-02", raw)
+			if parseErr != nil {
+				rowErrors = append(rowErrors, fmt.Sprintf("line %d: invalid birth_date", line))
+				skipped++
+				continue
+			}
+			birthDate = &parsed
+		}
+		existing, getErr := h.userRepo.GetByEmail(c.Request.Context(), email)
+		password := value(row, "password")
+		if getErr == nil && existing != nil {
+			existing.Role = role
+			existing.FullName = fullName
+			existing.Email = email
+			existing.Phone = phone
+			if role != "student" || studentGroupValid || studentGroup != "" {
+				existing.StudentGroup = studentGroup
+			}
+			existing.TeacherName = teacherName
+			existing.ChildFullName = childFullName
+			existing.ParentStudentID = parentStudentID
+			existing.AdminPermissions = adminPermissions
+			existing.IsApproved = approved
+			existing.NotifySchedule = notifySchedule
+			existing.NotifyRequests = notifyRequests
+			existing.BirthDate = birthDate
+			if approved && existing.ApprovedAt == nil {
+				now := time.Now().UTC()
+				existing.ApprovedAt = &now
+				if currentUser != nil {
+					approvedBy := currentUser.ID
+					existing.ApprovedBy = &approvedBy
+				}
+			}
+			// Existing user passwords are intentionally not updated from CSV.
+			// An exported file has an empty password column, and spreadsheet
+			// edits can otherwise shift data into this sensitive field.
+			if err := h.userRepo.Update(c.Request.Context(), existing); err != nil {
+				rowErrors = append(rowErrors, fmt.Sprintf("line %d: failed to update user", line))
+				skipped++
+				continue
+			}
+			updated++
+			continue
+		}
+		if !errors.Is(getErr, domainErrors.ErrNotFound) {
+			rowErrors = append(rowErrors, fmt.Sprintf("line %d: failed to lookup user", line))
+			skipped++
+			continue
+		}
+		if password == "" {
+			rowErrors = append(rowErrors, fmt.Sprintf("line %d: password is required for new user", line))
+			skipped++
+			continue
+		}
+		hash, hashErr := hasher.Hash(password)
+		if hashErr != nil {
+			rowErrors = append(rowErrors, fmt.Sprintf("line %d: failed to hash password", line))
+			skipped++
+			continue
+		}
+		now := time.Now().UTC()
+		var approvedAt *time.Time
+		var approvedBy *uint
+		if approved {
+			approvedAt = &now
+			if currentUser != nil {
+				v := currentUser.ID
+				approvedBy = &v
+			}
+		}
+		user := entity.User{
+			Role:             role,
+			FullName:         fullName,
+			Email:            email,
+			PasswordHash:     hash,
+			Phone:            phone,
+			NotifySchedule:   notifySchedule,
+			NotifyRequests:   notifyRequests,
+			StudentGroup:     studentGroup,
+			TeacherName:      teacherName,
+			ChildFullName:    childFullName,
+			ParentStudentID:  parentStudentID,
+			AdminPermissions: adminPermissions,
+			IsApproved:       approved,
+			ApprovedAt:       approvedAt,
+			ApprovedBy:       approvedBy,
+			BirthDate:        birthDate,
+		}
+		if err := h.userRepo.Create(c.Request.Context(), &user); err != nil {
+			rowErrors = append(rowErrors, fmt.Sprintf("line %d: failed to create user", line))
+			skipped++
+			continue
+		}
+		created++
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"created": created,
+		"updated": updated,
+		"skipped": skipped,
+		"errors":  rowErrors,
+	})
+}
+
+func parseBoolDefault(raw string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "true", "1", "yes", "y", "да":
+		return true
+	case "false", "0", "no", "n", "нет":
+		return false
+	default:
+		return fallback
+	}
+}
+
+func isBoolText(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "true", "false", "1", "0", "yes", "no", "да", "нет":
+		return true
+	default:
+		return false
+	}
+}
+
+func splitCSVList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ';' || r == ','
+	})
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if value := strings.TrimSpace(part); value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func utf16LEBytes(text string) []byte {
+	encoded := utf16.Encode([]rune(text))
+	out := make([]byte, 2+len(encoded)*2)
+	out[0] = 0xFF
+	out[1] = 0xFE
+	for i, value := range encoded {
+		out[2+i*2] = byte(value)
+		out[3+i*2] = byte(value >> 8)
+	}
+	return out
+}
+
+func decodeCSVText(raw []byte) string {
+	if len(raw) >= 2 && raw[0] == 0xFF && raw[1] == 0xFE {
+		u16 := make([]uint16, 0, (len(raw)-2)/2)
+		for i := 2; i+1 < len(raw); i += 2 {
+			u16 = append(u16, uint16(raw[i])|uint16(raw[i+1])<<8)
+		}
+		return string(utf16.Decode(u16))
+	}
+	if len(raw) >= 3 && raw[0] == 0xEF && raw[1] == 0xBB && raw[2] == 0xBF {
+		return string(raw[3:])
+	}
+	return string(raw)
+}
+
+func detectCSVDelimiter(text string) rune {
+	first := ""
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(line, "\ufeff"))
+		if line != "" {
+			first = line
+			break
+		}
+	}
+	if strings.HasPrefix(strings.ToLower(first), "sep=,") {
+		return ','
+	}
+	tabs := strings.Count(first, "\t")
+	semicolons := strings.Count(first, ";")
+	commas := strings.Count(first, ",")
+	if tabs >= semicolons && tabs >= commas && tabs > 0 {
+		return '\t'
+	}
+	if semicolons >= commas && semicolons > 0 {
+		return ';'
+	}
+	return ','
 }
 
 func (h *Handler) listApprovedStudents(c *gin.Context) {

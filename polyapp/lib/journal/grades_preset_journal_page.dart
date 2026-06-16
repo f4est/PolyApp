@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../api/api_client.dart';
 import '../i18n/ui_text.dart';
@@ -412,6 +414,388 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
     } finally {
       if (mounted) {
         setState(() => _loading = false);
+      }
+    }
+  }
+
+  List<int> _excelTableBytes(List<List<String>> rows) {
+    String escape(String value) {
+      final escaped = value.replaceAll('"', '""');
+      final needsQuote =
+          escaped.contains('\t') ||
+          escaped.contains('\n') ||
+          escaped.contains('\r') ||
+          escaped.contains('"');
+      return needsQuote ? '"$escaped"' : escaped;
+    }
+
+    final text = rows.map((row) => row.map(escape).join('\t')).join('\r\n');
+    final bytes = <int>[0xFF, 0xFE];
+    for (final unit in text.codeUnits) {
+      bytes
+        ..add(unit & 0xFF)
+        ..add((unit >> 8) & 0xFF);
+    }
+    return bytes;
+  }
+
+  String _decodeTableBytes(List<int> bytes) {
+    if (bytes.length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) {
+      final units = <int>[];
+      for (int i = 2; i + 1 < bytes.length; i += 2) {
+        units.add(bytes[i] | (bytes[i + 1] << 8));
+      }
+      return String.fromCharCodes(units);
+    }
+    if (bytes.length >= 3 &&
+        bytes[0] == 0xEF &&
+        bytes[1] == 0xBB &&
+        bytes[2] == 0xBF) {
+      return utf8.decode(bytes.sublist(3), allowMalformed: true);
+    }
+    return utf8.decode(bytes, allowMalformed: true);
+  }
+
+  List<List<String>> _parseTable(String text) {
+    final normalized = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    final firstLine = normalized
+        .split('\n')
+        .firstWhere((line) => line.trim().isNotEmpty, orElse: () => '');
+    if (firstLine.isEmpty) return const [];
+    final delimiter = firstLine.contains('\t')
+        ? '\t'
+        : (firstLine.contains(';') ? ';' : ',');
+    final rows = <List<String>>[];
+    final row = <String>[];
+    final cell = StringBuffer();
+    var quoted = false;
+    for (var i = 0; i < normalized.length; i++) {
+      final char = normalized[i];
+      if (quoted) {
+        if (char == '"') {
+          if (i + 1 < normalized.length && normalized[i + 1] == '"') {
+            cell.write('"');
+            i++;
+          } else {
+            quoted = false;
+          }
+        } else {
+          cell.write(char);
+        }
+        continue;
+      }
+      if (char == '"') {
+        quoted = true;
+      } else if (char == delimiter) {
+        row.add(cell.toString());
+        cell.clear();
+      } else if (char == '\n') {
+        row.add(cell.toString());
+        cell.clear();
+        if (row.any((value) => value.trim().isNotEmpty)) {
+          rows.add(List<String>.from(row));
+        }
+        row.clear();
+      } else {
+        cell.write(char);
+      }
+    }
+    row.add(cell.toString());
+    if (row.any((value) => value.trim().isNotEmpty)) {
+      rows.add(List<String>.from(row));
+    }
+    return rows;
+  }
+
+  Future<void> _openTableFile(List<List<String>> rows) async {
+    final uri = Uri.dataFromBytes(_excelTableBytes(rows), mimeType: 'text/csv');
+    await launchUrl(uri, mode: LaunchMode.platformDefault);
+  }
+
+  String _excelTextCell(String value) {
+    final escaped = value.replaceAll('"', '""');
+    return '="$escaped"';
+  }
+
+  String _normalizeExcelTextCell(String value) {
+    final trimmed = value.trim();
+    final match = RegExp(r'^="(.*)"$').firstMatch(trimmed);
+    if (match == null) return trimmed;
+    return match.group(1)!.replaceAll('""', '"');
+  }
+
+  DateTime? _parseExportDate(String value) {
+    final trimmed = _normalizeExcelTextCell(value);
+    if (trimmed.isEmpty) return null;
+    final iso = DateTime.tryParse(trimmed);
+    if (iso != null) return iso;
+    final match = RegExp(
+      r'^(\d{1,2})\.(\d{1,2})\.(\d{4})$',
+    ).firstMatch(trimmed);
+    if (match == null) return null;
+    final day = int.tryParse(match.group(1)!);
+    final month = int.tryParse(match.group(2)!);
+    final year = int.tryParse(match.group(3)!);
+    if (day == null || month == null || year == null) return null;
+    return DateTime(year, month, day);
+  }
+
+  List<List<String>> _buildJournalExportRows(JournalGridDto grid) {
+    final columns =
+        grid.presetVersion?.definition.columns ?? const <PresetColumnDto>[];
+    final manualColumns = columns
+        .where((column) => column.kind == 'manual')
+        .toList(growable: false);
+    final computedColumns = columns
+        .where((column) => column.kind == 'computed')
+        .toList(growable: false);
+
+    final dateCellMap = <String, String>{};
+    for (final cell in grid.dateCells) {
+      dateCellMap['${cell.studentName}::${_dateIdentity(cell.classDate, cell.lessonSlot)}'] =
+          cell.rawValue;
+    }
+    final manualCellMap = <String, String>{};
+    for (final cell in grid.manualCells) {
+      manualCellMap['${cell.studentName}::${cell.columnKey}'] = cell.rawValue;
+    }
+    final computedMap = <String, Map<String, dynamic>>{};
+    for (final row in grid.computedCells) {
+      computedMap[row.studentName] = row.values;
+    }
+
+    return [
+      [
+        _tr('Студент', 'Student'),
+        for (final date in grid.dates) _excelTextCell(_dateFullLabel(date)),
+        for (final column in manualColumns) column.title,
+        for (final column in computedColumns) column.title,
+      ],
+      for (final student in grid.students)
+        [
+          student,
+          for (final date in grid.dates)
+            dateCellMap['$student::${_dateIdentity(date.classDate, date.lessonSlot)}'] ??
+                '',
+          for (final column in manualColumns)
+            manualCellMap['$student::${column.key}'] ?? '',
+          for (final column in computedColumns)
+            _formatComputedValue(computedMap[student]?[column.key]),
+        ],
+    ];
+  }
+
+  Future<int> _importJournalGridTable(
+    String group,
+    JournalGridDto grid,
+    List<List<String>> table,
+    List<String> errors,
+  ) async {
+    final header = table.first.map((e) => e.trim()).toList();
+    if (header.isEmpty) return 0;
+    final columns =
+        grid.presetVersion?.definition.columns ?? const <PresetColumnDto>[];
+    final manualColumns = columns.where((column) => column.kind == 'manual');
+    final computedKeys = columns
+        .where((column) => column.kind == 'computed')
+        .map((column) => column.title.trim().toLowerCase())
+        .toSet();
+    final dateByHeader = <int, JournalDateEntry>{};
+    for (var i = 1; i < header.length; i++) {
+      final title = _normalizeExcelTextCell(header[i]);
+      for (final date in grid.dates) {
+        final labels = {
+          _dateHeaderLabel(date).trim().toLowerCase(),
+          _dateFullLabel(date).trim().toLowerCase(),
+          _dateKeyFormat.format(date.classDate).toLowerCase(),
+        };
+        if (labels.contains(title.toLowerCase())) {
+          dateByHeader[i] = date;
+          break;
+        }
+      }
+    }
+    final manualKeyByHeader = <int, String>{};
+    for (var i = 1; i < header.length; i++) {
+      final title = header[i].trim().toLowerCase();
+      if (dateByHeader.containsKey(i) || computedKeys.contains(title)) {
+        continue;
+      }
+      for (final column in manualColumns) {
+        if (title == column.title.trim().toLowerCase() ||
+            title == column.key.trim().toLowerCase()) {
+          manualKeyByHeader[i] = column.key;
+          break;
+        }
+      }
+    }
+
+    final dateItems = <DateCellWriteDto>[];
+    final manualItems = <ManualCellWriteDto>[];
+    for (var rowIndex = 1; rowIndex < table.length; rowIndex++) {
+      final row = table[rowIndex];
+      if (row.isEmpty) continue;
+      final student = row.first.trim();
+      if (student.isEmpty) {
+        errors.add(
+          _tr(
+            'строка ${rowIndex + 1}: пустой студент',
+            'line ${rowIndex + 1}: empty student',
+          ),
+        );
+        continue;
+      }
+      for (var colIndex = 1; colIndex < header.length; colIndex++) {
+        final value = colIndex < row.length ? row[colIndex].trim() : '';
+        if (value.isEmpty || value == '-') continue;
+        final date = dateByHeader[colIndex];
+        if (date != null) {
+          dateItems.add(
+            DateCellWriteDto(
+              classDate: date.classDate,
+              lessonSlot: date.lessonSlot,
+              studentName: student,
+              rawValue: value,
+            ),
+          );
+          continue;
+        }
+        final manualKey = manualKeyByHeader[colIndex];
+        if (manualKey != null) {
+          manualItems.add(
+            ManualCellWriteDto(
+              studentName: student,
+              columnKey: manualKey,
+              rawValue: value,
+            ),
+          );
+        }
+      }
+    }
+    if (dateItems.isNotEmpty) {
+      await widget.client.upsertDateCellsV2(groupName: group, items: dateItems);
+    }
+    if (manualItems.isNotEmpty) {
+      await widget.client.upsertManualCellsV2(
+        groupName: group,
+        items: manualItems,
+      );
+    }
+    return dateItems.length + manualItems.length;
+  }
+
+  Future<void> _exportGradesCsv() async {
+    final group = _groupName;
+    final grid = _grid;
+    if (group == null || grid == null) return;
+    try {
+      await _openTableFile(_buildJournalExportRows(grid));
+      if (!mounted) return;
+      _showMessage(_tr('Экспорт оценок открыт.', 'Grades export opened.'));
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(_readErrorText(error), isError: true);
+    }
+  }
+
+  Future<void> _importGradesCsv() async {
+    final group = _groupName;
+    if (group == null) return;
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['csv', 'tsv', 'txt'],
+      withData: true,
+    );
+    if (result == null || result.files.isEmpty) return;
+    final bytes = result.files.first.bytes;
+    if (bytes == null || bytes.isEmpty) return;
+    setState(() => _saving = true);
+    var updated = 0;
+    var skipped = 0;
+    final errors = <String>[];
+    try {
+      final table = _parseTable(_decodeTableBytes(bytes));
+      if (table.isEmpty) {
+        throw Exception(_tr('Файл пустой', 'File is empty'));
+      }
+      final header = table.first.map((e) => e.trim().toLowerCase()).toList();
+      int col(String name) => header.indexOf(name);
+      final groupCol = col('group_name');
+      final dateCol = col('class_date');
+      final slotCol = col('lesson_slot');
+      final studentCol = col('student_name');
+      var valueCol = col('raw_value');
+      if (valueCol < 0) valueCol = col('grade');
+      if (dateCol < 0 || studentCol < 0 || valueCol < 0) {
+        final grid = _grid ?? await widget.client.getGroupGridV2(group);
+        updated = await _importJournalGridTable(group, grid, table, errors);
+        await _reloadGrid();
+        if (!mounted) return;
+        _showMessage(
+          '${_tr('Обновлено', 'Updated')}: $updated; '
+          '${_tr('Пропущено', 'Skipped')}: $skipped'
+          '${errors.isEmpty ? '' : '\n${errors.take(4).join('\n')}'}',
+          isError: errors.isNotEmpty,
+        );
+        return;
+      }
+      final items = <DateCellWriteDto>[];
+      for (var i = 1; i < table.length; i++) {
+        final row = table[i];
+        String at(int index) =>
+            index >= 0 && index < row.length ? row[index].trim() : '';
+        final rowGroup = at(groupCol).isEmpty ? group : at(groupCol);
+        final student = at(studentCol);
+        final date = _parseExportDate(at(dateCol));
+        final slot = int.tryParse(at(slotCol)) ?? 1;
+        final value = at(valueCol);
+        if (rowGroup != group) {
+          skipped++;
+          errors.add(
+            _tr(
+              'строка ${i + 1}: другая группа',
+              'line ${i + 1}: another group',
+            ),
+          );
+          continue;
+        }
+        if (student.isEmpty || date == null || value.isEmpty) {
+          skipped++;
+          errors.add(
+            _tr(
+              'строка ${i + 1}: неверная дата/студент/оценка',
+              'line ${i + 1}: invalid date/student/grade',
+            ),
+          );
+          continue;
+        }
+        items.add(
+          DateCellWriteDto(
+            classDate: date,
+            lessonSlot: slot,
+            studentName: student,
+            rawValue: value,
+          ),
+        );
+      }
+      if (items.isNotEmpty) {
+        await widget.client.upsertDateCellsV2(groupName: group, items: items);
+        updated = items.length;
+      }
+      await _reloadGrid();
+      if (!mounted) return;
+      _showMessage(
+        '${_tr('Обновлено', 'Updated')}: $updated; '
+        '${_tr('Пропущено', 'Skipped')}: $skipped'
+        '${errors.isEmpty ? '' : '\n${errors.take(4).join('\n')}'}',
+        isError: errors.isNotEmpty,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      _showMessage(_readErrorText(error), isError: true);
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
       }
     }
   }
@@ -878,6 +1262,18 @@ class _GradesPresetJournalPageState extends State<GradesPresetJournalPage> {
                   },
             icon: const Icon(Icons.search_rounded),
             label: Text(_tr('Поиск группы', 'Search group')),
+          ),
+          OutlinedButton.icon(
+            onPressed: (_loading || _grid == null) ? null : _exportGradesCsv,
+            icon: const Icon(Icons.download_rounded),
+            label: Text(_tr('Экспорт', 'Export')),
+          ),
+          FilledButton.tonalIcon(
+            onPressed: (_loading || _saving || _groupName == null)
+                ? null
+                : _importGradesCsv,
+            icon: const Icon(Icons.upload_file_rounded),
+            label: Text(_tr('Импорт', 'Import')),
           ),
           if (widget.canEdit && !widget.canManageGroups)
             FilledButton.tonalIcon(
